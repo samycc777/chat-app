@@ -3,15 +3,13 @@ import {
   X, ChevronLeft, ChevronRight, Pencil, Eraser, Trash2, Upload, Mic, MicOff, Users,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import type { User } from '../types';
 import { API_URL } from '../api';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 interface WbStroke {
   id: string;
@@ -331,6 +329,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   async function handleUploadPdf(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    setLoadError(false);
     const formData = new FormData();
     formData.append('file', file);
     try {
@@ -340,7 +339,20 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        console.error('Upload failed:', res.status, err);
+        setLoadError(true);
+        e.target.value = '';
+        return;
+      }
       const data = await res.json();
+      if (!data.url) {
+        console.error('Upload response missing url:', data);
+        setLoadError(true);
+        e.target.value = '';
+        return;
+      }
       setActivePdfUrl(data.url);
       strokesRef.current.clear();
       currentPageRef.current = 1;
@@ -348,6 +360,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       getSocket()?.emit('wb_pdf', { conversationId, pdfUrl: data.url });
     } catch (err) {
       console.error('Upload failed:', err);
+      setLoadError(true);
     }
     e.target.value = '';
   }
@@ -724,12 +737,12 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
             style={{ cursor: isPresenter ? 'crosshair' : 'default' }}
           />
         </div>
-        {!activePdfUrl && (
+        {!activePdfUrl && !loadError && (
           <div className="whiteboard-placeholder">
             {isPresenter ? t('uploadPdfPrompt') : t('waitingForPresenter')}
           </div>
         )}
-        {activePdfUrl && loadError && (
+        {loadError && (
           <div className="whiteboard-placeholder whiteboard-error">
             {t('pdfLoadError')}
           </div>

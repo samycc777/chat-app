@@ -1,6 +1,10 @@
 import { StrictMode, Component, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
+import '@fontsource/noto-sans-arabic/arabic-400.css'
+import '@fontsource/noto-sans-arabic/arabic-500.css'
+import '@fontsource/noto-sans-arabic/arabic-600.css'
+import '@fontsource/noto-sans-arabic/arabic-700.css'
 import App from './App.tsx'
 import { I18nProvider } from './i18n.tsx'
 

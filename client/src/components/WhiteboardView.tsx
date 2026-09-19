@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  X, ChevronLeft, ChevronRight, Pencil, Eraser, Trash2, Upload, Mic, MicOff,
+  X, ChevronLeft, ChevronRight, Pencil, Eraser, Trash2, Upload, Mic, MicOff, Users,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { getSocket } from '../socket';
@@ -16,6 +16,13 @@ interface WbStroke {
   color: string;
   width: number;
   tool: 'pen' | 'eraser';
+}
+
+interface VoiceParticipant {
+  userId: string;
+  displayName: string;
+  avatarColor: string;
+  muted: boolean;
 }
 
 interface Props {
@@ -68,6 +75,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   const voiceStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteAudioRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const [voiceParticipants, setVoiceParticipants] = useState<VoiceParticipant[]>([]);
 
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { colorRef.current = color; }, [color]);
@@ -392,6 +400,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
     }
     setVoiceActive(false);
     setMuted(false);
+    setVoiceParticipants(prev => prev.filter(p => p.userId !== currentUser.id));
   }
 
   async function toggleVoice() {
@@ -413,7 +422,12 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
     const track = voiceStreamRef.current?.getAudioTracks()[0];
     if (track) {
       track.enabled = !track.enabled;
-      setMuted(!track.enabled);
+      const newMuted = !track.enabled;
+      setMuted(newMuted);
+      getSocket()?.emit('wb_voice_mute', { conversationId, muted: newMuted });
+      setVoiceParticipants(prev => prev.map(p =>
+        p.userId === currentUser.id ? { ...p, muted: newMuted } : p
+      ));
     }
   }
 
@@ -422,8 +436,9 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
     const socket = getSocket();
     if (!socket) return;
 
-    async function handleVoicePeers(data: { conversationId: string; peers: string[] }) {
+    async function handleVoicePeers(data: { conversationId: string; peers: string[]; participants?: VoiceParticipant[] }) {
       if (data.conversationId !== conversationId) return;
+      if (data.participants) setVoiceParticipants(data.participants);
       const stream = voiceStreamRef.current;
       if (!stream) return;
       for (const peerId of data.peers) {
@@ -562,6 +577,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
 
     function handleState(data: any) {
       if (data.conversationId !== conversationId) return;
+      if (data.voiceParticipants) setVoiceParticipants(data.voiceParticipants);
       if (data.pdfUrl && data.pdfUrl !== activePdfUrl) setActivePdfUrl(data.pdfUrl);
       if (data.currentPage) {
         currentPageRef.current = data.currentPage;
@@ -577,12 +593,40 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       renderPdfPage(data.currentPage || 1);
     }
 
+    function handleVoiceJoinedTrack(data: any) {
+      if (data.conversationId !== conversationId) return;
+      setVoiceParticipants(prev => {
+        if (prev.some(p => p.userId === data.userId)) return prev;
+        return [...prev, {
+          userId: data.userId,
+          displayName: data.displayName,
+          avatarColor: data.avatarColor,
+          muted: data.muted ?? false,
+        }];
+      });
+    }
+
+    function handleVoiceLeftTrack(data: any) {
+      if (data.conversationId !== conversationId) return;
+      setVoiceParticipants(prev => prev.filter(p => p.userId !== data.userId));
+    }
+
+    function handleVoiceMuted(data: any) {
+      if (data.conversationId !== conversationId) return;
+      setVoiceParticipants(prev => prev.map(p =>
+        p.userId === data.userId ? { ...p, muted: data.muted } : p
+      ));
+    }
+
     socket.on('wb_draw', handleDraw);
     socket.on('wb_page_changed', handlePageChanged);
     socket.on('wb_cleared', handleCleared);
     socket.on('wb_pdf_loaded', handlePdfChanged);
     socket.on('wb_ended', handleEnded);
     socket.on('wb_state', handleState);
+    socket.on('wb_voice_joined', handleVoiceJoinedTrack);
+    socket.on('wb_voice_left', handleVoiceLeftTrack);
+    socket.on('wb_voice_muted', handleVoiceMuted);
 
     return () => {
       socket.off('wb_draw', handleDraw);
@@ -591,6 +635,9 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       socket.off('wb_pdf_loaded', handlePdfChanged);
       socket.off('wb_ended', handleEnded);
       socket.off('wb_state', handleState);
+      socket.off('wb_voice_joined', handleVoiceJoinedTrack);
+      socket.off('wb_voice_left', handleVoiceLeftTrack);
+      socket.off('wb_voice_muted', handleVoiceMuted);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
@@ -628,6 +675,30 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
           <span>{isPresenter ? 'End' : 'Leave'}</span>
         </button>
       </div>
+
+      {voiceParticipants.length > 0 && (
+        <div className="wb-participants-bar">
+          <div className="wb-participants-label">
+            <Users size={14} />
+            <span>In call · {voiceParticipants.length}</span>
+          </div>
+          <div className="wb-participants-list">
+            {voiceParticipants.map(p => (
+              <div key={p.userId} className={`wb-participant ${p.userId === currentUser.id ? 'self' : ''}`}>
+                <div className="wb-participant-avatar" style={{ background: p.avatarColor }}>
+                  {p.displayName.charAt(0).toUpperCase()}
+                </div>
+                <span className="wb-participant-name">
+                  {p.userId === currentUser.id ? 'You' : p.displayName}
+                </span>
+                <span className={`wb-participant-mic ${p.muted ? 'muted' : ''}`}>
+                  {p.muted ? <MicOff size={14} /> : <Mic size={14} />}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="whiteboard-canvas-area" ref={containerRef}>
         <div className="whiteboard-canvas-wrap">

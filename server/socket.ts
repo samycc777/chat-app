@@ -20,6 +20,7 @@ interface WhiteboardSession {
   presenterId: string;
   currentPage: number;
   strokes: { [page: number]: WbStroke[] };
+  voiceParticipants: Set<string>;
 }
 
 const whiteboardSessions = new Map<string, WhiteboardSession>();
@@ -225,6 +226,7 @@ export function setupSocket(httpServer: HttpServer) {
         presenterId: userId,
         currentPage: 1,
         strokes: {},
+        voiceParticipants: new Set(),
       };
       whiteboardSessions.set(data.conversationId, session);
       io.to(`conv:${data.conversationId}`).emit('wb_started', {
@@ -310,7 +312,69 @@ export function setupSocket(httpServer: HttpServer) {
         pdfUrl: session.pdfUrl,
         currentPage: session.currentPage,
         strokes: session.strokes,
+        voiceParticipants: Array.from(session.voiceParticipants),
       });
+    });
+
+    socket.on('wb_voice_join', (data: { conversationId: string }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session) return;
+      const existingParticipants = Array.from(session.voiceParticipants);
+      session.voiceParticipants.add(userId);
+      socket.emit('wb_voice_peers', {
+        conversationId: data.conversationId,
+        peers: existingParticipants,
+      });
+      socket.to(`conv:${data.conversationId}`).emit('wb_voice_joined', {
+        conversationId: data.conversationId,
+        userId,
+      });
+    });
+
+    socket.on('wb_voice_leave', (data: { conversationId: string }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session) return;
+      session.voiceParticipants.delete(userId);
+      socket.to(`conv:${data.conversationId}`).emit('wb_voice_left', {
+        conversationId: data.conversationId,
+        userId,
+      });
+    });
+
+    socket.on('wb_voice_offer', (data: { conversationId: string; targetUserId: string; offer: any }) => {
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets) return;
+      for (const sid of targetSockets) {
+        io.to(sid).emit('wb_voice_offer', {
+          conversationId: data.conversationId,
+          from: userId,
+          offer: data.offer,
+        });
+      }
+    });
+
+    socket.on('wb_voice_answer', (data: { conversationId: string; targetUserId: string; answer: any }) => {
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets) return;
+      for (const sid of targetSockets) {
+        io.to(sid).emit('wb_voice_answer', {
+          conversationId: data.conversationId,
+          from: userId,
+          answer: data.answer,
+        });
+      }
+    });
+
+    socket.on('wb_voice_ice', (data: { conversationId: string; targetUserId: string; candidate: any }) => {
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets) return;
+      for (const sid of targetSockets) {
+        io.to(sid).emit('wb_voice_ice', {
+          conversationId: data.conversationId,
+          from: userId,
+          candidate: data.candidate,
+        });
+      }
     });
 
     socket.on('disconnect', () => {
@@ -321,6 +385,11 @@ export function setupSocket(httpServer: HttpServer) {
           onlineUsers.delete(userId);
           db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
           broadcastPresence(io, userId, false);
+          for (const [convId, session] of whiteboardSessions) {
+            if (session.voiceParticipants.delete(userId)) {
+              io.to(`conv:${convId}`).emit('wb_voice_left', { conversationId: convId, userId });
+            }
+          }
         }
       }
     });

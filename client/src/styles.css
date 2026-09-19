@@ -1182,6 +1182,53 @@ input {
   text-align: center;
 }
 
+.wb-voice-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: #4b5563;
+  color: white;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.wb-voice-btn:hover {
+  background: #6b7280;
+}
+
+.wb-voice-btn.active {
+  background: #22c55e;
+}
+
+.wb-voice-btn.active:hover {
+  background: #16a34a;
+}
+
+.wb-voice-btn.muted {
+  background: #eab308;
+}
+
+.wb-voice-btn.muted:hover {
+  background: #ca8a04;
+}
+
+.wb-voice-leave-btn {
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  background: #ef4444;
+  color: white;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+
+.wb-voice-leave-btn:hover {
+  background: #dc2626;
+}
+
 .whiteboard-end-btn {
   display: flex;
   align-items: center;

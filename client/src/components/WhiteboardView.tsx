@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  X, ChevronLeft, ChevronRight, Pencil, Eraser, Trash2, Upload,
+  X, ChevronLeft, ChevronRight, Pencil, Eraser, Trash2, Upload, Mic, MicOff,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { getSocket } from '../socket';
@@ -30,6 +30,13 @@ const COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#000000', '#ffffff', '#eab308'
 const WIDTHS = [2, 4, 8];
 const SEND_INTERVAL = 50;
 
+const ICE_SERVERS: RTCConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ],
+};
+
 export default function WhiteboardView({ conversationId, pdfUrl, presenterId, currentUser, onEnd }: Props) {
   const isPresenter = currentUser.id === presenterId;
 
@@ -55,6 +62,12 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   const toolRef = useRef(tool);
   const colorRef = useRef(color);
   const lineWidthRef = useRef(lineWidth);
+
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const remoteAudioRef = useRef<Map<string, HTMLAudioElement>>(new Map());
 
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { colorRef.current = color; }, [color]);
@@ -321,9 +334,177 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   }
 
   function handleEnd() {
+    leaveVoice();
     getSocket()?.emit('wb_end', { conversationId });
     onEnd();
   }
+
+  function createPeerConnection(peerId: string, stream: MediaStream): RTCPeerConnection {
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    peersRef.current.set(peerId, pc);
+
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+    pc.ontrack = (e) => {
+      if (e.streams[0]) {
+        let audio = remoteAudioRef.current.get(peerId);
+        if (!audio) {
+          audio = new Audio();
+          audio.autoplay = true;
+          remoteAudioRef.current.set(peerId, audio);
+        }
+        audio.srcObject = e.streams[0];
+      }
+    };
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        getSocket()?.emit('wb_voice_ice', {
+          conversationId,
+          targetUserId: peerId,
+          candidate: e.candidate.toJSON(),
+        });
+      }
+    };
+
+    return pc;
+  }
+
+  function cleanupPeer(peerId: string) {
+    const pc = peersRef.current.get(peerId);
+    if (pc) {
+      pc.close();
+      peersRef.current.delete(peerId);
+    }
+    const audio = remoteAudioRef.current.get(peerId);
+    if (audio) {
+      audio.srcObject = null;
+      remoteAudioRef.current.delete(peerId);
+    }
+  }
+
+  function leaveVoice() {
+    getSocket()?.emit('wb_voice_leave', { conversationId });
+    voiceStreamRef.current?.getTracks().forEach(t => t.stop());
+    voiceStreamRef.current = null;
+    for (const peerId of peersRef.current.keys()) {
+      cleanupPeer(peerId);
+    }
+    setVoiceActive(false);
+    setMuted(false);
+  }
+
+  async function toggleVoice() {
+    if (voiceActive) {
+      leaveVoice();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      voiceStreamRef.current = stream;
+      setVoiceActive(true);
+      getSocket()?.emit('wb_voice_join', { conversationId });
+    } catch {
+      console.error('Microphone access denied');
+    }
+  }
+
+  function toggleMute() {
+    const track = voiceStreamRef.current?.getAudioTracks()[0];
+    if (track) {
+      track.enabled = !track.enabled;
+      setMuted(!track.enabled);
+    }
+  }
+
+  // Voice signaling
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    async function handleVoicePeers(data: { conversationId: string; peers: string[] }) {
+      if (data.conversationId !== conversationId) return;
+      const stream = voiceStreamRef.current;
+      if (!stream) return;
+      for (const peerId of data.peers) {
+        const pc = createPeerConnection(peerId, stream);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket!.emit('wb_voice_offer', {
+          conversationId,
+          targetUserId: peerId,
+          offer: pc.localDescription,
+        });
+      }
+    }
+
+    async function handleVoiceJoined(data: { conversationId: string; userId: string }) {
+      if (data.conversationId !== conversationId) return;
+      if (data.userId === currentUser.id) return;
+    }
+
+    async function handleVoiceOffer(data: { conversationId: string; from: string; offer: RTCSessionDescriptionInit }) {
+      if (data.conversationId !== conversationId) return;
+      const stream = voiceStreamRef.current;
+      if (!stream) return;
+      const pc = createPeerConnection(data.from, stream);
+      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket!.emit('wb_voice_answer', {
+        conversationId,
+        targetUserId: data.from,
+        answer: pc.localDescription,
+      });
+    }
+
+    async function handleVoiceAnswer(data: { conversationId: string; from: string; answer: RTCSessionDescriptionInit }) {
+      if (data.conversationId !== conversationId) return;
+      const pc = peersRef.current.get(data.from);
+      if (pc) {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+      }
+    }
+
+    function handleVoiceIce(data: { conversationId: string; from: string; candidate: RTCIceCandidateInit }) {
+      if (data.conversationId !== conversationId) return;
+      const pc = peersRef.current.get(data.from);
+      if (pc) {
+        pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(() => {});
+      }
+    }
+
+    function handleVoiceLeft(data: { conversationId: string; userId: string }) {
+      if (data.conversationId !== conversationId) return;
+      cleanupPeer(data.userId);
+    }
+
+    socket.on('wb_voice_peers', handleVoicePeers);
+    socket.on('wb_voice_joined', handleVoiceJoined);
+    socket.on('wb_voice_offer', handleVoiceOffer);
+    socket.on('wb_voice_answer', handleVoiceAnswer);
+    socket.on('wb_voice_ice', handleVoiceIce);
+    socket.on('wb_voice_left', handleVoiceLeft);
+
+    return () => {
+      socket.off('wb_voice_peers', handleVoicePeers);
+      socket.off('wb_voice_joined', handleVoiceJoined);
+      socket.off('wb_voice_offer', handleVoiceOffer);
+      socket.off('wb_voice_answer', handleVoiceAnswer);
+      socket.off('wb_voice_ice', handleVoiceIce);
+      socket.off('wb_voice_left', handleVoiceLeft);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, voiceActive]);
+
+  // Cleanup voice on unmount
+  useEffect(() => {
+    return () => {
+      voiceStreamRef.current?.getTracks().forEach(t => t.stop());
+      for (const pc of peersRef.current.values()) pc.close();
+      for (const audio of remoteAudioRef.current.values()) audio.srcObject = null;
+    };
+  }, []);
 
   // Socket listeners
   useEffect(() => {
@@ -429,7 +610,20 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
             </button>
           </div>
         )}
-        <button className="whiteboard-end-btn" onClick={isPresenter ? handleEnd : onEnd}>
+        <button
+          className={`wb-voice-btn ${voiceActive ? (muted ? 'muted' : 'active') : ''}`}
+          onClick={voiceActive ? toggleMute : toggleVoice}
+          title={voiceActive ? (muted ? 'Unmute' : 'Mute') : 'Join voice'}
+        >
+          {voiceActive && !muted ? <Mic size={18} /> : <MicOff size={18} />}
+          <span>{voiceActive ? (muted ? 'Muted' : 'Voice On') : 'Join Voice'}</span>
+        </button>
+        {voiceActive && (
+          <button className="wb-voice-leave-btn" onClick={leaveVoice} title="Leave voice">
+            <MicOff size={18} />
+          </button>
+        )}
+        <button className="whiteboard-end-btn" onClick={isPresenter ? handleEnd : () => { leaveVoice(); onEnd(); }}>
           <X size={18} />
           <span>{isPresenter ? 'End' : 'Leave'}</span>
         </button>

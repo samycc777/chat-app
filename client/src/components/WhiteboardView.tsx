@@ -8,7 +8,10 @@ import { useI18n } from '../i18n';
 import type { User } from '../types';
 import { API_URL } from '../api';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
 
 interface WbStroke {
   id: string;
@@ -52,6 +55,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [activePdfUrl, setActivePdfUrl] = useState(pdfUrl);
+  const [loadError, setLoadError] = useState(false);
   const [tool, setTool] = useState<'pen' | 'eraser'>('pen');
   const [color, setColor] = useState('#ef4444');
   const [lineWidth, setLineWidth] = useState(4);
@@ -203,15 +207,20 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
     if (!activePdfUrl) {
       pdfDocRef.current = null;
       setNumPages(0);
+      setLoadError(false);
       renderPdfPage(currentPageRef.current);
       return;
     }
     const url = `${API_URL}${activePdfUrl}`;
+    setLoadError(false);
     pdfjsLib.getDocument({ url }).promise.then(pdf => {
       pdfDocRef.current = pdf;
       setNumPages(pdf.numPages);
       renderPdfPage(currentPageRef.current);
-    }).catch(err => console.error('PDF load failed:', err));
+    }).catch(err => {
+      console.error('PDF load failed:', err);
+      setLoadError(true);
+    });
   }, [activePdfUrl, renderPdfPage]);
 
   // Resize handler
@@ -718,6 +727,11 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
         {!activePdfUrl && (
           <div className="whiteboard-placeholder">
             {isPresenter ? t('uploadPdfPrompt') : t('waitingForPresenter')}
+          </div>
+        )}
+        {activePdfUrl && loadError && (
+          <div className="whiteboard-placeholder whiteboard-error">
+            {t('pdfLoadError')}
           </div>
         )}
       </div>

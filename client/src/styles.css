@@ -1280,6 +1280,11 @@ input {
   pointer-events: none;
 }
 
+.whiteboard-error {
+  color: #ef4444;
+  max-width: 320px;
+}
+
 .whiteboard-toolbar {
   display: flex;
   align-items: center;

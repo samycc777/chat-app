@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { api } from '../api';
+import { useI18n } from '../i18n';
 
 interface Props {
   onAuth: (token: string) => void;
 }
 
 export default function Auth({ onAuth }: Props) {
+  const { t, translateError } = useI18n();
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -24,7 +26,7 @@ export default function Auth({ onAuth }: Props) {
       localStorage.setItem('token', data.token);
       onAuth(data.token);
     } catch (err: any) {
-      setError(err.message);
+      setError(translateError(err.message));
     } finally {
       setLoading(false);
     }
@@ -33,16 +35,16 @@ export default function Auth({ onAuth }: Props) {
   return (
     <div className="auth-container">
       <form className="auth-card" onSubmit={handleSubmit}>
-        <h1>ChatApp</h1>
-        <p>{isLogin ? 'Sign in to continue' : 'Create your account'}</p>
+        <h1>{t('appName')}</h1>
+        <p>{isLogin ? t('signInToContinue') : t('createYourAccount')}</p>
 
         {error && <div className="auth-error">{error}</div>}
 
         <div className="input-group">
-          <label>Username</label>
+          <label>{t('username')}</label>
           <input
             type="text"
-            placeholder="Enter username"
+            placeholder={t('enterUsername')}
             value={username}
             onChange={e => setUsername(e.target.value)}
             autoComplete="username"
@@ -51,10 +53,10 @@ export default function Auth({ onAuth }: Props) {
 
         {!isLogin && (
           <div className="input-group">
-            <label>Display Name</label>
+            <label>{t('displayName')}</label>
             <input
               type="text"
-              placeholder="Your name"
+              placeholder={t('yourName')}
               value={displayName}
               onChange={e => setDisplayName(e.target.value)}
             />
@@ -62,10 +64,10 @@ export default function Auth({ onAuth }: Props) {
         )}
 
         <div className="input-group">
-          <label>Password</label>
+          <label>{t('password')}</label>
           <input
             type="password"
-            placeholder="Enter password"
+            placeholder={t('enterPassword')}
             value={password}
             onChange={e => setPassword(e.target.value)}
             autoComplete={isLogin ? 'current-password' : 'new-password'}
@@ -73,13 +75,13 @@ export default function Auth({ onAuth }: Props) {
         </div>
 
         <button type="submit" className="auth-btn" disabled={loading}>
-          {loading ? 'Please wait...' : isLogin ? 'Sign In' : 'Create Account'}
+          {loading ? t('pleaseWait') : isLogin ? t('signIn') : t('createAccount')}
         </button>
 
         <div className="auth-switch">
-          {isLogin ? "Don't have an account? " : 'Already have an account? '}
+          {isLogin ? t('noAccount') : t('haveAccount')}
           <span onClick={() => { setIsLogin(!isLogin); setError(''); }}>
-            {isLogin ? 'Sign up' : 'Sign in'}
+            {isLogin ? t('signUp') : t('signIn')}
           </span>
         </div>
       </form>

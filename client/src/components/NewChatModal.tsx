@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X } from 'lucide-react';
 import { api } from '../api';
 import type { User } from '../types';
+import { useI18n } from '../i18n';
 import Avatar from './Avatar';
 
 interface Props {
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function NewChatModal({ type, onClose, onCreated }: Props) {
+  const { t } = useI18n();
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<User[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<User[]>([]);
@@ -57,7 +59,7 @@ export default function NewChatModal({ type, onClose, onCreated }: Props) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>{type === 'direct' ? 'New Chat' : 'New Group'}</h3>
+          <h3>{type === 'direct' ? t('newChat') : t('newGroup')}</h3>
           <button className="icon-btn" onClick={onClose}>
             <X size={20} />
           </button>
@@ -67,7 +69,7 @@ export default function NewChatModal({ type, onClose, onCreated }: Props) {
             <div className="group-form">
               <input
                 className="modal-search"
-                placeholder="Group name"
+                placeholder={t('groupName')}
                 value={groupName}
                 onChange={e => setGroupName(e.target.value)}
               />
@@ -86,7 +88,7 @@ export default function NewChatModal({ type, onClose, onCreated }: Props) {
 
           <input
             className="modal-search"
-            placeholder="Search users..."
+            placeholder={t('searchUsers')}
             value={search}
             onChange={e => handleSearch(e.target.value)}
             autoFocus
@@ -115,7 +117,7 @@ export default function NewChatModal({ type, onClose, onCreated }: Props) {
               onClick={createGroup}
               disabled={loading || selectedMembers.length === 0 || !groupName.trim()}
             >
-              Create Group ({selectedMembers.length} members)
+              {t('createGroup', { count: selectedMembers.length })}
             </button>
           )}
         </div>

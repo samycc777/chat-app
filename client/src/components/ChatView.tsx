@@ -3,9 +3,11 @@ import {
   ArrowLeft, Paperclip, Send, Reply, Pencil, Trash2, X, Download, Phone, Video, Monitor,
 } from 'lucide-react';
 import { format, isToday, isYesterday, isSameDay } from 'date-fns';
+import type { Locale } from 'date-fns';
 import type { Conversation, Message, User } from '../types';
 import { api, API_URL } from '../api';
 import { getSocket } from '../socket';
+import { useI18n, type TranslationKey } from '../i18n';
 import Avatar from './Avatar';
 import { getConversationName } from './Sidebar';
 
@@ -19,6 +21,7 @@ interface Props {
 }
 
 export default function ChatView({ conversation, currentUser, onlineUsers, onBack, onStartCall, onWhiteboardClick }: Props) {
+  const { t, dateLocale } = useI18n();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -208,7 +211,7 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
   const other = conversation.type === 'direct'
     ? conversation.members.find(m => m.id !== currentUser.id)
     : null;
-  const chatName = getConversationName(conversation, currentUser.id);
+  const chatName = getConversationName(conversation, currentUser.id, t);
   const isOnline = other ? onlineUsers.has(other.id) : false;
 
   const typingNames = Array.from(typingUsers)
@@ -230,24 +233,24 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
           <h3>{chatName}</h3>
           <div className={`status-text ${isOnline ? 'online' : ''}`}>
             {conversation.type === 'group'
-              ? `${conversation.members.length} members`
+              ? t('members', { count: conversation.members.length })
               : isOnline
-                ? 'online'
+                ? t('online')
                 : other?.lastSeen
-                  ? `last seen ${formatLastSeen(other.lastSeen)}`
+                  ? t('lastSeen', { time: formatLastSeen(other.lastSeen, t, dateLocale) })
                   : ''}
           </div>
         </div>
         <div className="chat-header-actions">
-          <button className="icon-btn" title="Whiteboard" onClick={onWhiteboardClick}>
+          <button className="icon-btn" title={t('whiteboard')} onClick={onWhiteboardClick}>
             <Monitor size={20} />
           </button>
           {conversation.type === 'direct' && (
             <>
-              <button className="icon-btn" title="Voice call" onClick={() => onStartCall('audio')}>
+              <button className="icon-btn" title={t('voiceCall')} onClick={() => onStartCall('audio')}>
                 <Phone size={20} />
               </button>
-              <button className="icon-btn" title="Video call" onClick={() => onStartCall('video')}>
+              <button className="icon-btn" title={t('videoCall')} onClick={() => onStartCall('video')}>
                 <Video size={20} />
               </button>
             </>
@@ -266,7 +269,7 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
             <div key={msg.id}>
               {showDate && (
                 <div className="date-separator">
-                  <span>{formatDate(msg.createdAt)}</span>
+                  <span>{formatDate(msg.createdAt, t, dateLocale)}</span>
                 </div>
               )}
               <div className="message-group">
@@ -284,48 +287,48 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
                     <div className="message-reply">
                       <div className="reply-sender">{msg.replyTo.senderDisplayName}</div>
                       <div className="reply-text">
-                        {msg.replyTo.type === 'image' ? '📷 Photo' : msg.replyTo.content}
+                        {msg.replyTo.type === 'image' ? `📷 ${t('photo')}` : msg.replyTo.content}
                       </div>
                     </div>
                   )}
 
                   {msg.deleted ? (
-                    <div className="deleted-message">🚫 This message was deleted</div>
+                    <div className="deleted-message">🚫 {t('messageDeleted')}</div>
                   ) : msg.type === 'image' && msg.fileUrl ? (
                     <div>
                       <img
                         className="message-image"
                         src={`${API_URL}${msg.fileUrl}`}
-                        alt="Shared image"
+                        alt={t('sharedImage')}
                         loading="lazy"
                       />
                     </div>
                   ) : msg.type === 'file' && msg.fileUrl ? (
                     <a className="message-file" href={`${API_URL}${msg.fileUrl}`} target="_blank" rel="noreferrer">
                       <Download size={18} />
-                      <span>{msg.fileName || 'File'}</span>
+                      <span>{msg.fileName || t('file')}</span>
                     </a>
                   ) : (
                     <div className="message-content">{msg.content}</div>
                   )}
 
                   <div className="message-meta">
-                    {msg.editedAt && <span className="message-edited">edited</span>}
+                    {msg.editedAt && <span className="message-edited">{t('edited')}</span>}
                     <span className="message-time">{format(new Date(msg.createdAt), 'HH:mm')}</span>
                   </div>
 
                   <div className="message-actions">
                     {!msg.deleted && (
                       <>
-                        <button onClick={() => startReply(msg)} title="Reply">
+                        <button onClick={() => startReply(msg)} title={t('reply')}>
                           <Reply size={14} />
                         </button>
                         {isOwn && (
                           <>
-                            <button onClick={() => startEdit(msg)} title="Edit">
+                            <button onClick={() => startEdit(msg)} title={t('edit')}>
                               <Pencil size={14} />
                             </button>
-                            <button onClick={() => deleteMessage(msg)} title="Delete">
+                            <button onClick={() => deleteMessage(msg)} title={t('delete')}>
                               <Trash2 size={14} />
                             </button>
                           </>
@@ -343,7 +346,9 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
 
       <div className="typing-indicator">
         {typingNames.length > 0 && (
-          <span>{typingNames.join(', ')} {typingNames.length === 1 ? 'is' : 'are'} typing...</span>
+          <span>{typingNames.length === 1
+            ? t('isTyping', { names: typingNames.join(', ') })
+            : t('areTyping', { names: typingNames.join(', ') })}</span>
         )}
       </div>
 
@@ -352,7 +357,7 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
           <div className="reply-preview-content">
             <div className="reply-preview-sender">{replyTo.sender.displayName}</div>
             <div className="reply-preview-text">
-              {replyTo.type === 'image' ? '📷 Photo' : replyTo.content}
+              {replyTo.type === 'image' ? `📷 ${t('photo')}` : replyTo.content}
             </div>
           </div>
           <button className="icon-btn" onClick={() => setReplyTo(null)}>
@@ -364,7 +369,7 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
       {editingMsg && (
         <div className="reply-preview">
           <div className="reply-preview-content">
-            <div className="reply-preview-sender">Editing message</div>
+            <div className="reply-preview-sender">{t('editingMessage')}</div>
             <div className="reply-preview-text">{editingMsg.content}</div>
           </div>
           <button className="icon-btn" onClick={() => { setEditingMsg(null); setInput(''); }}>
@@ -381,7 +386,7 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
         <div className="message-input-wrap">
           <textarea
             ref={textareaRef}
-            placeholder="Type a message"
+            placeholder={t('typeAMessage')}
             value={input}
             onChange={e => {
               handleInputChange(e.target.value);
@@ -405,15 +410,15 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
           />
           <div className="context-menu" style={{ top: contextMenu.y, left: contextMenu.x }}>
             <button onClick={() => startReply(contextMenu.msg)}>
-              <Reply size={16} /> Reply
+              <Reply size={16} /> {t('reply')}
             </button>
             {contextMenu.msg.senderId === currentUser.id && !contextMenu.msg.deleted && (
               <>
                 <button onClick={() => startEdit(contextMenu.msg)}>
-                  <Pencil size={16} /> Edit
+                  <Pencil size={16} /> {t('edit')}
                 </button>
                 <button className="danger" onClick={() => deleteMessage(contextMenu.msg)}>
-                  <Trash2 size={16} /> Delete
+                  <Trash2 size={16} /> {t('delete')}
                 </button>
               </>
             )}
@@ -424,16 +429,24 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
   );
 }
 
-function formatDate(ts: number): string {
+function formatDate(
+  ts: number,
+  t: (key: TranslationKey) => string,
+  locale: Locale,
+): string {
   const d = new Date(ts);
-  if (isToday(d)) return 'Today';
-  if (isYesterday(d)) return 'Yesterday';
-  return format(d, 'EEEE, MMMM d, yyyy');
+  if (isToday(d)) return t('today');
+  if (isYesterday(d)) return t('yesterday');
+  return format(d, 'EEEE, MMMM d, yyyy', { locale });
 }
 
-function formatLastSeen(ts: number): string {
+function formatLastSeen(
+  ts: number,
+  t: (key: TranslationKey, vars?: Record<string, string | number>) => string,
+  locale: Locale,
+): string {
   const d = new Date(ts);
-  if (isToday(d)) return `today at ${format(d, 'HH:mm')}`;
-  if (isYesterday(d)) return `yesterday at ${format(d, 'HH:mm')}`;
-  return format(d, 'dd/MM/yyyy HH:mm');
+  if (isToday(d)) return t('todayAt', { time: format(d, 'HH:mm') });
+  if (isYesterday(d)) return t('yesterdayAt', { time: format(d, 'HH:mm') });
+  return format(d, 'dd/MM/yyyy HH:mm', { locale });
 }

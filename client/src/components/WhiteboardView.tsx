@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { getSocket } from '../socket';
+import { useI18n } from '../i18n';
 import type { User } from '../types';
 import { API_URL } from '../api';
 
@@ -45,6 +46,7 @@ const ICE_SERVERS: RTCConfiguration = {
 };
 
 export default function WhiteboardView({ conversationId, pdfUrl, presenterId, currentUser, onEnd }: Props) {
+  const { t } = useI18n();
   const isPresenter = currentUser.id === presenterId;
 
   const [numPages, setNumPages] = useState(0);
@@ -645,7 +647,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   return (
     <div className="whiteboard-overlay">
       <div className="whiteboard-header">
-        <div className="whiteboard-title">Whiteboard</div>
+        <div className="whiteboard-title">{t('whiteboard')}</div>
         {numPages > 0 && (
           <div className="whiteboard-page-nav">
             <button className="icon-btn" onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1 || !isPresenter}>
@@ -660,19 +662,19 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
         <button
           className={`wb-voice-btn ${voiceActive ? (muted ? 'muted' : 'active') : ''}`}
           onClick={voiceActive ? toggleMute : toggleVoice}
-          title={voiceActive ? (muted ? 'Unmute' : 'Mute') : 'Join voice'}
+          title={voiceActive ? (muted ? t('unmute') : t('mute')) : t('joinVoice')}
         >
           {voiceActive && !muted ? <Mic size={18} /> : <MicOff size={18} />}
-          <span>{voiceActive ? (muted ? 'Muted' : 'Voice On') : 'Join Voice'}</span>
+          <span>{voiceActive ? (muted ? t('muted') : t('voiceOn')) : t('joinVoice')}</span>
         </button>
         {voiceActive && (
-          <button className="wb-voice-leave-btn" onClick={leaveVoice} title="Leave voice">
+          <button className="wb-voice-leave-btn" onClick={leaveVoice} title={t('leaveVoice')}>
             <MicOff size={18} />
           </button>
         )}
         <button className="whiteboard-end-btn" onClick={isPresenter ? handleEnd : () => { leaveVoice(); onEnd(); }}>
           <X size={18} />
-          <span>{isPresenter ? 'End' : 'Leave'}</span>
+          <span>{isPresenter ? t('end') : t('leave')}</span>
         </button>
       </div>
 
@@ -680,7 +682,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
         <div className="wb-participants-bar">
           <div className="wb-participants-label">
             <Users size={14} />
-            <span>In call · {voiceParticipants.length}</span>
+            <span>{t('inCall', { count: voiceParticipants.length })}</span>
           </div>
           <div className="wb-participants-list">
             {voiceParticipants.map(p => (
@@ -689,7 +691,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
                   {p.displayName.charAt(0).toUpperCase()}
                 </div>
                 <span className="wb-participant-name">
-                  {p.userId === currentUser.id ? 'You' : p.displayName}
+                  {p.userId === currentUser.id ? t('you') : p.displayName}
                 </span>
                 <span className={`wb-participant-mic ${p.muted ? 'muted' : ''}`}>
                   {p.muted ? <MicOff size={14} /> : <Mic size={14} />}
@@ -715,7 +717,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
         </div>
         {!activePdfUrl && (
           <div className="whiteboard-placeholder">
-            {isPresenter ? 'Upload a PDF to get started, or draw on the blank canvas' : 'Waiting for presenter...'}
+            {isPresenter ? t('uploadPdfPrompt') : t('waitingForPresenter')}
           </div>
         )}
       </div>
@@ -723,13 +725,13 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       {isPresenter && (
         <div className="whiteboard-toolbar">
           <div className="whiteboard-tool-group">
-            <button className={`wb-tool-btn ${tool === 'pen' ? 'active' : ''}`} onClick={() => setTool('pen')} title="Pen">
+            <button className={`wb-tool-btn ${tool === 'pen' ? 'active' : ''}`} onClick={() => setTool('pen')} title={t('pen')}>
               <Pencil size={18} />
             </button>
-            <button className={`wb-tool-btn ${tool === 'eraser' ? 'active' : ''}`} onClick={() => setTool('eraser')} title="Eraser">
+            <button className={`wb-tool-btn ${tool === 'eraser' ? 'active' : ''}`} onClick={() => setTool('eraser')} title={t('eraser')}>
               <Eraser size={18} />
             </button>
-            <button className="wb-tool-btn" onClick={handleClear} title="Clear page">
+            <button className="wb-tool-btn" onClick={handleClear} title={t('clearPage')}>
               <Trash2 size={18} />
             </button>
           </div>
@@ -753,7 +755,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
             ))}
           </div>
 
-          <label className="wb-tool-btn wb-upload-btn" title="Upload PDF">
+          <label className="wb-tool-btn wb-upload-btn" title={t('uploadPdf')}>
             <Upload size={18} />
             <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={handleUploadPdf} />
           </label>

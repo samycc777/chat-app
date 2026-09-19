@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { MessageCircle } from 'lucide-react';
 import type { User, Conversation, Message } from './types';
 import { api } from './api';
@@ -9,9 +9,17 @@ import ChatView from './components/ChatView';
 import CallView, { IncomingCallBanner } from './components/CallView';
 import type { CallState } from './components/CallView';
 import WhiteboardView from './components/WhiteboardView';
+import { useI18n } from './i18n';
 import './styles.css';
 
 export default function App() {
+  const { t, translateError } = useI18n();
+  const tRef = useRef(t);
+  const translateErrorRef = useRef(translateError);
+  useEffect(() => {
+    tRef.current = t;
+    translateErrorRef.current = translateError;
+  }, [t, translateError]);
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -116,7 +124,7 @@ export default function App() {
 
         socket.on('call_failed', (data: { reason: string }) => {
           setActiveCall(null);
-          alert(`Call failed: ${data.reason}`);
+          alert(tRef.current('callFailed', { reason: translateErrorRef.current(data.reason) }));
         });
 
         socket.on('wb_started', (data: {
@@ -271,7 +279,7 @@ export default function App() {
         <div className={`chat-area no-chat`}>
           <div className="empty-chat">
             <MessageCircle size={72} />
-            <p>Select a conversation or start a new chat</p>
+            <p>{t('selectConversation')}</p>
           </div>
         </div>
       )}

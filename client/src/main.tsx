@@ -2,6 +2,7 @@ import { StrictMode, Component, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
 import App from './App.tsx'
+import { I18nProvider } from './i18n.tsx'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -23,7 +24,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <I18nProvider>
+        <App />
+      </I18nProvider>
     </ErrorBoundary>
   </StrictMode>,
 )

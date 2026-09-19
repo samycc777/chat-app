@@ -1471,3 +1471,129 @@ input {
     height: 22px;
   }
 }
+
+/* Language switcher */
+.lang-switcher {
+  position: relative;
+}
+
+.lang-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+}
+
+.lang-menu {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  min-width: 150px;
+  padding: 4px 0;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px var(--shadow);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.lang-menu button {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  text-align: left;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.lang-menu button:hover {
+  background: var(--bg-hover);
+}
+
+.lang-menu button.active {
+  color: var(--text-accent);
+  font-weight: 600;
+}
+
+/* RTL adjustments */
+[dir="rtl"] .sidebar {
+  border-right: none;
+  border-left: 1px solid var(--border-color);
+}
+
+[dir="rtl"] .lang-menu {
+  right: auto;
+  left: 0;
+}
+
+[dir="rtl"] .lang-menu button {
+  text-align: right;
+}
+
+[dir="rtl"] .message-bubble.out {
+  border-top-right-radius: 8px;
+  border-top-left-radius: 2px;
+}
+
+[dir="rtl"] .message-bubble.in {
+  border-top-left-radius: 8px;
+  border-top-right-radius: 2px;
+}
+
+[dir="rtl"] .message-reply {
+  border-left: none;
+  border-right: 3px solid var(--text-accent);
+}
+
+[dir="rtl"] .reply-preview-content {
+  border-left: none;
+  border-right: 3px solid var(--text-accent);
+  padding-left: 0;
+  padding-right: 8px;
+}
+
+[dir="rtl"] .message-content {
+  padding-right: 0;
+  padding-left: 48px;
+}
+
+[dir="rtl"] .message-content.with-time {
+  padding-left: 60px;
+  padding-right: 0;
+}
+
+[dir="rtl"] .message-meta {
+  float: left;
+  margin-left: 0;
+  margin-right: 8px;
+}
+
+[dir="rtl"] .message-actions {
+  right: auto;
+  left: 4px;
+}
+
+[dir="rtl"] .context-menu button {
+  text-align: right;
+}
+
+[dir="rtl"] .unread-badge {
+  margin-left: 0;
+  margin-right: 8px;
+}
+
+[dir="rtl"] .call-local-video {
+  right: auto;
+  left: 20px;
+}
+
+[dir="rtl"] .call-video-info {
+  left: auto;
+  right: 30px;
+}
+
+@media (max-width: 768px) {
+  [dir="rtl"] .call-local-video {
+    right: auto;
+    left: 10px;
+  }
+}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { getSocket } from '../socket';
+import { useI18n } from '../i18n';
 import type { User } from '../types';
 import Avatar from './Avatar';
 
@@ -27,6 +28,7 @@ const ICE_SERVERS: RTCConfiguration = {
 };
 
 export default function CallView({ call, currentUser, onEnd }: Props) {
+  const { t } = useI18n();
   const [status, setStatus] = useState<'ringing' | 'connecting' | 'connected' | 'ended'>(
     call.direction === 'outgoing' ? 'ringing' : 'connecting'
   );
@@ -208,10 +210,10 @@ export default function CallView({ call, currentUser, onEnd }: Props) {
           <Avatar name={call.remoteUser.displayName} color={call.remoteUser.avatarColor} size="normal" />
           <div className="call-user-name">{call.remoteUser.displayName}</div>
           <div className="call-status-text">
-            {status === 'ringing' && 'Ringing...'}
-            {status === 'connecting' && 'Connecting...'}
+            {status === 'ringing' && t('ringing')}
+            {status === 'connecting' && t('connecting')}
             {status === 'connected' && formatTime(elapsed)}
-            {status === 'ended' && 'Call ended'}
+            {status === 'ended' && t('callEnded')}
           </div>
           <audio ref={remoteVideoRef} autoPlay />
         </div>
@@ -221,10 +223,10 @@ export default function CallView({ call, currentUser, onEnd }: Props) {
         <div className="call-video-info">
           <div className="call-user-name">{call.remoteUser.displayName}</div>
           <div className="call-status-text">
-            {status === 'ringing' && 'Ringing...'}
-            {status === 'connecting' && 'Connecting...'}
+            {status === 'ringing' && t('ringing')}
+            {status === 'connecting' && t('connecting')}
             {status === 'connected' && formatTime(elapsed)}
-            {status === 'ended' && 'Call ended'}
+            {status === 'ended' && t('callEnded')}
           </div>
         </div>
       )}
@@ -233,7 +235,7 @@ export default function CallView({ call, currentUser, onEnd }: Props) {
         <button
           className={`call-control-btn ${muted ? 'active' : ''}`}
           onClick={toggleMute}
-          title={muted ? 'Unmute' : 'Mute'}
+          title={muted ? t('unmute') : t('mute')}
         >
           {muted ? <MicOff size={24} /> : <Mic size={24} />}
         </button>
@@ -242,13 +244,13 @@ export default function CallView({ call, currentUser, onEnd }: Props) {
           <button
             className={`call-control-btn ${videoOff ? 'active' : ''}`}
             onClick={toggleVideo}
-            title={videoOff ? 'Turn on camera' : 'Turn off camera'}
+            title={videoOff ? t('turnOnCamera') : t('turnOffCamera')}
           >
             {videoOff ? <VideoOff size={24} /> : <Video size={24} />}
           </button>
         )}
 
-        <button className="call-control-btn end" onClick={endCall} title="End call">
+        <button className="call-control-btn end" onClick={endCall} title={t('endCall')}>
           <PhoneOff size={24} />
         </button>
       </div>
@@ -267,20 +269,21 @@ export function IncomingCallBanner({
   onAccept: () => void;
   onReject: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="incoming-call-banner">
       <Avatar name={caller.displayName} color={caller.avatarColor} size="small" />
       <div className="incoming-call-info">
         <div className="incoming-call-name">{caller.displayName}</div>
         <div className="incoming-call-type">
-          Incoming {callType} call...
+          {t('incomingCall', { type: t(callType) })}
         </div>
       </div>
       <div className="incoming-call-actions">
-        <button className="call-action-btn accept" onClick={onAccept} title="Accept">
+        <button className="call-action-btn accept" onClick={onAccept} title={t('accept')}>
           <Phone size={20} />
         </button>
-        <button className="call-action-btn reject" onClick={onReject} title="Reject">
+        <button className="call-action-btn reject" onClick={onReject} title={t('reject')}>
           <PhoneOff size={20} />
         </button>
       </div>

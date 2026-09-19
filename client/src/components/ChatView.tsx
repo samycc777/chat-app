@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  ArrowLeft, Paperclip, Send, Reply, Pencil, Trash2, X, Download,
+  ArrowLeft, Paperclip, Send, Reply, Pencil, Trash2, X, Download, Phone, Video, Monitor,
 } from 'lucide-react';
 import { format, isToday, isYesterday, isSameDay } from 'date-fns';
 import type { Conversation, Message, User } from '../types';
@@ -14,9 +14,11 @@ interface Props {
   currentUser: User;
   onlineUsers: Set<string>;
   onBack: () => void;
+  onStartCall: (type: 'audio' | 'video') => void;
+  onWhiteboardClick: () => void;
 }
 
-export default function ChatView({ conversation, currentUser, onlineUsers, onBack }: Props) {
+export default function ChatView({ conversation, currentUser, onlineUsers, onBack, onStartCall, onWhiteboardClick }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -235,6 +237,21 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
                   ? `last seen ${formatLastSeen(other.lastSeen)}`
                   : ''}
           </div>
+        </div>
+        <div className="chat-header-actions">
+          <button className="icon-btn" title="Whiteboard" onClick={onWhiteboardClick}>
+            <Monitor size={20} />
+          </button>
+          {conversation.type === 'direct' && (
+            <>
+              <button className="icon-btn" title="Voice call" onClick={() => onStartCall('audio')}>
+                <Phone size={20} />
+              </button>
+              <button className="icon-btn" title="Video call" onClick={() => onStartCall('video')}>
+                <Video size={20} />
+              </button>
+            </>
+          )}
         </div>
       </div>
 

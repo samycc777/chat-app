@@ -6,6 +6,9 @@ import { connectSocket, disconnectSocket, getSocket } from './socket';
 import Auth from './components/Auth';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
+import CallView, { IncomingCallBanner } from './components/CallView';
+import type { CallState } from './components/CallView';
+import WhiteboardView from './components/WhiteboardView';
 import './styles.css';
 
 export default function App() {
@@ -15,6 +18,33 @@ export default function App() {
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const [mobileShowChat, setMobileShowChat] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('theme') as 'dark' | 'light') || 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const [whiteboard, setWhiteboard] = useState<{
+    conversationId: string;
+    pdfUrl: string | null;
+    presenterId: string;
+  } | null>(null);
+  const [showWhiteboard, setShowWhiteboard] = useState(false);
+
+  const [activeCall, setActiveCall] = useState<CallState | null>(null);
+  const [incomingCall, setIncomingCall] = useState<{
+    from: User;
+    conversationId: string;
+    offer: RTCSessionDescriptionInit;
+    callType: 'audio' | 'video';
+  } | null>(null);
+
+  function toggleTheme() {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  }
 
   const loadConversations = useCallback(async () => {
     try {
@@ -70,6 +100,42 @@ export default function App() {
           });
         });
 
+        socket.on('incoming_call', (data: {
+          from: { id: string; username: string; displayName: string; avatarColor: string };
+          conversationId: string;
+          offer: RTCSessionDescriptionInit;
+          callType: 'audio' | 'video';
+        }) => {
+          setIncomingCall({
+            from: { ...data.from, status: '' },
+            conversationId: data.conversationId,
+            offer: data.offer,
+            callType: data.callType,
+          });
+        });
+
+        socket.on('call_failed', (data: { reason: string }) => {
+          setActiveCall(null);
+          alert(`Call failed: ${data.reason}`);
+        });
+
+        socket.on('wb_started', (data: {
+          conversationId: string; presenterId: string; pdfUrl: string | null;
+        }) => {
+          if (data.presenterId === user.id) return;
+          setWhiteboard({
+            conversationId: data.conversationId,
+            pdfUrl: data.pdfUrl,
+            presenterId: data.presenterId,
+          });
+          setShowWhiteboard(true);
+        });
+
+        socket.on('wb_ended', (data: { conversationId: string }) => {
+          setWhiteboard(prev => prev?.conversationId === data.conversationId ? null : prev);
+          setShowWhiteboard(false);
+        });
+
         loadConversations();
       })
       .catch(() => {
@@ -81,6 +147,63 @@ export default function App() {
       disconnectSocket();
     };
   }, [token, loadConversations]);
+
+  function handleStartCall(type: 'audio' | 'video') {
+    if (activeCall || !activeConvId) return;
+    const conv = conversations.find(c => c.id === activeConvId);
+    if (!conv || conv.type !== 'direct') return;
+    const other = conv.members.find(m => m.id !== currentUser?.id);
+    if (!other) return;
+
+    setActiveCall({
+      active: true,
+      type,
+      direction: 'outgoing',
+      remoteUser: other,
+      conversationId: activeConvId,
+    });
+  }
+
+  function handleAcceptCall() {
+    if (!incomingCall) return;
+    setActiveCall({
+      active: true,
+      type: incomingCall.callType,
+      direction: 'incoming',
+      remoteUser: incomingCall.from,
+      conversationId: incomingCall.conversationId,
+      offer: incomingCall.offer,
+    });
+    setIncomingCall(null);
+  }
+
+  function handleRejectCall() {
+    if (!incomingCall) return;
+    const socket = getSocket();
+    socket?.emit('call_reject', { targetUserId: incomingCall.from.id });
+    setIncomingCall(null);
+  }
+
+  function handleEndCall() {
+    setActiveCall(null);
+  }
+
+  function handleWhiteboardClick() {
+    if (!activeConvId || !currentUser) return;
+    if (whiteboard && whiteboard.conversationId === activeConvId) {
+      setShowWhiteboard(true);
+      return;
+    }
+    const socket = getSocket();
+    socket?.emit('wb_start', { conversationId: activeConvId });
+    setWhiteboard({ conversationId: activeConvId, pdfUrl: null, presenterId: currentUser.id });
+    setShowWhiteboard(true);
+  }
+
+  function handleWhiteboardEnd() {
+    setWhiteboard(null);
+    setShowWhiteboard(false);
+  }
 
   function handleAuth(newToken: string) {
     setToken(newToken);
@@ -131,6 +254,8 @@ export default function App() {
         onNewConversation={handleNewConversation}
         onLogout={handleLogout}
         hidden={mobileShowChat}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
       {activeConversation ? (
         <ChatView
@@ -139,6 +264,8 @@ export default function App() {
           currentUser={currentUser}
           onlineUsers={onlineUsers}
           onBack={() => setMobileShowChat(false)}
+          onStartCall={handleStartCall}
+          onWhiteboardClick={handleWhiteboardClick}
         />
       ) : (
         <div className={`chat-area no-chat`}>
@@ -147,6 +274,33 @@ export default function App() {
             <p>Select a conversation or start a new chat</p>
           </div>
         </div>
+      )}
+
+      {activeCall && currentUser && (
+        <CallView
+          call={activeCall}
+          currentUser={currentUser}
+          onEnd={handleEndCall}
+        />
+      )}
+
+      {showWhiteboard && whiteboard && currentUser && (
+        <WhiteboardView
+          conversationId={whiteboard.conversationId}
+          pdfUrl={whiteboard.pdfUrl}
+          presenterId={whiteboard.presenterId}
+          currentUser={currentUser}
+          onEnd={handleWhiteboardEnd}
+        />
+      )}
+
+      {incomingCall && !activeCall && (
+        <IncomingCallBanner
+          caller={incomingCall.from}
+          callType={incomingCall.callType}
+          onAccept={handleAcceptCall}
+          onReject={handleRejectCall}
+        />
       )}
     </div>
   );

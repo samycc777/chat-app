@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MessageSquarePlus, Users, Search, LogOut } from 'lucide-react';
+import { MessageSquarePlus, Users, Search, LogOut, Sun, Moon } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import type { Conversation, User } from '../types';
 import Avatar from './Avatar';
@@ -14,6 +14,8 @@ interface Props {
   onNewConversation: (conv: { id: string }) => void;
   onLogout: () => void;
   hidden?: boolean;
+  theme: 'dark' | 'light';
+  onToggleTheme: () => void;
 }
 
 function formatTime(ts: number | null) {
@@ -26,7 +28,7 @@ function formatTime(ts: number | null) {
 
 export default function Sidebar({
   conversations, activeId, currentUser, onlineUsers,
-  onSelect, onNewConversation, onLogout, hidden,
+  onSelect, onNewConversation, onLogout, hidden, theme, onToggleTheme,
 }: Props) {
   const [search, setSearch] = useState('');
   const [showNewChat, setShowNewChat] = useState<'direct' | 'group' | null>(null);
@@ -46,6 +48,9 @@ export default function Sidebar({
           </button>
           <button className="icon-btn" title="New group" onClick={() => setShowNewChat('group')}>
             <Users size={20} />
+          </button>
+          <button className="icon-btn" title="Toggle theme" onClick={onToggleTheme}>
+            {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
           </button>
           <button className="icon-btn" title="Logout" onClick={onLogout}>
             <LogOut size={20} />

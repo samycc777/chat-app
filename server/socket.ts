@@ -6,6 +6,24 @@ import { verifyToken } from './auth';
 
 const onlineUsers = new Map<string, Set<string>>();
 
+interface WbStroke {
+  id: string;
+  page: number;
+  points: { x: number; y: number }[];
+  color: string;
+  width: number;
+  tool: string;
+}
+
+interface WhiteboardSession {
+  pdfUrl: string | null;
+  presenterId: string;
+  currentPage: number;
+  strokes: { [page: number]: WbStroke[] };
+}
+
+const whiteboardSessions = new Map<string, WhiteboardSession>();
+
 export function setupSocket(httpServer: HttpServer) {
   const io = new Server(httpServer, {
     cors: { origin: '*', methods: ['GET', 'POST'] },
@@ -36,6 +54,18 @@ export function setupSocket(httpServer: HttpServer) {
     }
 
     broadcastPresence(io, userId, true);
+
+    for (const c of conversations) {
+      const session = whiteboardSessions.get(c.conversation_id);
+      if (session) {
+        socket.emit('wb_started', {
+          conversationId: c.conversation_id,
+          presenterId: session.presenterId,
+          pdfUrl: session.pdfUrl,
+          currentPage: session.currentPage,
+        });
+      }
+    }
 
     socket.on('send_message', (data, callback) => {
       const { conversationId, content, type, fileUrl, fileName, replyTo } = data;
@@ -129,6 +159,158 @@ export function setupSocket(httpServer: HttpServer) {
 
     socket.on('join_conversation', (data) => {
       socket.join(`conv:${data.conversationId}`);
+    });
+
+    socket.on('call_user', (data: { targetUserId: string; conversationId: string; offer: any; callType: 'audio' | 'video' }) => {
+      const caller = db.prepare('SELECT id, username, display_name, avatar_color FROM users WHERE id = ?').get(userId) as any;
+      if (!caller) return;
+
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets || targetSockets.size === 0) {
+        socket.emit('call_failed', { reason: 'User is offline' });
+        return;
+      }
+
+      for (const sid of targetSockets) {
+        io.to(sid).emit('incoming_call', {
+          from: { id: caller.id, username: caller.username, displayName: caller.display_name, avatarColor: caller.avatar_color },
+          conversationId: data.conversationId,
+          offer: data.offer,
+          callType: data.callType,
+        });
+      }
+    });
+
+    socket.on('call_answer', (data: { targetUserId: string; answer: any }) => {
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets) return;
+      for (const sid of targetSockets) {
+        io.to(sid).emit('call_answered', { from: userId, answer: data.answer });
+      }
+    });
+
+    socket.on('ice_candidate', (data: { targetUserId: string; candidate: any }) => {
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets) return;
+      for (const sid of targetSockets) {
+        io.to(sid).emit('ice_candidate', { from: userId, candidate: data.candidate });
+      }
+    });
+
+    socket.on('call_reject', (data: { targetUserId: string }) => {
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets) return;
+      for (const sid of targetSockets) {
+        io.to(sid).emit('call_rejected', { from: userId });
+      }
+    });
+
+    socket.on('call_end', (data: { targetUserId: string }) => {
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets) return;
+      for (const sid of targetSockets) {
+        io.to(sid).emit('call_ended', { from: userId });
+      }
+    });
+
+    // Whiteboard events
+    socket.on('wb_start', (data: { conversationId: string; pdfUrl?: string }) => {
+      const isMember = db.prepare(
+        'SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
+      ).get(data.conversationId, userId);
+      if (!isMember) return;
+
+      const session: WhiteboardSession = {
+        pdfUrl: data.pdfUrl || null,
+        presenterId: userId,
+        currentPage: 1,
+        strokes: {},
+      };
+      whiteboardSessions.set(data.conversationId, session);
+      io.to(`conv:${data.conversationId}`).emit('wb_started', {
+        conversationId: data.conversationId,
+        presenterId: userId,
+        pdfUrl: session.pdfUrl,
+        currentPage: 1,
+      });
+    });
+
+    socket.on('wb_end', (data: { conversationId: string }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session || session.presenterId !== userId) return;
+      whiteboardSessions.delete(data.conversationId);
+      socket.to(`conv:${data.conversationId}`).emit('wb_ended', {
+        conversationId: data.conversationId,
+      });
+    });
+
+    socket.on('wb_pdf', (data: { conversationId: string; pdfUrl: string }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session || session.presenterId !== userId) return;
+      session.pdfUrl = data.pdfUrl;
+      session.currentPage = 1;
+      session.strokes = {};
+      socket.to(`conv:${data.conversationId}`).emit('wb_pdf_loaded', {
+        conversationId: data.conversationId,
+        pdfUrl: data.pdfUrl,
+      });
+    });
+
+    socket.on('wb_page', (data: { conversationId: string; page: number }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session || session.presenterId !== userId) return;
+      session.currentPage = data.page;
+      socket.to(`conv:${data.conversationId}`).emit('wb_page_changed', {
+        conversationId: data.conversationId,
+        page: data.page,
+      });
+    });
+
+    socket.on('wb_draw', (data: {
+      conversationId: string; strokeId: string; page: number;
+      points: { x: number; y: number }[]; color: string; width: number; tool: string; done: boolean;
+    }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session || session.presenterId !== userId) return;
+
+      if (!session.strokes[data.page]) session.strokes[data.page] = [];
+      const existing = session.strokes[data.page].find(s => s.id === data.strokeId);
+      if (existing) {
+        existing.points.push(...data.points);
+      } else {
+        session.strokes[data.page].push({
+          id: data.strokeId, page: data.page,
+          points: [...data.points], color: data.color, width: data.width, tool: data.tool,
+        });
+      }
+
+      socket.to(`conv:${data.conversationId}`).emit('wb_draw', {
+        conversationId: data.conversationId,
+        strokeId: data.strokeId, page: data.page,
+        points: data.points, color: data.color, width: data.width, tool: data.tool, done: data.done,
+      });
+    });
+
+    socket.on('wb_clear', (data: { conversationId: string; page: number }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session || session.presenterId !== userId) return;
+      session.strokes[data.page] = [];
+      socket.to(`conv:${data.conversationId}`).emit('wb_cleared', {
+        conversationId: data.conversationId,
+        page: data.page,
+      });
+    });
+
+    socket.on('wb_get_state', (data: { conversationId: string }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session) return;
+      socket.emit('wb_state', {
+        conversationId: data.conversationId,
+        presenterId: session.presenterId,
+        pdfUrl: session.pdfUrl,
+        currentPage: session.currentPage,
+        strokes: session.strokes,
+      });
     });
 
     socket.on('disconnect', () => {

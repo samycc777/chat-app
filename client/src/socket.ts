@@ -6,10 +6,12 @@ let socket: Socket | null = null;
 export function connectSocket(token: string): Socket {
   if (socket?.connected) return socket;
 
-  socket = io(API_URL, {
+  const opts = {
     auth: { token },
-    transports: ['websocket', 'polling'],
-  });
+    transports: ['websocket', 'polling'] as const,
+  };
+
+  socket = API_URL ? io(API_URL, opts) : io(opts);
 
   return socket;
 }

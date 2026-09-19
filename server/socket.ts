@@ -21,6 +21,7 @@ interface WhiteboardSession {
   currentPage: number;
   strokes: { [page: number]: WbStroke[] };
   voiceParticipants: Map<string, { muted: boolean }>;
+  screenShareActive: boolean;
 }
 
 const whiteboardSessions = new Map<string, WhiteboardSession>();
@@ -236,6 +237,7 @@ export function setupSocket(httpServer: HttpServer) {
         currentPage: 1,
         strokes: {},
         voiceParticipants: new Map(),
+        screenShareActive: false,
       };
       whiteboardSessions.set(data.conversationId, session);
       io.to(`conv:${data.conversationId}`).emit('wb_started', {
@@ -322,6 +324,7 @@ export function setupSocket(httpServer: HttpServer) {
         currentPage: session.currentPage,
         strokes: session.strokes,
         voiceParticipants: getVoiceParticipantsInfo(session),
+        screenShareActive: session.screenShareActive,
       });
     });
 
@@ -406,6 +409,74 @@ export function setupSocket(httpServer: HttpServer) {
       }
     });
 
+    socket.on('wb_screen_start', (data: { conversationId: string }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session || session.presenterId !== userId) return;
+      session.screenShareActive = true;
+      socket.to(`conv:${data.conversationId}`).emit('wb_screen_started', {
+        conversationId: data.conversationId,
+        presenterId: userId,
+      });
+    });
+
+    socket.on('wb_screen_stop', (data: { conversationId: string }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session || session.presenterId !== userId) return;
+      session.screenShareActive = false;
+      socket.to(`conv:${data.conversationId}`).emit('wb_screen_stopped', {
+        conversationId: data.conversationId,
+      });
+    });
+
+    socket.on('wb_screen_watch', (data: { conversationId: string }) => {
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session || !session.screenShareActive) return;
+      const presenterSockets = onlineUsers.get(session.presenterId);
+      if (!presenterSockets) return;
+      for (const sid of presenterSockets) {
+        io.to(sid).emit('wb_screen_watcher', {
+          conversationId: data.conversationId,
+          viewerId: userId,
+        });
+      }
+    });
+
+    socket.on('wb_screen_offer', (data: { conversationId: string; targetUserId: string; offer: any }) => {
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets) return;
+      for (const sid of targetSockets) {
+        io.to(sid).emit('wb_screen_offer', {
+          conversationId: data.conversationId,
+          from: userId,
+          offer: data.offer,
+        });
+      }
+    });
+
+    socket.on('wb_screen_answer', (data: { conversationId: string; targetUserId: string; answer: any }) => {
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets) return;
+      for (const sid of targetSockets) {
+        io.to(sid).emit('wb_screen_answer', {
+          conversationId: data.conversationId,
+          from: userId,
+          answer: data.answer,
+        });
+      }
+    });
+
+    socket.on('wb_screen_ice', (data: { conversationId: string; targetUserId: string; candidate: any }) => {
+      const targetSockets = onlineUsers.get(data.targetUserId);
+      if (!targetSockets) return;
+      for (const sid of targetSockets) {
+        io.to(sid).emit('wb_screen_ice', {
+          conversationId: data.conversationId,
+          from: userId,
+          candidate: data.candidate,
+        });
+      }
+    });
+
     socket.on('disconnect', () => {
       const sockets = onlineUsers.get(userId);
       if (sockets) {
@@ -417,6 +488,10 @@ export function setupSocket(httpServer: HttpServer) {
           for (const [convId, session] of whiteboardSessions) {
             if (session.voiceParticipants.delete(userId)) {
               io.to(`conv:${convId}`).emit('wb_voice_left', { conversationId: convId, userId });
+            }
+            if (session.screenShareActive && session.presenterId === userId) {
+              session.screenShareActive = false;
+              io.to(`conv:${convId}`).emit('wb_screen_stopped', { conversationId: convId });
             }
           }
         }

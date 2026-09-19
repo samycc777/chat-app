@@ -1285,6 +1285,12 @@ input {
   max-width: 320px;
 }
 
+.whiteboard-screen-video {
+  display: block;
+  background: #000;
+  border-radius: 4px;
+}
+
 .whiteboard-upload-overlay {
   position: absolute;
   inset: 0;

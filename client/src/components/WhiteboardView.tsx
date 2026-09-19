@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  X, ChevronLeft, ChevronRight, Pencil, Eraser, Trash2, Upload, Mic, MicOff, Users,
+  X, ChevronLeft, ChevronRight, Pencil, Eraser, Trash2, Upload, Mic, MicOff, Users, Monitor,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -82,9 +82,19 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   const remoteAudioRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const [voiceParticipants, setVoiceParticipants] = useState<VoiceParticipant[]>([]);
 
+  const [screenSharing, setScreenSharing] = useState(false);
+  const [remoteScreenActive, setRemoteScreenActive] = useState(false);
+  const screenVideoRef = useRef<HTMLVideoElement>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const screenPeersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const screenActiveRef = useRef(false);
+
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { lineWidthRef.current = lineWidth; }, [lineWidth]);
+
+  const screenActive = screenSharing || remoteScreenActive;
+  useEffect(() => { screenActiveRef.current = screenActive; }, [screenActive]);
 
   function drawStrokeOnCanvas(ctx: CanvasRenderingContext2D, stroke: WbStroke, w: number, h: number) {
     if (stroke.points.length < 1) return;
@@ -223,8 +233,41 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   }, [activePdfUrl, renderPdfPage]);
 
   // Resize handler
+  function resizeForScreenShare() {
+    const container = containerRef.current;
+    const video = screenVideoRef.current;
+    const drawCanvas = drawCanvasRef.current;
+    if (!container || !video || !drawCanvas || !video.videoWidth) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const containerW = container.clientWidth;
+    const containerH = container.clientHeight;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const scale = Math.min((containerW - 32) / vw, (containerH - 32) / vh);
+    const w = Math.floor(vw * scale);
+    const h = Math.floor(vh * scale);
+
+    video.style.width = w + 'px';
+    video.style.height = h + 'px';
+
+    drawCanvas.width = w * dpr;
+    drawCanvas.height = h * dpr;
+    drawCanvas.style.width = w + 'px';
+    drawCanvas.style.height = h + 'px';
+
+    canvasSizeRef.current = { width: w, height: h };
+    renderStrokes();
+  }
+
   useEffect(() => {
-    function onResize() { renderPdfPage(currentPageRef.current); }
+    function onResize() {
+      if (screenActiveRef.current) {
+        resizeForScreenShare();
+      } else {
+        renderPdfPage(currentPageRef.current);
+      }
+    }
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [renderPdfPage]);
@@ -386,8 +429,46 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
     xhr.send(formData);
   }
 
+  async function startScreenShare() {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      screenStreamRef.current = stream;
+      setScreenSharing(true);
+      if (screenVideoRef.current) {
+        screenVideoRef.current.srcObject = stream;
+      }
+      strokesRef.current.clear();
+      currentPageRef.current = 1;
+      setCurrentPage(1);
+      renderStrokes();
+      getSocket()?.emit('wb_screen_start', { conversationId });
+      stream.getVideoTracks()[0].addEventListener('ended', () => {
+        stopScreenShare();
+      });
+    } catch (err) {
+      console.error('Screen share failed:', err);
+    }
+  }
+
+  function stopScreenShare() {
+    screenStreamRef.current?.getTracks().forEach(t => t.stop());
+    screenStreamRef.current = null;
+    for (const pc of screenPeersRef.current.values()) pc.close();
+    screenPeersRef.current.clear();
+    if (screenVideoRef.current) screenVideoRef.current.srcObject = null;
+    setScreenSharing(false);
+    getSocket()?.emit('wb_screen_stop', { conversationId });
+    renderPdfPage(currentPageRef.current);
+  }
+
+  function toggleScreenShare() {
+    if (screenSharing) stopScreenShare();
+    else startScreenShare();
+  }
+
   function handleEnd() {
     leaveVoice();
+    if (screenSharing) stopScreenShare();
     getSocket()?.emit('wb_end', { conversationId });
     onEnd();
   }
@@ -563,6 +644,8 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       voiceStreamRef.current?.getTracks().forEach(t => t.stop());
       for (const pc of peersRef.current.values()) pc.close();
       for (const audio of remoteAudioRef.current.values()) audio.srcObject = null;
+      screenStreamRef.current?.getTracks().forEach(t => t.stop());
+      for (const pc of screenPeersRef.current.values()) pc.close();
     };
   }, []);
 
@@ -635,7 +718,93 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
         }
         strokesRef.current = map;
       }
+      if (data.screenShareActive) {
+        setRemoteScreenActive(true);
+        socket!.emit('wb_screen_watch', { conversationId });
+      }
       renderPdfPage(data.currentPage || 1);
+    }
+
+    function handleScreenStarted(data: any) {
+      if (data.conversationId !== conversationId) return;
+      setRemoteScreenActive(true);
+      strokesRef.current.clear();
+      renderStrokes();
+      socket!.emit('wb_screen_watch', { conversationId });
+    }
+
+    function handleScreenStopped(data: any) {
+      if (data.conversationId !== conversationId) return;
+      for (const pc of screenPeersRef.current.values()) pc.close();
+      screenPeersRef.current.clear();
+      if (screenVideoRef.current) screenVideoRef.current.srcObject = null;
+      setRemoteScreenActive(false);
+      renderPdfPage(currentPageRef.current);
+    }
+
+    async function handleScreenWatcher(data: any) {
+      if (data.conversationId !== conversationId) return;
+      const stream = screenStreamRef.current;
+      if (!stream) return;
+      const pc = new RTCPeerConnection(ICE_SERVERS);
+      screenPeersRef.current.set(data.viewerId, pc);
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          socket!.emit('wb_screen_ice', {
+            conversationId,
+            targetUserId: data.viewerId,
+            candidate: e.candidate.toJSON(),
+          });
+        }
+      };
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket!.emit('wb_screen_offer', {
+        conversationId,
+        targetUserId: data.viewerId,
+        offer: pc.localDescription,
+      });
+    }
+
+    async function handleScreenOffer(data: any) {
+      if (data.conversationId !== conversationId) return;
+      const pc = new RTCPeerConnection(ICE_SERVERS);
+      screenPeersRef.current.set(data.from, pc);
+      pc.ontrack = (e) => {
+        if (e.streams[0] && screenVideoRef.current) {
+          screenVideoRef.current.srcObject = e.streams[0];
+        }
+      };
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          socket!.emit('wb_screen_ice', {
+            conversationId,
+            targetUserId: data.from,
+            candidate: e.candidate.toJSON(),
+          });
+        }
+      };
+      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket!.emit('wb_screen_answer', {
+        conversationId,
+        targetUserId: data.from,
+        answer: pc.localDescription,
+      });
+    }
+
+    async function handleScreenAnswer(data: any) {
+      if (data.conversationId !== conversationId) return;
+      const pc = screenPeersRef.current.get(data.from);
+      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+    }
+
+    function handleScreenIce(data: any) {
+      if (data.conversationId !== conversationId) return;
+      const pc = screenPeersRef.current.get(data.from);
+      if (pc) pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(() => {});
     }
 
     function handleVoiceJoinedTrack(data: any) {
@@ -672,6 +841,12 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
     socket.on('wb_voice_joined', handleVoiceJoinedTrack);
     socket.on('wb_voice_left', handleVoiceLeftTrack);
     socket.on('wb_voice_muted', handleVoiceMuted);
+    socket.on('wb_screen_started', handleScreenStarted);
+    socket.on('wb_screen_stopped', handleScreenStopped);
+    socket.on('wb_screen_watcher', handleScreenWatcher);
+    socket.on('wb_screen_offer', handleScreenOffer);
+    socket.on('wb_screen_answer', handleScreenAnswer);
+    socket.on('wb_screen_ice', handleScreenIce);
 
     return () => {
       socket.off('wb_draw', handleDraw);
@@ -683,6 +858,12 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       socket.off('wb_voice_joined', handleVoiceJoinedTrack);
       socket.off('wb_voice_left', handleVoiceLeftTrack);
       socket.off('wb_voice_muted', handleVoiceMuted);
+      socket.off('wb_screen_started', handleScreenStarted);
+      socket.off('wb_screen_stopped', handleScreenStopped);
+      socket.off('wb_screen_watcher', handleScreenWatcher);
+      socket.off('wb_screen_offer', handleScreenOffer);
+      socket.off('wb_screen_answer', handleScreenAnswer);
+      socket.off('wb_screen_ice', handleScreenIce);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
@@ -747,7 +928,16 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
 
       <div className="whiteboard-canvas-area" ref={containerRef}>
         <div className="whiteboard-canvas-wrap">
-          <canvas ref={pdfCanvasRef} className="whiteboard-pdf-canvas" />
+          <canvas ref={pdfCanvasRef} className="whiteboard-pdf-canvas" style={{ display: screenActive ? 'none' : undefined }} />
+          <video
+            ref={screenVideoRef}
+            className="whiteboard-screen-video"
+            autoPlay
+            playsInline
+            muted
+            onLoadedMetadata={() => resizeForScreenShare()}
+            style={{ display: screenActive ? 'block' : 'none' }}
+          />
           <canvas
             ref={drawCanvasRef}
             className="whiteboard-draw-canvas"
@@ -770,7 +960,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
             </div>
           </div>
         )}
-        {!activePdfUrl && !loadError && uploadProgress === null && (
+        {!activePdfUrl && !loadError && uploadProgress === null && !screenActive && (
           <div className="whiteboard-placeholder">
             {isPresenter ? t('uploadPdfPrompt') : t('waitingForPresenter')}
           </div>
@@ -819,6 +1009,13 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
             <Upload size={18} />
             <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={handleUploadPdf} />
           </label>
+          <button
+            className={`wb-tool-btn ${screenSharing ? 'active' : ''}`}
+            onClick={toggleScreenShare}
+            title={screenSharing ? t('stopSharing') : t('shareScreen')}
+          >
+            <Monitor size={18} />
+          </button>
         </div>
       )}
     </div>

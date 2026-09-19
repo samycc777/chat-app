@@ -1285,6 +1285,47 @@ input {
   max-width: 320px;
 }
 
+.whiteboard-upload-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+.whiteboard-upload-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 40px;
+  background: #1e1e30;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+.whiteboard-upload-bar {
+  width: 220px;
+  height: 8px;
+  background: #2a2a40;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.whiteboard-upload-fill {
+  height: 100%;
+  background: #6b8afd;
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+
+.whiteboard-upload-text {
+  color: #e0e0e0;
+  font-size: 14px;
+}
+
 .whiteboard-toolbar {
   display: flex;
   align-items: center;

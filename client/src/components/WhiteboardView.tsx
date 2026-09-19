@@ -54,6 +54,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   const [currentPage, setCurrentPage] = useState(1);
   const [activePdfUrl, setActivePdfUrl] = useState(pdfUrl);
   const [loadError, setLoadError] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [tool, setTool] = useState<'pen' | 'eraser'>('pen');
   const [color, setColor] = useState('#ef4444');
   const [lineWidth, setLineWidth] = useState(4);
@@ -326,43 +327,63 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
     getSocket()?.emit('wb_clear', { conversationId, page: currentPageRef.current });
   }
 
-  async function handleUploadPdf(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleUploadPdf(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoadError(false);
+    setUploadProgress(0);
+
     const formData = new FormData();
     formData.append('file', file);
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_URL}/api/upload`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        console.error('Upload failed:', res.status, err);
+    const token = localStorage.getItem('token');
+
+    const xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener('progress', (ev) => {
+      if (ev.lengthComputable) {
+        setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
+      }
+    });
+    xhr.addEventListener('load', () => {
+      setUploadProgress(null);
+      if (xhr.status < 200 || xhr.status >= 300) {
+        console.error('Upload failed:', xhr.status, xhr.responseText);
         setLoadError(true);
         e.target.value = '';
         return;
       }
-      const data = await res.json();
-      if (!data.url) {
-        console.error('Upload response missing url:', data);
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (!data.url) {
+          console.error('Upload response missing url:', data);
+          setLoadError(true);
+          e.target.value = '';
+          return;
+        }
+        setActivePdfUrl(data.url);
+        strokesRef.current.clear();
+        currentPageRef.current = 1;
+        setCurrentPage(1);
+        getSocket()?.emit('wb_pdf', { conversationId, pdfUrl: data.url });
+      } catch (err) {
+        console.error('Upload response parse error:', err);
         setLoadError(true);
-        e.target.value = '';
-        return;
       }
-      setActivePdfUrl(data.url);
-      strokesRef.current.clear();
-      currentPageRef.current = 1;
-      setCurrentPage(1);
-      getSocket()?.emit('wb_pdf', { conversationId, pdfUrl: data.url });
-    } catch (err) {
-      console.error('Upload failed:', err);
+      e.target.value = '';
+    });
+    xhr.addEventListener('error', () => {
+      setUploadProgress(null);
+      console.error('Upload network error');
       setLoadError(true);
-    }
-    e.target.value = '';
+      e.target.value = '';
+    });
+    xhr.addEventListener('abort', () => {
+      setUploadProgress(null);
+      e.target.value = '';
+    });
+
+    xhr.open('POST', `${API_URL}/api/upload`);
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.send(formData);
   }
 
   function handleEnd() {
@@ -737,7 +758,19 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
             style={{ cursor: isPresenter ? 'crosshair' : 'default' }}
           />
         </div>
-        {!activePdfUrl && !loadError && (
+        {uploadProgress !== null && (
+          <div className="whiteboard-upload-overlay">
+            <div className="whiteboard-upload-progress">
+              <div className="whiteboard-upload-bar">
+                <div className="whiteboard-upload-fill" style={{ width: `${uploadProgress}%` }} />
+              </div>
+              <span className="whiteboard-upload-text">
+                {uploadProgress < 100 ? `${t('uploading')}… ${uploadProgress}%` : t('processing')}
+              </span>
+            </div>
+          </div>
+        )}
+        {!activePdfUrl && !loadError && uploadProgress === null && (
           <div className="whiteboard-placeholder">
             {isPresenter ? t('uploadPdfPrompt') : t('waitingForPresenter')}
           </div>

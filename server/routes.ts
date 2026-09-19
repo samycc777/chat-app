@@ -18,7 +18,7 @@ const storage = multer.diskStorage({
     cb(null, `${uuid()}${ext}`);
   },
 });
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 
 router.get('/me', (req: AuthRequest, res: Response) => {
   const user = db.prepare(

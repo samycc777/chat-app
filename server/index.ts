@@ -2,16 +2,21 @@ import express from 'express';
 import http from 'http';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import authRouter from './auth';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
+
+const dataDir = process.env.DATA_DIR || path.join(__dirname, '..');
+const uploadsDir = path.join(dataDir, 'uploads');
+fs.mkdirSync(uploadsDir, { recursive: true });
 
 const app = express();
 const server = http.createServer(app);
 
 app.use(cors({ origin: '*' }));
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.use('/uploads', express.static(uploadsDir));
 
 app.use('/api/auth', authRouter);
 app.use('/api', apiRouter);

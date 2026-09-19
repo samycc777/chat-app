@@ -7,7 +7,8 @@
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "server": "nodemon --exec tsx server/index.ts --ext ts",
     "client": "cd client && npm run dev",
-    "build": "cd client && npm run build"
+    "build": "cd client && npm install && npx vite build",
+    "start": "tsx server/index.ts"
   },
   "keywords": [],
   "author": "",

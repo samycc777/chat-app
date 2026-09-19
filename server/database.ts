@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 
-const db = new Database(path.join(__dirname, '..', 'chat.db'));
+const dataDir = process.env.DATA_DIR || path.join(__dirname, '..');
+const db = new Database(path.join(dataDir, 'chat.db'));
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');

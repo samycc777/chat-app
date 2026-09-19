@@ -8,8 +8,11 @@ import { AuthRequest, authMiddleware } from './auth';
 const router = Router();
 router.use(authMiddleware);
 
+const dataDir = process.env.DATA_DIR || path.join(__dirname, '..');
+const uploadsDir = path.join(dataDir, 'uploads');
+
 const storage = multer.diskStorage({
-  destination: path.join(__dirname, '..', 'uploads'),
+  destination: uploadsDir,
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, `${uuid()}${ext}`);

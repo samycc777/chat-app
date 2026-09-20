@@ -110,3 +110,33 @@ test('conversation creation rejects unknown and repeated members', async () => {
   });
   assert.equal(repeated.status, 400);
 });
+
+test('ICE configuration requires authentication and rejects incomplete TURN settings', async () => {
+  const user = await register('iceconfig_test');
+  assert.equal((await fetch(`${baseUrl}/api/ice-config`)).status, 401);
+  const original = {
+    urls: process.env.TURN_URLS,
+    username: process.env.TURN_USERNAME,
+    credential: process.env.TURN_CREDENTIAL,
+  };
+  try {
+    process.env.TURN_URLS = 'turn:relay.example:3478';
+    delete process.env.TURN_USERNAME;
+    delete process.env.TURN_CREDENTIAL;
+    const invalid = await fetch(`${baseUrl}/api/ice-config`, { headers: { Authorization: `Bearer ${user.token}` } });
+    assert.equal(invalid.status, 503);
+    process.env.TURN_USERNAME = 'test-user';
+    process.env.TURN_CREDENTIAL = 'test-secret';
+    const configured = await fetch(`${baseUrl}/api/ice-config`, { headers: { Authorization: `Bearer ${user.token}` } });
+    assert.equal(configured.status, 200);
+    const body = await configured.json();
+    assert.equal(body.iceServers.at(-1).urls[0], 'turn:relay.example:3478');
+    assert.equal(body.iceServers.at(-1).username, 'test-user');
+    assert.equal(body.iceServers.at(-1).credential, 'test-secret');
+  } finally {
+    for (const [key, value] of Object.entries({ TURN_URLS: original.urls, TURN_USERNAME: original.username, TURN_CREDENTIAL: original.credential })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});

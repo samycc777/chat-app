@@ -23,6 +23,10 @@ async function request(path: string, options: RequestInit = {}) {
 }
 
 export const api = {
+  getIceConfiguration: async (): Promise<RTCConfiguration> => {
+    const data = await request('/api/ice-config');
+    return { iceServers: data.iceServers };
+  },
   register: (username: string, displayName: string, password: string) =>
     request('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, displayName, password }) }),
 

@@ -4,6 +4,7 @@ import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import type { User } from '../types';
 import Avatar from './Avatar';
+import { api } from '../api';
 
 export interface CallState {
   active: boolean;
@@ -12,19 +13,13 @@ export interface CallState {
   remoteUser: User;
   conversationId: string;
   offer?: RTCSessionDescriptionInit;
+  pendingCandidates?: RTCIceCandidateInit[];
 }
 
 interface Props {
   call: CallState;
   onEnd: () => void;
 }
-
-const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
-};
 
 export default function CallView({ call, onEnd }: Props) {
   const { t } = useI18n();
@@ -34,6 +29,7 @@ export default function CallView({ call, onEnd }: Props) {
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(call.type === 'audio');
   const [elapsed, setElapsed] = useState(0);
+  const [error, setError] = useState('');
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -41,9 +37,12 @@ export default function CallView({ call, onEnd }: Props) {
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const connectedAtRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>(call.pendingCandidates || []);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cleanup = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
     localStreamRef.current?.getTracks().forEach(t => t.stop());
     pcRef.current?.close();
     pcRef.current = null;
@@ -65,6 +64,7 @@ export default function CallView({ call, onEnd }: Props) {
     let cancelled = false;
 
     async function start() {
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) throw new Error(t('secureMediaRequired'));
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: call.type === 'video',
@@ -76,7 +76,9 @@ export default function CallView({ call, onEnd }: Props) {
         localVideoRef.current.srcObject = stream;
       }
 
-      const pc = new RTCPeerConnection(ICE_SERVERS);
+      const configuration = await api.getIceConfiguration();
+      if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+      const pc = new RTCPeerConnection(configuration);
       pcRef.current = pc;
 
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
@@ -84,6 +86,7 @@ export default function CallView({ call, onEnd }: Props) {
       pc.ontrack = (e) => {
         if (remoteVideoRef.current && e.streams[0]) {
           remoteVideoRef.current.srcObject = e.streams[0];
+          remoteVideoRef.current.play().catch(() => setError(t('mediaPlaybackBlocked')));
         }
       };
 
@@ -95,6 +98,7 @@ export default function CallView({ call, onEnd }: Props) {
 
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'connected') {
+          if (timeoutRef.current) clearTimeout(timeoutRef.current);
           setStatus('connected');
           connectedAtRef.current = Date.now();
           timerRef.current = setInterval(() => {
@@ -102,6 +106,7 @@ export default function CallView({ call, onEnd }: Props) {
           }, 1000);
         }
         if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          setError(t('networkCallFailed'));
           setStatus('ended');
           cleanup();
           setTimeout(onEnd, 1000);
@@ -119,13 +124,26 @@ export default function CallView({ call, onEnd }: Props) {
         });
       } else if (call.offer) {
         await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
+        for (const candidate of pendingCandidatesRef.current.splice(0)) await pc.addIceCandidate(candidate);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket!.emit('call_answer', { targetUserId: call.remoteUser.id, answer: pc.localDescription });
       }
+      timeoutRef.current = setTimeout(() => {
+        if (pc.connectionState !== 'connected') {
+          setError(t('callTimedOut'));
+          cleanup();
+          setStatus('ended');
+          setTimeout(onEnd, 1500);
+        }
+      }, 30000);
     }
 
-    start().catch(() => {
+    start().catch((cause: unknown) => {
+      const name = cause instanceof DOMException ? cause.name : '';
+      setError(name === 'NotAllowedError' || name === 'PermissionDeniedError' ? t('mediaPermissionDenied')
+        : name === 'NotFoundError' || name === 'DevicesNotFoundError' ? t('mediaDeviceMissing')
+          : cause instanceof Error ? cause.message : t('mediaSetupFailed'));
       setStatus('ended');
       cleanup();
       setTimeout(onEnd, 1000);
@@ -134,12 +152,18 @@ export default function CallView({ call, onEnd }: Props) {
     function handleAnswered(data: { from: string; answer: RTCSessionDescriptionInit }) {
       if (data.from !== call.remoteUser.id) return;
       setStatus('connecting');
-      pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
+      const pc = pcRef.current;
+      if (!pc) return;
+      pc.setRemoteDescription(new RTCSessionDescription(data.answer)).then(async () => {
+        for (const candidate of pendingCandidatesRef.current.splice(0)) await pc.addIceCandidate(candidate);
+      }).catch(() => setError(t('networkCallFailed')));
     }
 
     function handleIceCandidate(data: { from: string; candidate: RTCIceCandidateInit }) {
       if (data.from !== call.remoteUser.id) return;
-      pcRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(() => {});
+      const pc = pcRef.current;
+      if (!pc || !pc.remoteDescription) pendingCandidatesRef.current.push(data.candidate);
+      else pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(() => setError(t('networkCallFailed')));
     }
 
     function handleEnded(data: { from: string }) {
@@ -151,6 +175,7 @@ export default function CallView({ call, onEnd }: Props) {
 
     function handleRejected(data: { from: string }) {
       if (data.from !== call.remoteUser.id) return;
+      setError(t('callRejected'));
       setStatus('ended');
       cleanup();
       setTimeout(onEnd, 1000);
@@ -169,7 +194,7 @@ export default function CallView({ call, onEnd }: Props) {
       socket.off('call_rejected', handleRejected);
       cleanup();
     };
-  }, [call, cleanup, onEnd]);
+  }, [call, cleanup, onEnd, t]);
 
   function toggleMute() {
     const audio = localStreamRef.current?.getAudioTracks()[0];
@@ -197,6 +222,7 @@ export default function CallView({ call, onEnd }: Props) {
 
   return (
     <div className="call-overlay">
+      {error && <div className="call-error" role="alert">{error}</div>}
       {isVideo && (
         <>
           <video ref={remoteVideoRef} className="call-remote-video" autoPlay playsInline />

@@ -16,7 +16,7 @@ Run `npm run build` to compile the server and create the client bundle, then `np
 
 Uploads are limited to signature-checked images and PDFs, with a default maximum size of 10 MB (`MAX_UPLOAD_BYTES` can change the limit). They are served only to authenticated members of the conversation. Existing local chat uploads with safe filenames and recognized image/PDF contents are adopted during database startup. Old whiteboard PDFs that were referenced only by in-memory sessions must be uploaded again.
 
-SQLite and local uploads require one application instance. Presence and whiteboard sessions are held in memory and are lost on restart. WebRTC currently uses public STUN servers only, so restrictive networks may need a TURN service before calls can connect.
+SQLite and local uploads require one application instance. Presence and whiteboard sessions are held in memory and are lost on restart. WebRTC uses public STUN servers by default. For restrictive networks, configure an external TURN service with `TURN_URLS` (comma-separated `turn:` / `turns:` URLs), `TURN_USERNAME`, and `TURN_CREDENTIAL`. These values are served only through the authenticated ICE configuration endpoint; use short-lived provider credentials where possible and rotate them through your deployment secret manager. Calls can still fail on networks that block both direct traffic and the configured TURN transports.
 
 ## Environment variables
 

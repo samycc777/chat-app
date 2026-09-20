@@ -20,6 +20,29 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: Number(process.env.MAX_UPLOAD_BYTES) || 10 * 1024 * 1024 } });
 
+interface IceServerConfig { urls: string | string[]; username?: string; credential?: string; }
+
+function getIceServers(): IceServerConfig[] {
+  const urls = (process.env.TURN_URLS || '').split(',').map(value => value.trim()).filter(Boolean);
+  const username = process.env.TURN_USERNAME?.trim();
+  const credential = process.env.TURN_CREDENTIAL;
+  const anyTurnSetting = Boolean(process.env.TURN_URLS || username || credential);
+  if (anyTurnSetting && (!urls.length || !username || !credential)) throw new Error('TURN_URLS, TURN_USERNAME, and TURN_CREDENTIAL must be configured together');
+  return [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    ...(urls.length ? [{ urls, username, credential }] : []),
+  ];
+}
+
+router.get('/ice-config', (_req: AuthRequest, res: Response) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ iceServers: getIceServers() });
+  } catch (error) {
+    res.status(503).json({ error: error instanceof Error ? error.message : 'ICE configuration unavailable' });
+  }
+});
+
 function memberOf(conversationId: string, userId: string) {
   return Boolean(db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(conversationId, userId));
 }

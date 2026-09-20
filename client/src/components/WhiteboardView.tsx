@@ -8,6 +8,7 @@ import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import type { User } from '../types';
 import { api, API_URL } from '../api';
+import { addRemoteIceCandidate, createPeerConnection, setRemoteDescription } from '../webrtc';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
@@ -38,13 +39,6 @@ interface Props {
 const COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#000000', '#ffffff', '#eab308'];
 const WIDTHS = [2, 4, 8];
 const SEND_INTERVAL = 50;
-
-const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
-};
 
 export default function WhiteboardView({ conversationId, pdfUrl, presenterId, currentUser, onEnd }: Props) {
   const { t } = useI18n();
@@ -84,10 +78,24 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
 
   const [screenSharing, setScreenSharing] = useState(false);
   const [remoteScreenActive, setRemoteScreenActive] = useState(false);
+  const [screenError, setScreenError] = useState('');
+  const canShareScreen = Boolean(window.isSecureContext && navigator.mediaDevices?.getDisplayMedia);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const screenPeersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const screenActiveRef = useRef(false);
+  const earlyIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+
+  function queueEarlyIce(key: string, candidate: RTCIceCandidateInit) {
+    const candidates = earlyIceRef.current.get(key) || [];
+    if (candidates.length < 128) candidates.push(candidate);
+    earlyIceRef.current.set(key, candidates);
+  }
+
+  function takeEarlyIce(key: string, pc: RTCPeerConnection) {
+    for (const candidate of earlyIceRef.current.get(key) || []) addRemoteIceCandidate(pc, candidate).catch(() => {});
+    earlyIceRef.current.delete(key);
+  }
 
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { colorRef.current = color; }, [color]);
@@ -437,6 +445,10 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   }
 
   async function startScreenShare() {
+    if (!canShareScreen) {
+      setScreenError(t('screenShareUnsupported'));
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       screenStreamRef.current = stream;
@@ -454,6 +466,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       });
     } catch (err) {
       console.error('Screen share failed:', err);
+      setScreenError(t(err instanceof DOMException && err.name === 'NotAllowedError' ? 'mediaPermissionDenied' : 'screenShareFailed'));
     }
   }
 
@@ -469,6 +482,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
   }
 
   function toggleScreenShare() {
+    setScreenError('');
     if (screenSharing) stopScreenShare();
     else startScreenShare();
   }
@@ -480,9 +494,10 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
     onEnd();
   }
 
-  function createPeerConnection(peerId: string, stream: MediaStream): RTCPeerConnection {
-    const pc = new RTCPeerConnection(ICE_SERVERS);
+  async function createVoicePeerConnection(peerId: string, stream: MediaStream): Promise<RTCPeerConnection> {
+    const pc = await createPeerConnection();
     peersRef.current.set(peerId, pc);
+    takeEarlyIce(`voice:${peerId}`, pc);
 
     stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
@@ -575,7 +590,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       const stream = voiceStreamRef.current;
       if (!stream) return;
       for (const peerId of data.peers) {
-        const pc = createPeerConnection(peerId, stream);
+        const pc = await createVoicePeerConnection(peerId, stream);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         socket!.emit('wb_voice_offer', {
@@ -595,8 +610,8 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       if (data.conversationId !== conversationId) return;
       const stream = voiceStreamRef.current;
       if (!stream) return;
-      const pc = createPeerConnection(data.from, stream);
-      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+      const pc = await createVoicePeerConnection(data.from, stream);
+      await setRemoteDescription(pc, data.offer);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socket!.emit('wb_voice_answer', {
@@ -610,7 +625,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       if (data.conversationId !== conversationId) return;
       const pc = peersRef.current.get(data.from);
       if (pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        await setRemoteDescription(pc, data.answer);
       }
     }
 
@@ -618,8 +633,8 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       if (data.conversationId !== conversationId) return;
       const pc = peersRef.current.get(data.from);
       if (pc) {
-        pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(() => {});
-      }
+        addRemoteIceCandidate(pc, data.candidate).catch(() => {});
+      } else queueEarlyIce(`voice:${data.from}`, data.candidate);
     }
 
     function handleVoiceLeft(data: { conversationId: string; userId: string }) {
@@ -753,8 +768,9 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       if (data.conversationId !== conversationId) return;
       const stream = screenStreamRef.current;
       if (!stream) return;
-      const pc = new RTCPeerConnection(ICE_SERVERS);
+      const pc = await createPeerConnection();
       screenPeersRef.current.set(data.viewerId, pc);
+      takeEarlyIce(`screen:${data.viewerId}`, pc);
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
       pc.onicecandidate = (e) => {
         if (e.candidate) {
@@ -776,8 +792,9 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
 
     async function handleScreenOffer(data: any) {
       if (data.conversationId !== conversationId) return;
-      const pc = new RTCPeerConnection(ICE_SERVERS);
+      const pc = await createPeerConnection();
       screenPeersRef.current.set(data.from, pc);
+      takeEarlyIce(`screen:${data.from}`, pc);
       pc.ontrack = (e) => {
         if (e.streams[0] && screenVideoRef.current) {
           screenVideoRef.current.srcObject = e.streams[0];
@@ -792,7 +809,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
           });
         }
       };
-      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+      await setRemoteDescription(pc, data.offer);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socket!.emit('wb_screen_answer', {
@@ -805,13 +822,14 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
     async function handleScreenAnswer(data: any) {
       if (data.conversationId !== conversationId) return;
       const pc = screenPeersRef.current.get(data.from);
-      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+      if (pc) await setRemoteDescription(pc, data.answer);
     }
 
     function handleScreenIce(data: any) {
       if (data.conversationId !== conversationId) return;
       const pc = screenPeersRef.current.get(data.from);
-      if (pc) pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(() => {});
+      if (pc) addRemoteIceCandidate(pc, data.candidate).catch(() => {});
+      else queueEarlyIce(`screen:${data.from}`, data.candidate);
     }
 
     function handleVoiceJoinedTrack(data: any) {
@@ -934,6 +952,8 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       )}
 
       <div className="whiteboard-canvas-area" ref={containerRef}>
+        {!canShareScreen && <div className="whiteboard-error" role="status">{t('screenShareUnsupported')}</div>}
+        {screenError && <div className="whiteboard-error" role="alert">{screenError}</div>}
         <div className="whiteboard-canvas-wrap">
           <canvas ref={pdfCanvasRef} className="whiteboard-pdf-canvas" style={{ display: screenActive ? 'none' : undefined }} />
           <video
@@ -1019,7 +1039,9 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
           <button
             className={`wb-tool-btn ${screenSharing ? 'active' : ''}`}
             onClick={toggleScreenShare}
-            title={screenSharing ? t('stopSharing') : t('shareScreen')}
+            title={!canShareScreen ? t('screenShareUnsupported') : screenSharing ? t('stopSharing') : t('shareScreen')}
+            aria-label={!canShareScreen ? t('screenShareUnsupported') : screenSharing ? t('stopSharing') : t('shareScreen')}
+            disabled={!screenSharing && !canShareScreen}
           >
             <Monitor size={18} />
           </button>

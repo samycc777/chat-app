@@ -1285,6 +1285,20 @@ input {
   max-width: 320px;
 }
 
+.call-error {
+  position: absolute;
+  z-index: 20;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(90vw, 560px);
+  padding: 10px 16px;
+  border-radius: 8px;
+  color: #fff;
+  background: #b42318;
+  text-align: center;
+}
+
 .whiteboard-screen-video {
   display: block;
   background: #000;

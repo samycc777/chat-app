@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { enUS, ar } from 'date-fns/locale';
 import type { Locale } from 'date-fns';
 
@@ -38,6 +38,16 @@ const en = {
   chat: 'Chat',
   selectConversation: 'Select a conversation or start a new chat',
   callFailed: 'Call failed: {reason}',
+  secureMediaRequired: 'Calls require a secure HTTPS connection.',
+  mediaPermissionDenied: 'Camera or microphone permission was denied. Allow access and try again.',
+  mediaDeviceMissing: 'The required camera or microphone was not found.',
+  mediaSetupFailed: 'Could not start the call. Check your camera and microphone permissions.',
+  networkCallFailed: 'The call lost its network connection.',
+  callTimedOut: 'The call could not connect. Check your network and TURN settings.',
+  screenShareUnsupported: 'Screen sharing is unavailable in this browser. You can still watch a screen shared from a computer.',
+  screenShareFailed: 'Could not start screen sharing. Check browser permissions and try again.',
+  mediaPlaybackBlocked: 'Tap the call screen to enable audio playback.',
+  callRejected: 'The other person declined the call.',
   members: '{count} members',
   online: 'online',
   lastSeen: 'last seen {time}',
@@ -140,6 +150,16 @@ const ar_: typeof en = {
   chat: 'محادثة',
   selectConversation: 'اختر محادثة أو ابدأ محادثة جديدة',
   callFailed: 'فشلت المكالمة: {reason}',
+  secureMediaRequired: 'تتطلب المكالمات اتصال HTTPS آمنًا.',
+  mediaPermissionDenied: 'تم رفض إذن الكاميرا أو الميكروفون. اسمح بالوصول ثم حاول مجددًا.',
+  mediaDeviceMissing: 'لم يتم العثور على الكاميرا أو الميكروفون المطلوب.',
+  mediaSetupFailed: 'تعذر بدء المكالمة. تحقق من أذونات الكاميرا والميكروفون.',
+  networkCallFailed: 'انقطع اتصال الشبكة بالمكالمة.',
+  callTimedOut: 'تعذر اتصال المكالمة. تحقق من الشبكة وإعدادات TURN.',
+  screenShareUnsupported: 'مشاركة الشاشة غير متاحة في هذا المتصفح. يمكنك مشاهدة مشاركة بدأت من الكمبيوتر.',
+  screenShareFailed: 'تعذر بدء مشاركة الشاشة. تحقق من أذونات المتصفح ثم حاول مجددًا.',
+  mediaPlaybackBlocked: 'اضغط على شاشة المكالمة لتفعيل تشغيل الصوت.',
+  callRejected: 'رفض الطرف الآخر المكالمة.',
   members: '{count} أعضاء',
   online: 'متصل',
   lastSeen: 'آخر ظهور {time}',
@@ -254,7 +274,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('lang', lang);
   }, [lang, dir]);
 
-  function t(key: TranslationKey, vars?: Record<string, string | number>) {
+  const t = useCallback((key: TranslationKey, vars?: Record<string, string | number>) => {
     let str = translations[lang][key] ?? translations.en[key] ?? key;
     if (vars) {
       for (const [name, value] of Object.entries(vars)) {
@@ -262,12 +282,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       }
     }
     return str;
-  }
+  }, [lang]);
 
-  function translateError(raw: string) {
+  const translateError = useCallback((raw: string) => {
     const key = ERROR_KEY_MAP[raw];
     return key ? t(key) : raw;
-  }
+  }, [t]);
 
   return (
     <I18nContext.Provider

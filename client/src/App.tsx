@@ -49,6 +49,8 @@ export default function App() {
     offer: RTCSessionDescriptionInit;
     callType: 'audio' | 'video';
   } | null>(null);
+  const incomingCallRef = useRef<typeof incomingCall>(null);
+  const incomingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
 
   function toggleTheme() {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
@@ -114,12 +116,20 @@ export default function App() {
           offer: RTCSessionDescriptionInit;
           callType: 'audio' | 'video';
         }) => {
+          incomingCallRef.current = { from: { ...data.from, status: '' }, conversationId: data.conversationId, offer: data.offer, callType: data.callType };
           setIncomingCall({
             from: { ...data.from, status: '' },
             conversationId: data.conversationId,
             offer: data.offer,
             callType: data.callType,
           });
+        });
+
+        socket.on('ice_candidate', (data: { from: string; candidate: RTCIceCandidateInit }) => {
+          if (incomingCallRef.current?.from.id !== data.from) return;
+          const candidates = incomingCandidatesRef.current.get(data.from) || [];
+          if (candidates.length < 64) candidates.push(data.candidate);
+          incomingCandidatesRef.current.set(data.from, candidates);
         });
 
         socket.on('call_failed', (data: { reason: string }) => {
@@ -181,7 +191,10 @@ export default function App() {
       remoteUser: incomingCall.from,
       conversationId: incomingCall.conversationId,
       offer: incomingCall.offer,
+      pendingCandidates: incomingCandidatesRef.current.get(incomingCall.from.id) || [],
     });
+    incomingCandidatesRef.current.delete(incomingCall.from.id);
+    incomingCallRef.current = null;
     setIncomingCall(null);
   }
 
@@ -189,12 +202,14 @@ export default function App() {
     if (!incomingCall) return;
     const socket = getSocket();
     socket?.emit('call_reject', { targetUserId: incomingCall.from.id });
+    incomingCandidatesRef.current.delete(incomingCall.from.id);
+    incomingCallRef.current = null;
     setIncomingCall(null);
   }
 
-  function handleEndCall() {
+  const handleEndCall = useCallback(() => {
     setActiveCall(null);
-  }
+  }, []);
 
   function handleWhiteboardClick() {
     if (!activeConvId || !currentUser) return;

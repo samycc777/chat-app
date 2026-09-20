@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, Pencil, Eraser, Trash2, Upload, Mic, MicOff,
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { User } from '../types';
-import { api, MAX_ATTACHMENT_BYTES } from '../api';
+import { api } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import { addRemoteIceCandidate, createPeerConnection, setRemoteDescription } from '../webrtc';
@@ -30,7 +30,7 @@ function pointerDown(event: PointerEvent) { if (!presenter.value) return; event.
 function pointerMove(event: PointerEvent) { if (!drawing || !drawStroke) return; const p = point(event); drawStroke.points.push(p); getSocket()?.emit('wb_draw', { conversationId: props.conversationId, strokeId: drawStroke.id, page: page.value, points: [p], color: color.value, width: width.value, tool: tool.value, done: false }); renderStrokes(); }
 function pointerUp() { if (!drawing || !drawStroke) return; drawing = false; const stroke = drawStroke, list = strokes.get(stroke.page) || []; list.push(stroke); strokes.set(stroke.page, list); getSocket()?.emit('wb_draw', { conversationId: props.conversationId, strokeId: stroke.id, page: stroke.page, points: [], color: stroke.color, width: stroke.width, tool: stroke.tool, done: true }); drawStroke = null; renderStrokes(); }
 function clearPage() { if (!presenter.value) return; strokes.set(page.value, []); renderStrokes(); getSocket()?.emit('wb_clear', { conversationId: props.conversationId, page: page.value }); }
-async function uploadPdf(event: Event) { const input = event.target as HTMLInputElement, file = input.files?.[0]; if (!file) return; if (file.size > MAX_ATTACHMENT_BYTES) { error.value = t('fileTooLarge'); input.value = ''; return; } uploadProgress.value = 0; try { const result = await api.uploadFile(file, props.conversationId); uploadProgress.value = 100; activePdf.value = result.attachmentId; strokes.clear(); page.value = 1; getSocket()?.emit('wb_pdf', { conversationId: props.conversationId, attachmentId: result.attachmentId }); } catch (cause) { error.value = cause instanceof Error ? cause.message : t('pdfLoadError'); } finally { setTimeout(() => uploadProgress.value = null, 350); input.value = ''; } }
+async function uploadPdf(event: Event) { const input = event.target as HTMLInputElement, file = input.files?.[0]; if (!file) return; try { const limit = await api.getUploadLimit(); if (file.size > limit) { error.value = t('fileTooLarge', { limit: (limit / 1024 / 1024).toFixed(1) }); input.value = ''; return; } uploadProgress.value = 0; const result = await api.uploadFile(file, props.conversationId); uploadProgress.value = 100; activePdf.value = result.attachmentId; strokes.clear(); page.value = 1; getSocket()?.emit('wb_pdf', { conversationId: props.conversationId, attachmentId: result.attachmentId }); } catch (cause) { error.value = cause instanceof Error ? cause.message : t('pdfLoadError'); } finally { if (uploadProgress.value !== null) setTimeout(() => uploadProgress.value = null, 350); input.value = ''; } }
 function queueIce(key: string, candidate: RTCIceCandidateInit) { const items = earlyIce.get(key) || []; if (items.length < 128) items.push(candidate); earlyIce.set(key, items); }
 async function drainIce(key: string, pc: RTCPeerConnection) { for (const item of earlyIce.get(key) || []) await addRemoteIceCandidate(pc, item); earlyIce.delete(key); }
 function configureVoicePeer(pc: RTCPeerConnection, peerId: string) {

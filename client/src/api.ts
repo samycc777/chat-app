@@ -3,6 +3,8 @@ export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 let cachedIceConfig: RTCConfiguration | null = null;
 let cachedIceUntil = 0;
 let pendingIceConfig: Promise<RTCConfiguration> | null = null;
+let cachedUploadLimit: number | null = null;
+let pendingUploadLimit: Promise<number> | null = null;
 
 function getToken(): string | null {
   return sessionStorage.getItem('token');
@@ -37,6 +39,19 @@ export const api = {
     }).finally(() => { pendingIceConfig = null; });
     return pendingIceConfig;
   },
+  getUploadLimit: (): Promise<number> => {
+    if (cachedUploadLimit !== null) return Promise.resolve(cachedUploadLimit);
+    if (pendingUploadLimit) return pendingUploadLimit;
+    const pending = request('/api/upload-config').then(data => {
+      const limit = Number.isSafeInteger(data.maxUploadBytes) && data.maxUploadBytes > 0
+        ? data.maxUploadBytes
+        : MAX_ATTACHMENT_BYTES;
+      cachedUploadLimit = limit;
+      return limit;
+    }).finally(() => { pendingUploadLimit = null; });
+    pendingUploadLimit = pending;
+    return pending;
+  },
   joinClass: (classCode: string, visitorId: string, displayName: string) =>
     request('/api/auth/join', { method: 'POST', body: JSON.stringify({ classCode, visitorId, displayName }) }),
 
@@ -47,8 +62,9 @@ export const api = {
   getMessages: (conversationId: string, before?: number) =>
     request(`/api/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`),
 
-  uploadFile: (file: File, conversationId: string) => {
-    if (file.size > MAX_ATTACHMENT_BYTES) throw new Error('File exceeds the upload size limit (100 MB).');
+  uploadFile: async (file: File, conversationId: string) => {
+    const maxUploadBytes = await api.getUploadLimit();
+    if (file.size > maxUploadBytes) throw new Error(`File exceeds the upload size limit (${(maxUploadBytes / 1024 / 1024).toFixed(1)} MB).`);
     const formData = new FormData();
     formData.append('conversationId', conversationId);
     formData.append('file', file);

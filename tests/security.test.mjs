@@ -137,6 +137,14 @@ test('uploads larger than 100 MB are rejected with a clear size error', async ()
   assert.match((await rejected.json()).error, /100 MB/i);
 });
 
+test('upload configuration requires authentication and reports the configured default limit', async () => {
+  assert.equal((await fetch(`${baseUrl}/api/upload-config`)).status, 401);
+  const user = await join('Upload Config');
+  const response = await fetch(`${baseUrl}/api/upload-config`, { headers: { Authorization: `Bearer ${user.token}` } });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).maxUploadBytes, 100 * 1024 * 1024);
+});
+
 test('class code is required and the display name is restored from browser identity', async () => {
   const rejected = await fetch(`${baseUrl}/api/auth/join`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

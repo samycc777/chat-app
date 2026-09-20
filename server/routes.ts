@@ -72,6 +72,11 @@ router.get('/ice-config', async (_req: AuthRequest, res: Response) => {
   }
 });
 
+router.get('/upload-config', (_req: AuthRequest, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ maxUploadBytes: MAX_UPLOAD_BYTES });
+});
+
 function memberOf(conversationId: string, userId: string) {
   return conversationId === CLASSROOM_ID && Boolean(db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(CLASSROOM_ID, userId));
 }

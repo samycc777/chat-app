@@ -7,7 +7,7 @@ import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import type { User } from '../types';
-import { API_URL } from '../api';
+import { api, API_URL } from '../api';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
@@ -220,16 +220,22 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       renderPdfPage(currentPageRef.current);
       return;
     }
-    const url = `${API_URL}${activePdfUrl}`;
     setLoadError(false);
-    pdfjsLib.getDocument({ url }).promise.then(pdf => {
+    let live = true;
+    let objectUrl: string | null = null;
+    api.getAttachmentBlob(activePdfUrl).then(blob => {
+      objectUrl = URL.createObjectURL(blob);
+      return pdfjsLib.getDocument({ url: objectUrl }).promise;
+    }).then(pdf => {
+      if (!live) return;
       pdfDocRef.current = pdf;
       setNumPages(pdf.numPages);
       renderPdfPage(currentPageRef.current);
     }).catch(err => {
       console.error('PDF load failed:', err);
-      setLoadError(true);
+      if (live) setLoadError(true);
     });
+    return () => { live = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [activePdfUrl, renderPdfPage]);
 
   // Resize handler
@@ -377,6 +383,7 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
     setUploadProgress(0);
 
     const formData = new FormData();
+    formData.append('conversationId', conversationId);
     formData.append('file', file);
     const token = localStorage.getItem('token');
 
@@ -396,17 +403,17 @@ export default function WhiteboardView({ conversationId, pdfUrl, presenterId, cu
       }
       try {
         const data = JSON.parse(xhr.responseText);
-        if (!data.url) {
+        if (!data.attachmentId) {
           console.error('Upload response missing url:', data);
           setLoadError(true);
           e.target.value = '';
           return;
         }
-        setActivePdfUrl(data.url);
+        setActivePdfUrl(data.attachmentId);
         strokesRef.current.clear();
         currentPageRef.current = 1;
         setCurrentPage(1);
-        getSocket()?.emit('wb_pdf', { conversationId, pdfUrl: data.url });
+        getSocket()?.emit('wb_pdf', { conversationId, attachmentId: data.attachmentId });
       } catch (err) {
         console.error('Upload response parse error:', err);
         setLoadError(true);

@@ -2,6 +2,7 @@ import { Response, Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import db from './database';
 import { AuthRequest, authMiddleware } from './auth';
 
@@ -14,11 +15,23 @@ const uploadsDir = path.join(dataDir, 'uploads');
 const storage = multer.diskStorage({
   destination: uploadsDir,
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${uuid()}${ext}`);
+    cb(null, uuid());
   },
 });
-const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: Number(process.env.MAX_UPLOAD_BYTES) || 10 * 1024 * 1024 } });
+
+function memberOf(conversationId: string, userId: string) {
+  return Boolean(db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(conversationId, userId));
+}
+
+function detectMime(buffer: Buffer): string | null {
+  if (buffer.subarray(0, 5).toString() === '%PDF-') return 'application/pdf';
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
+  if (buffer.subarray(0, 6).toString() === 'GIF87a' || buffer.subarray(0, 6).toString() === 'GIF89a') return 'image/gif';
+  if (buffer.subarray(0, 4).toString() === 'RIFF' && buffer.subarray(8, 12).toString() === 'WEBP') return 'image/webp';
+  return null;
+}
 
 router.get('/me', (req: AuthRequest, res: Response) => {
   const user = db.prepare(
@@ -35,8 +48,8 @@ router.get('/me', (req: AuthRequest, res: Response) => {
 });
 
 router.get('/users/search', (req: AuthRequest, res: Response) => {
-  const q = req.query.q as string;
-  if (!q || q.length < 1) { res.json([]); return; }
+  const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+  if (!q) { res.json([]); return; }
   const users = db.prepare(
     `SELECT id, username, display_name, avatar_color, status FROM users
      WHERE (username LIKE ? OR display_name LIKE ?) AND id != ? LIMIT 20`
@@ -88,8 +101,14 @@ router.get('/conversations', (req: AuthRequest, res: Response) => {
 router.post('/conversations', (req: AuthRequest, res: Response) => {
   const { type, memberIds, name } = req.body;
 
+  if (!Array.isArray(memberIds) || !['direct', 'group'].includes(type) || memberIds.length > 49 ||
+      memberIds.some((id: unknown) => typeof id !== 'string') || new Set(memberIds).size !== memberIds.length ||
+      memberIds.includes(req.userId!)) {
+    res.status(400).json({ error: 'Invalid conversation members' });
+    return;
+  }
   if (type === 'direct') {
-    if (!memberIds || memberIds.length !== 1) {
+    if (memberIds.length !== 1) {
       res.status(400).json({ error: 'Direct conversation needs exactly one other member' });
       return;
     }
@@ -106,6 +125,11 @@ router.post('/conversations', (req: AuthRequest, res: Response) => {
       return;
     }
   }
+  if (type === 'group' && (!memberIds.length || typeof name !== 'string' || !name.trim() || name.trim().length > 80)) {
+    res.status(400).json({ error: 'Group name and members are required' }); return;
+  }
+  const foundMembers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE id IN (${memberIds.map(() => '?').join(',') || "''"})`).get(...memberIds) as { count: number };
+  if (foundMembers.count !== memberIds.length) { res.status(400).json({ error: 'Unknown conversation member' }); return; }
 
   const id = uuid();
   const allMembers = [req.userId!, ...(memberIds || [])];
@@ -118,7 +142,7 @@ router.post('/conversations', (req: AuthRequest, res: Response) => {
   );
 
   db.transaction(() => {
-    insertConversation.run(id, type || 'direct', name || null, req.userId!);
+    insertConversation.run(id, type, type === 'group' ? name.trim() : null, req.userId!);
     for (const memberId of allMembers) {
       insertMember.run(id, memberId);
     }
@@ -130,7 +154,12 @@ router.post('/conversations', (req: AuthRequest, res: Response) => {
 router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const before = req.query.before as string | undefined;
-  const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+  const parsedLimit = req.query.limit === undefined ? 50 : (typeof req.query.limit === 'string' ? Number(req.query.limit) : Number.NaN);
+  if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) { res.status(400).json({ error: 'Invalid message limit' }); return; }
+  const limit = parsedLimit;
+  if (before !== undefined && (typeof before !== 'string' || !/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) {
+    res.status(400).json({ error: 'Invalid message cursor' }); return;
+  }
 
   const isMember = db.prepare(
     'SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
@@ -138,7 +167,7 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   if (!isMember) { res.status(403).json({ error: 'Not a member' }); return; }
 
   let query = `
-    SELECT m.id, m.conversation_id, m.sender_id, m.content, m.type, m.file_url, m.file_name,
+    SELECT m.id, m.conversation_id, m.sender_id, m.content, m.type, m.file_url, m.file_name, m.attachment_id,
       m.reply_to, m.edited_at, m.deleted, m.created_at,
       u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color
     FROM messages m
@@ -174,7 +203,7 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
     return {
       id: m.id, conversationId: m.conversation_id, senderId: m.sender_id,
       content: m.deleted ? null : m.content, type: m.type,
-      fileUrl: m.deleted ? null : m.file_url, fileName: m.deleted ? null : m.file_name,
+      fileUrl: null, attachmentId: m.deleted ? null : m.attachment_id, fileName: m.deleted ? null : m.file_name,
       replyTo, editedAt: m.edited_at, deleted: !!m.deleted, createdAt: m.created_at,
       sender: {
         username: m.sender_username, displayName: m.sender_display_name,
@@ -188,12 +217,36 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
 
 router.post('/upload', upload.single('file'), (req: AuthRequest, res: Response) => {
   if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
-  const isImage = req.file.mimetype.startsWith('image/');
+  const conversationId = req.body.conversationId;
+  const storedPath = path.join(uploadsDir, req.file.filename);
+  if (typeof conversationId !== 'string' || !memberOf(conversationId, req.userId!)) {
+    fs.unlinkSync(storedPath); res.status(403).json({ error: 'Not a conversation member' }); return;
+  }
+  const mimeType = detectMime(fs.readFileSync(storedPath).subarray(0, 16));
+  if (!mimeType) { fs.unlinkSync(storedPath); res.status(415).json({ error: 'Only images and PDFs are allowed' }); return; }
+  const id = uuid();
+  const originalName = path.basename(req.file.originalname.replace(/[\\/]/g, '_')).slice(0, 180) || 'attachment';
+  db.prepare('INSERT INTO attachments (id, conversation_id, uploader_id, disk_name, original_name, mime_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, conversationId, req.userId!, req.file.filename, originalName, mimeType, req.file.size, Date.now());
   res.json({
-    url: `/uploads/${req.file.filename}`,
-    name: req.file.originalname,
-    type: isImage ? 'image' : 'file',
+    attachmentId: id,
+    name: originalName,
+    type: mimeType === 'application/pdf' ? 'file' : 'image',
   });
+});
+
+router.get('/attachments/:id', (req: AuthRequest, res: Response) => {
+  const attachment = db.prepare('SELECT * FROM attachments WHERE id = ?').get(req.params.id) as any;
+  if (!attachment || !memberOf(attachment.conversation_id, req.userId!)) {
+    res.status(404).json({ error: 'Attachment not found' }); return;
+  }
+  const diskPath = path.join(uploadsDir, attachment.disk_name);
+  if (!fs.existsSync(diskPath)) { res.status(404).json({ error: 'Attachment file not found' }); return; }
+  res.setHeader('Content-Type', attachment.mime_type);
+  res.setHeader('Content-Length', attachment.size);
+  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(attachment.original_name)}`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.sendFile(diskPath);
 });
 
 export default router;

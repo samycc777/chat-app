@@ -41,10 +41,19 @@ export const api = {
   getMessages: (conversationId: string, before?: number) =>
     request(`/api/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`),
 
-  uploadFile: (file: File) => {
+  uploadFile: (file: File, conversationId: string) => {
     const formData = new FormData();
+    formData.append('conversationId', conversationId);
     formData.append('file', file);
     return request('/api/upload', { method: 'POST', body: formData });
+  },
+  getAttachmentBlob: async (attachmentId: string): Promise<Blob> => {
+    const token = getToken();
+    const res = await fetch(`${API_URL}/api/attachments/${encodeURIComponent(attachmentId)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Attachment unavailable (${res.status})`);
+    return res.blob();
   },
 };
 

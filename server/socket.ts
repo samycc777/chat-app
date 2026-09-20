@@ -25,6 +25,12 @@ interface WhiteboardSession {
 }
 
 const whiteboardSessions = new Map<string, WhiteboardSession>();
+const activeCalls = new Map<string, { conversationId: string; users: Set<string> }>();
+
+function callKey(a: string, b: string) { return [a, b].sort().join(':'); }
+function memberInConversation(conversationId: string, userId: string) {
+  return Boolean(db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(conversationId, userId));
+}
 
 function getVoiceParticipantsInfo(session: WhiteboardSession) {
   const result: { userId: string; displayName: string; avatarColor: string; muted: boolean }[] = [];
@@ -35,9 +41,10 @@ function getVoiceParticipantsInfo(session: WhiteboardSession) {
   return result;
 }
 
-export function setupSocket(httpServer: HttpServer) {
+export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = []) {
   const io = new Server(httpServer, {
-    cors: { origin: '*', methods: ['GET', 'POST'] },
+    cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
+    maxHttpBufferSize: 256 * 1024,
   });
 
   io.use((socket, next) => {
@@ -51,6 +58,24 @@ export function setupSocket(httpServer: HttpServer) {
 
   io.on('connection', (socket) => {
     const userId = socket.data.userId as string;
+    const socketEventTimes: number[] = [];
+    const drawEventTimes: number[] = [];
+    socket.onAny((eventName) => {
+      const now = Date.now();
+      const isDraw = eventName === 'wb_draw';
+      const times = isDraw ? drawEventTimes : socketEventTimes;
+      while (times.length && times[0] < now - 60_000) times.shift();
+      times.push(now);
+      if (times.length > (isDraw ? 1800 : 300)) socket.disconnect(true);
+    });
+    const isMember = (conversationId: unknown) => typeof conversationId === 'string' && Boolean(db.prepare(
+      'SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
+    ).get(conversationId, userId));
+    const isCallPeer = (conversationId: unknown, targetUserId: unknown) => {
+      if (typeof targetUserId !== 'string' || !isMember(conversationId)) return false;
+      const call = activeCalls.get(callKey(userId, targetUserId));
+      return Boolean(call && call.conversationId === conversationId && call.users.has(userId) && call.users.has(targetUserId));
+    };
 
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId)!.add(socket.id);
@@ -79,20 +104,28 @@ export function setupSocket(httpServer: HttpServer) {
     }
 
     socket.on('send_message', (data, callback) => {
-      const { conversationId, content, type, fileUrl, fileName, replyTo } = data;
-
-      const isMember = db.prepare(
-        'SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
-      ).get(conversationId, userId);
-      if (!isMember) return callback?.({ error: 'Not a member' });
+      if (!data || !isMember(data.conversationId)) return callback?.({ error: 'Not a member' });
+      const { conversationId, content, type, replyTo } = data;
+      const safeType = type || 'text';
+      if (!['text', 'image', 'file'].includes(safeType) || (safeType === 'text' && (typeof content !== 'string' || !content.trim() || content.length > 8000))) return callback?.({ error: 'Invalid message' });
+      if (safeType !== 'text' && (!data.attachmentId || typeof data.attachmentId !== 'string')) return callback?.({ error: 'Attachment required' });
+      if (replyTo) {
+        const replied = db.prepare('SELECT 1 FROM messages WHERE id = ? AND conversation_id = ?').get(replyTo, conversationId);
+        if (!replied) return callback?.({ error: 'Invalid reply target' });
+      }
+      let attachment: any = null;
+      if (safeType !== 'text') {
+        attachment = db.prepare('SELECT id, original_name, mime_type FROM attachments WHERE id = ? AND conversation_id = ?').get(data.attachmentId, conversationId);
+        if (!attachment || (safeType === 'image') !== String(attachment.mime_type).startsWith('image/')) return callback?.({ error: 'Invalid attachment' });
+      }
 
       const id = uuid();
       const createdAt = Date.now();
 
       db.prepare(`
-        INSERT INTO messages (id, conversation_id, sender_id, content, type, file_url, file_name, reply_to, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, conversationId, userId, content || null, type || 'text', fileUrl || null, fileName || null, replyTo || null, createdAt);
+        INSERT INTO messages (id, conversation_id, sender_id, content, type, file_url, file_name, reply_to, created_at, attachment_id)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+      `).run(id, conversationId, userId, safeType === 'text' ? content : (safeType === 'file' ? attachment.original_name : null), safeType, attachment?.original_name || null, replyTo || null, createdAt, attachment?.id || null);
 
       const sender = db.prepare(
         'SELECT username, display_name, avatar_color FROM users WHERE id = ?'
@@ -114,7 +147,8 @@ export function setupSocket(httpServer: HttpServer) {
 
       const message = {
         id, conversationId, senderId: userId,
-        content, type: type || 'text', fileUrl, fileName,
+        content: safeType === 'text' ? content : (safeType === 'file' ? attachment.original_name : null), type: safeType,
+        fileUrl: null, attachmentId: attachment?.id || null, fileName: attachment?.original_name || null,
         replyTo: replyToData, editedAt: null, deleted: false, createdAt,
         sender: { username: sender.username, displayName: sender.display_name, avatarColor: sender.avatar_color },
       };
@@ -124,8 +158,9 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('edit_message', (data) => {
+      if (!data || typeof data.messageId !== 'string' || typeof data.content !== 'string' || data.content.length > 8000) return;
       const { messageId, content } = data;
-      const msg = db.prepare('SELECT sender_id, conversation_id FROM messages WHERE id = ?').get(messageId) as any;
+      const msg = db.prepare("SELECT sender_id, conversation_id FROM messages WHERE id = ? AND type = 'text'").get(messageId) as any;
       if (!msg || msg.sender_id !== userId) return;
 
       const editedAt = Date.now();
@@ -134,6 +169,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('delete_message', (data) => {
+      if (!data || typeof data.messageId !== 'string') return;
       const { messageId } = data;
       const msg = db.prepare('SELECT sender_id, conversation_id FROM messages WHERE id = ?').get(messageId) as any;
       if (!msg || msg.sender_id !== userId) return;
@@ -143,16 +179,19 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('typing', (data) => {
+      if (!data || !isMember(data.conversationId)) return;
       const { conversationId } = data;
       socket.to(`conv:${conversationId}`).emit('user_typing', { conversationId, userId });
     });
 
     socket.on('stop_typing', (data) => {
+      if (!data || !isMember(data.conversationId)) return;
       const { conversationId } = data;
       socket.to(`conv:${conversationId}`).emit('user_stop_typing', { conversationId, userId });
     });
 
     socket.on('mark_read', (data) => {
+      if (!data || !isMember(data.conversationId)) return;
       const { conversationId } = data;
       const messages = db.prepare(
         `SELECT id FROM messages WHERE conversation_id = ? AND sender_id != ?
@@ -169,10 +208,16 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('join_conversation', (data) => {
-      socket.join(`conv:${data.conversationId}`);
+      if (data && isMember(data.conversationId)) socket.join(`conv:${data.conversationId}`);
     });
 
     socket.on('call_user', (data: { targetUserId: string; conversationId: string; offer: any; callType: 'audio' | 'video' }) => {
+      if (!data || !['audio', 'video'].includes(data.callType) || !data.offer || !isMember(data.conversationId)) return;
+      const direct = db.prepare(`SELECT 1 FROM conversations c WHERE c.id = ? AND c.type = 'direct'
+        AND EXISTS (SELECT 1 FROM conversation_members WHERE conversation_id = c.id AND user_id = ?)
+        AND EXISTS (SELECT 1 FROM conversation_members WHERE conversation_id = c.id AND user_id = ?)`)
+        .get(data.conversationId, userId, data.targetUserId);
+      if (!direct) return;
       const caller = db.prepare('SELECT id, username, display_name, avatar_color FROM users WHERE id = ?').get(userId) as any;
       if (!caller) return;
 
@@ -181,6 +226,7 @@ export function setupSocket(httpServer: HttpServer) {
         socket.emit('call_failed', { reason: 'User is offline' });
         return;
       }
+      activeCalls.set(callKey(userId, data.targetUserId), { conversationId: data.conversationId, users: new Set([userId, data.targetUserId]) });
 
       for (const sid of targetSockets) {
         io.to(sid).emit('incoming_call', {
@@ -193,6 +239,8 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('call_answer', (data: { targetUserId: string; answer: any }) => {
+      const call = activeCalls.get(callKey(userId, data?.targetUserId));
+      if (!call || !call.users.has(userId)) return;
       const targetSockets = onlineUsers.get(data.targetUserId);
       if (!targetSockets) return;
       for (const sid of targetSockets) {
@@ -201,6 +249,8 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('ice_candidate', (data: { targetUserId: string; candidate: any }) => {
+      const call = activeCalls.get(callKey(userId, data?.targetUserId));
+      if (!call || !call.users.has(userId)) return;
       const targetSockets = onlineUsers.get(data.targetUserId);
       if (!targetSockets) return;
       for (const sid of targetSockets) {
@@ -209,6 +259,9 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('call_reject', (data: { targetUserId: string }) => {
+      const call = activeCalls.get(callKey(userId, data?.targetUserId));
+      if (!call || !call.users.has(userId)) return;
+      activeCalls.delete(callKey(userId, data.targetUserId));
       const targetSockets = onlineUsers.get(data.targetUserId);
       if (!targetSockets) return;
       for (const sid of targetSockets) {
@@ -217,6 +270,9 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('call_end', (data: { targetUserId: string }) => {
+      const call = activeCalls.get(callKey(userId, data?.targetUserId));
+      if (!call || !call.users.has(userId)) return;
+      activeCalls.delete(callKey(userId, data.targetUserId));
       const targetSockets = onlineUsers.get(data.targetUserId);
       if (!targetSockets) return;
       for (const sid of targetSockets) {
@@ -225,14 +281,17 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     // Whiteboard events
-    socket.on('wb_start', (data: { conversationId: string; pdfUrl?: string }) => {
-      const isMember = db.prepare(
-        'SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
-      ).get(data.conversationId, userId);
-      if (!isMember) return;
+    socket.on('wb_start', (data: { conversationId: string; attachmentId?: string }) => {
+      if (!data || !isMember(data.conversationId)) return;
+      let initialPdfId: string | null = null;
+      if (data.attachmentId) {
+        const attachment = db.prepare("SELECT id FROM attachments WHERE id = ? AND conversation_id = ? AND mime_type = 'application/pdf'").get(data.attachmentId, data.conversationId) as { id: string } | undefined;
+        if (!attachment) return;
+        initialPdfId = attachment.id;
+      }
 
       const session: WhiteboardSession = {
-        pdfUrl: data.pdfUrl || null,
+        pdfUrl: initialPdfId,
         presenterId: userId,
         currentPage: 1,
         strokes: {},
@@ -249,6 +308,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_end', (data: { conversationId: string }) => {
+      if (!data || !isMember(data.conversationId)) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session || session.presenterId !== userId) return;
       whiteboardSessions.delete(data.conversationId);
@@ -257,19 +317,23 @@ export function setupSocket(httpServer: HttpServer) {
       });
     });
 
-    socket.on('wb_pdf', (data: { conversationId: string; pdfUrl: string }) => {
+    socket.on('wb_pdf', (data: { conversationId: string; attachmentId: string }) => {
+      if (!data || !isMember(data.conversationId)) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session || session.presenterId !== userId) return;
-      session.pdfUrl = data.pdfUrl;
+      const attachment = db.prepare("SELECT id FROM attachments WHERE id = ? AND conversation_id = ? AND mime_type = 'application/pdf'").get(data.attachmentId, data.conversationId) as { id: string } | undefined;
+      if (!attachment) return;
+      session.pdfUrl = attachment.id;
       session.currentPage = 1;
       session.strokes = {};
       socket.to(`conv:${data.conversationId}`).emit('wb_pdf_loaded', {
         conversationId: data.conversationId,
-        pdfUrl: data.pdfUrl,
+        pdfUrl: attachment.id,
       });
     });
 
     socket.on('wb_page', (data: { conversationId: string; page: number }) => {
+      if (!data || !isMember(data.conversationId) || !Number.isInteger(data.page) || data.page < 1) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session || session.presenterId !== userId) return;
       session.currentPage = data.page;
@@ -283,14 +347,21 @@ export function setupSocket(httpServer: HttpServer) {
       conversationId: string; strokeId: string; page: number;
       points: { x: number; y: number }[]; color: string; width: number; tool: string; done: boolean;
     }) => {
+      if (!data || !isMember(data.conversationId) || typeof data.strokeId !== 'string' || data.strokeId.length > 80 ||
+          !Number.isInteger(data.page) || data.page < 1 || typeof data.done !== 'boolean' ||
+          !Array.isArray(data.points) || data.points.length > 256 ||
+          data.points.some((point: any) => !point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) ||
+          !/^#[0-9a-f]{6}$/i.test(data.color) || ![2, 4, 8].includes(data.width) || !['pen', 'eraser'].includes(data.tool)) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session || session.presenterId !== userId) return;
 
       if (!session.strokes[data.page]) session.strokes[data.page] = [];
       const existing = session.strokes[data.page].find(s => s.id === data.strokeId);
       if (existing) {
+        if (existing.points.length + data.points.length > 10_000) return;
         existing.points.push(...data.points);
       } else {
+        if (session.strokes[data.page].length >= 1000) return;
         session.strokes[data.page].push({
           id: data.strokeId, page: data.page,
           points: [...data.points], color: data.color, width: data.width, tool: data.tool,
@@ -305,6 +376,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_clear', (data: { conversationId: string; page: number }) => {
+      if (!data || !isMember(data.conversationId) || !Number.isInteger(data.page) || data.page < 1) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session || session.presenterId !== userId) return;
       session.strokes[data.page] = [];
@@ -315,6 +387,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_get_state', (data: { conversationId: string }) => {
+      if (!data || !isMember(data.conversationId)) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session) return;
       socket.emit('wb_state', {
@@ -329,6 +402,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_voice_join', (data: { conversationId: string }) => {
+      if (!data || !isMember(data.conversationId)) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session) return;
       const existingPeers = Array.from(session.voiceParticipants.keys());
@@ -351,6 +425,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_voice_leave', (data: { conversationId: string }) => {
+      if (!data || !isMember(data.conversationId)) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session) return;
       session.voiceParticipants.delete(userId);
@@ -361,6 +436,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_voice_mute', (data: { conversationId: string; muted: boolean }) => {
+      if (!data || !isMember(data.conversationId) || typeof data.muted !== 'boolean') return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session) return;
       const state = session.voiceParticipants.get(userId);
@@ -374,6 +450,9 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_voice_offer', (data: { conversationId: string; targetUserId: string; offer: any }) => {
+      if (!data || !isMember(data.conversationId) || !memberInConversation(data.conversationId, data.targetUserId)) return;
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session?.voiceParticipants.has(userId) || !session.voiceParticipants.has(data.targetUserId)) return;
       const targetSockets = onlineUsers.get(data.targetUserId);
       if (!targetSockets) return;
       for (const sid of targetSockets) {
@@ -386,6 +465,9 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_voice_answer', (data: { conversationId: string; targetUserId: string; answer: any }) => {
+      if (!data || !isMember(data.conversationId) || !memberInConversation(data.conversationId, data.targetUserId)) return;
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session?.voiceParticipants.has(userId) || !session.voiceParticipants.has(data.targetUserId)) return;
       const targetSockets = onlineUsers.get(data.targetUserId);
       if (!targetSockets) return;
       for (const sid of targetSockets) {
@@ -398,6 +480,9 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_voice_ice', (data: { conversationId: string; targetUserId: string; candidate: any }) => {
+      if (!data || !isMember(data.conversationId) || !memberInConversation(data.conversationId, data.targetUserId)) return;
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session?.voiceParticipants.has(userId) || !session.voiceParticipants.has(data.targetUserId)) return;
       const targetSockets = onlineUsers.get(data.targetUserId);
       if (!targetSockets) return;
       for (const sid of targetSockets) {
@@ -410,6 +495,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_screen_start', (data: { conversationId: string }) => {
+      if (!data || !isMember(data.conversationId)) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session || session.presenterId !== userId) return;
       session.screenShareActive = true;
@@ -420,6 +506,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_screen_stop', (data: { conversationId: string }) => {
+      if (!data || !isMember(data.conversationId)) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session || session.presenterId !== userId) return;
       session.screenShareActive = false;
@@ -429,6 +516,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_screen_watch', (data: { conversationId: string }) => {
+      if (!data || !isMember(data.conversationId)) return;
       const session = whiteboardSessions.get(data.conversationId);
       if (!session || !session.screenShareActive) return;
       const presenterSockets = onlineUsers.get(session.presenterId);
@@ -442,6 +530,9 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_screen_offer', (data: { conversationId: string; targetUserId: string; offer: any }) => {
+      if (!data || !isMember(data.conversationId) || !memberInConversation(data.conversationId, data.targetUserId)) return;
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session?.screenShareActive || session.presenterId !== userId) return;
       const targetSockets = onlineUsers.get(data.targetUserId);
       if (!targetSockets) return;
       for (const sid of targetSockets) {
@@ -454,6 +545,9 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_screen_answer', (data: { conversationId: string; targetUserId: string; answer: any }) => {
+      if (!data || !isMember(data.conversationId) || !memberInConversation(data.conversationId, data.targetUserId)) return;
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session?.screenShareActive || session.presenterId !== data.targetUserId) return;
       const targetSockets = onlineUsers.get(data.targetUserId);
       if (!targetSockets) return;
       for (const sid of targetSockets) {
@@ -466,6 +560,9 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('wb_screen_ice', (data: { conversationId: string; targetUserId: string; candidate: any }) => {
+      if (!data || !isMember(data.conversationId) || !memberInConversation(data.conversationId, data.targetUserId)) return;
+      const session = whiteboardSessions.get(data.conversationId);
+      if (!session?.screenShareActive || (session.presenterId !== userId && session.presenterId !== data.targetUserId)) return;
       const targetSockets = onlineUsers.get(data.targetUserId);
       if (!targetSockets) return;
       for (const sid of targetSockets) {
@@ -478,6 +575,7 @@ export function setupSocket(httpServer: HttpServer) {
     });
 
     socket.on('disconnect', () => {
+      for (const [key, call] of activeCalls) if (call.users.has(userId)) activeCalls.delete(key);
       const sockets = onlineUsers.get(userId);
       if (sockets) {
         sockets.delete(socket.id);

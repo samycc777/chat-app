@@ -16,7 +16,6 @@ export interface CallState {
 
 interface Props {
   call: CallState;
-  currentUser: User;
   onEnd: () => void;
 }
 
@@ -27,7 +26,7 @@ const ICE_SERVERS: RTCConfiguration = {
   ],
 };
 
-export default function CallView({ call, currentUser, onEnd }: Props) {
+export default function CallView({ call, onEnd }: Props) {
   const { t } = useI18n();
   const [status, setStatus] = useState<'ringing' | 'connecting' | 'connected' | 'ended'>(
     call.direction === 'outgoing' ? 'ringing' : 'connecting'
@@ -90,7 +89,7 @@ export default function CallView({ call, currentUser, onEnd }: Props) {
 
       pc.onicecandidate = (e) => {
         if (e.candidate) {
-          socket.emit('ice_candidate', { targetUserId: call.remoteUser.id, candidate: e.candidate.toJSON() });
+          socket!.emit('ice_candidate', { targetUserId: call.remoteUser.id, candidate: e.candidate.toJSON() });
         }
       };
 
@@ -112,7 +111,7 @@ export default function CallView({ call, currentUser, onEnd }: Props) {
       if (call.direction === 'outgoing') {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        socket.emit('call_user', {
+        socket!.emit('call_user', {
           targetUserId: call.remoteUser.id,
           conversationId: call.conversationId,
           offer: pc.localDescription,
@@ -122,7 +121,7 @@ export default function CallView({ call, currentUser, onEnd }: Props) {
         await pc.setRemoteDescription(new RTCSessionDescription(call.offer));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        socket.emit('call_answer', { targetUserId: call.remoteUser.id, answer: pc.localDescription });
+        socket!.emit('call_answer', { targetUserId: call.remoteUser.id, answer: pc.localDescription });
       }
     }
 

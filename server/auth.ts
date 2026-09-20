@@ -4,7 +4,12 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
 import db from './database';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'chat-app-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production'
+  ? (() => { throw new Error('JWT_SECRET is required in production'); })()
+  : 'local-development-only-change-me');
+if (process.env.NODE_ENV === 'production' && JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET must be at least 32 characters in production');
+}
 const AVATAR_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 
 export interface AuthRequest extends Request {
@@ -38,7 +43,9 @@ export function verifyToken(token: string): string | null {
 const router = Router();
 
 router.post('/register', (req: Request, res: Response) => {
-  const { username, displayName, password } = req.body;
+  const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+  const displayName = typeof req.body.displayName === 'string' ? req.body.displayName.trim() : '';
+  const password = typeof req.body.password === 'string' ? req.body.password : '';
   if (!username || !displayName || !password) {
     res.status(400).json({ error: 'All fields are required' });
     return;
@@ -47,8 +54,12 @@ router.post('/register', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Username must be 3-20 characters' });
     return;
   }
-  if (password.length < 6) {
-    res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (password.length < 10 || password.length > 128) {
+    res.status(400).json({ error: 'Password must be 10-128 characters' });
+    return;
+  }
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(username) || !displayName || displayName.length > 60) {
+    res.status(400).json({ error: 'Invalid username or display name' });
     return;
   }
 
@@ -75,8 +86,9 @@ router.post('/register', (req: Request, res: Response) => {
 });
 
 router.post('/login', (req: Request, res: Response) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
+  const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+  const password = typeof req.body.password === 'string' ? req.body.password : '';
+  if (!username || !password || password.length > 128) {
     res.status(400).json({ error: 'Username and password are required' });
     return;
   }

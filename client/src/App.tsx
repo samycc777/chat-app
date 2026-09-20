@@ -287,7 +287,6 @@ export default function App() {
       {activeCall && currentUser && (
         <CallView
           call={activeCall}
-          currentUser={currentUser}
           onEnd={handleEndCall}
         />
       )}

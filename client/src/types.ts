@@ -14,6 +14,7 @@ export interface Message {
   content: string | null;
   type: 'text' | 'image' | 'file' | 'system';
   fileUrl?: string;
+  attachmentId?: string | null;
   fileName?: string;
   replyTo?: {
     id: string;

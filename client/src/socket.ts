@@ -8,7 +8,7 @@ export function connectSocket(token: string): Socket {
 
   const opts = {
     auth: { token },
-    transports: ['websocket', 'polling'] as const,
+    transports: ['websocket', 'polling'],
   };
 
   socket = API_URL ? io(API_URL, opts) : io(opts);

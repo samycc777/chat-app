@@ -5,10 +5,12 @@
   "main": "index.js",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "server": "nodemon --exec tsx server/index.ts --ext ts",
+    "server": "nodemon --watch server --exec tsx server/index.ts",
     "client": "cd client && npm run dev",
-    "build": "cd client && npm install && npx vite build",
-    "start": "tsx server/index.ts"
+    "build": "npm run build:server && npm --prefix client install && npm --prefix client run build",
+    "build:server": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test tests/*.test.mjs",
+    "start": "node dist/index.js"
   },
   "keywords": [],
   "author": "",

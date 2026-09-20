@@ -5,7 +5,7 @@ import {
 import { format, isToday, isYesterday, isSameDay } from 'date-fns';
 import type { Locale } from 'date-fns';
 import type { Conversation, Message, User } from '../types';
-import { api, API_URL } from '../api';
+import { api } from '../api';
 import { getSocket } from '../socket';
 import { useI18n, type TranslationKey } from '../i18n';
 import Avatar from './Avatar';
@@ -31,7 +31,7 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAtBottom = useRef(true);
 
   const scrollToBottom = useCallback(() => {
@@ -168,17 +168,20 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const result = await api.uploadFile(file);
+      const result = await api.uploadFile(file, conversation.id);
       const socket = getSocket();
-      socket?.emit('send_message', {
+      if (!socket) throw new Error('Connection unavailable');
+      socket.emit('send_message', {
         conversationId: conversation.id,
         content: result.type === 'image' ? '' : result.name,
         type: result.type,
-        fileUrl: result.url,
+        attachmentId: result.attachmentId,
         fileName: result.name,
+      }, (response: { error?: string }) => {
+        if (response?.error) alert(response.error);
       });
       isAtBottom.current = true;
-    } catch { /* ignore */ }
+    } catch (err) { alert(err instanceof Error ? err.message : 'Upload failed'); }
     e.target.value = '';
   }
 
@@ -294,20 +297,10 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
 
                   {msg.deleted ? (
                     <div className="deleted-message">🚫 {t('messageDeleted')}</div>
-                  ) : msg.type === 'image' && msg.fileUrl ? (
-                    <div>
-                      <img
-                        className="message-image"
-                        src={`${API_URL}${msg.fileUrl}`}
-                        alt={t('sharedImage')}
-                        loading="lazy"
-                      />
-                    </div>
-                  ) : msg.type === 'file' && msg.fileUrl ? (
-                    <a className="message-file" href={`${API_URL}${msg.fileUrl}`} target="_blank" rel="noreferrer">
-                      <Download size={18} />
-                      <span>{msg.fileName || t('file')}</span>
-                    </a>
+                  ) : msg.type === 'image' && msg.attachmentId ? (
+                    <AttachmentDisplay attachmentId={msg.attachmentId} name={msg.fileName || t('sharedImage')} image />
+                  ) : msg.type === 'file' && msg.attachmentId ? (
+                    <AttachmentDisplay attachmentId={msg.attachmentId} name={msg.fileName || t('file')} />
                   ) : (
                     <div className="message-content">{msg.content}</div>
                   )}
@@ -381,7 +374,7 @@ export default function ChatView({ conversation, currentUser, onlineUsers, onBac
       <div className="chat-input-area">
         <label className="icon-btn" style={{ cursor: 'pointer' }}>
           <Paperclip size={20} />
-          <input type="file" style={{ display: 'none' }} onChange={handleFileUpload} />
+          <input type="file" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" style={{ display: 'none' }} onChange={handleFileUpload} />
         </label>
         <div className="message-input-wrap">
           <textarea
@@ -438,6 +431,25 @@ function formatDate(
   if (isToday(d)) return t('today');
   if (isYesterday(d)) return t('yesterday');
   return format(d, 'EEEE, MMMM d, yyyy', { locale });
+}
+
+function AttachmentDisplay({ attachmentId, name, image = false }: { attachmentId: string; name: string; image?: boolean }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    let objectUrl: string | null = null;
+    api.getAttachmentBlob(attachmentId).then(blob => {
+      objectUrl = URL.createObjectURL(blob);
+      if (live) setUrl(objectUrl);
+      else URL.revokeObjectURL(objectUrl);
+    }).catch(() => { if (live) setFailed(true); });
+    return () => { live = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [attachmentId]);
+  if (failed) return <span className="message-content">{name}</span>;
+  if (!url) return <span className="message-content">…</span>;
+  if (image) return <img className="message-image" src={url} alt={name} loading="lazy" />;
+  return <a className="message-file" href={url} download={name}><Download size={18} /><span>{name}</span></a>;
 }
 
 function formatLastSeen(

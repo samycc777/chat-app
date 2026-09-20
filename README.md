@@ -1,6 +1,6 @@
 # ChatApp
 
-ChatApp is a React/Vite chat client with an Express, Socket.IO, and SQLite server. It supports direct and group chats, image/PDF attachments, WebRTC calls, and shared PDF whiteboards.
+ChatApp is a Vue 3/Vite chat client with an Express, Socket.IO, and SQLite server. It supports direct and group chats, image/PDF attachments, WebRTC calls, and shared PDF whiteboards.
 
 ## Local development
 

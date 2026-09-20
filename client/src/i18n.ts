@@ -1,6 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { computed, ref } from 'vue';
 import { enUS, ar } from 'date-fns/locale';
-import type { Locale } from 'date-fns';
 
 export type Language = 'en' | 'ar';
 
@@ -249,57 +248,32 @@ const ERROR_KEY_MAP: Record<string, TranslationKey> = {
   'User is offline': 'errUserOffline',
 };
 
-interface I18nContextValue {
-  lang: Language;
-  dir: 'ltr' | 'rtl';
-  dateLocale: Locale;
-  setLang: (lang: Language) => void;
-  t: (key: TranslationKey, vars?: Record<string, string | number>) => string;
-  translateError: (raw: string) => string;
+const storedLang = localStorage.getItem('lang');
+const lang = ref<Language>(storedLang === 'ar' || storedLang === 'en' ? storedLang : 'en');
+const dir = computed(() => lang.value === 'ar' ? 'rtl' : 'ltr');
+const dateLocale = computed(() => lang.value === 'ar' ? ar : enUS);
+
+export function setLanguage(value: Language) {
+  lang.value = value;
+  document.documentElement.setAttribute('lang', value);
+  document.documentElement.setAttribute('dir', value === 'ar' ? 'rtl' : 'ltr');
+  localStorage.setItem('lang', value);
 }
 
-const I18nContext = createContext<I18nContextValue | null>(null);
-
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const [lang, setLang] = useState<Language>(() => {
-    const stored = localStorage.getItem('lang');
-    return stored === 'ar' || stored === 'en' ? stored : 'en';
-  });
-
-  const dir: 'ltr' | 'rtl' = lang === 'ar' ? 'rtl' : 'ltr';
-
-  useEffect(() => {
-    document.documentElement.setAttribute('lang', lang);
-    document.documentElement.setAttribute('dir', dir);
-    localStorage.setItem('lang', lang);
-  }, [lang, dir]);
-
-  const t = useCallback((key: TranslationKey, vars?: Record<string, string | number>) => {
-    let str = translations[lang][key] ?? translations.en[key] ?? key;
-    if (vars) {
-      for (const [name, value] of Object.entries(vars)) {
-        str = str.replace(new RegExp(`\\{${name}\\}`, 'g'), String(value));
-      }
-    }
-    return str;
-  }, [lang]);
-
-  const translateError = useCallback((raw: string) => {
-    const key = ERROR_KEY_MAP[raw];
-    return key ? t(key) : raw;
-  }, [t]);
-
-  return (
-    <I18nContext.Provider
-      value={{ lang, dir, dateLocale: lang === 'ar' ? ar : enUS, setLang, t, translateError }}
-    >
-      {children}
-    </I18nContext.Provider>
-  );
-}
+document.documentElement.setAttribute('lang', lang.value);
+document.documentElement.setAttribute('dir', dir.value);
 
 export function useI18n() {
-  const ctx = useContext(I18nContext);
-  if (!ctx) throw new Error('useI18n must be used within an I18nProvider');
-  return ctx;
+  function t(key: TranslationKey, vars?: Record<string, string | number>) {
+    let value = translations[lang.value][key] ?? translations.en[key] ?? key;
+    for (const [name, replacement] of Object.entries(vars ?? {})) {
+      value = value.replace(new RegExp(`\\{${name}\\}`, 'g'), String(replacement));
+    }
+    return value;
+  }
+  function translateError(raw: string) {
+    const key = ERROR_KEY_MAP[raw];
+    return key ? t(key) : raw;
+  }
+  return { lang, dir, dateLocale, setLang: setLanguage, t, translateError };
 }

@@ -3,8 +3,9 @@ import { ref } from 'vue';
 import { api } from '../api';
 import { useI18n } from '../i18n';
 const emit = defineEmits<{ auth: [token: string] }>();
-const { t, translateError } = useI18n();
+const { t, lang, setLang, translateError } = useI18n();
 const isLogin = ref(true), username = ref(''), displayName = ref(''), password = ref(''), error = ref(''), loading = ref(false);
+const showLangMenu = ref(false);
 async function submit() {
   error.value = ''; loading.value = true;
   try {
@@ -16,6 +17,16 @@ async function submit() {
 </script>
 <template>
   <div class="auth-container"><form class="auth-card" @submit.prevent="submit">
+    <div class="auth-language lang-switcher">
+      <button class="auth-language-trigger" type="button" :aria-expanded="showLangMenu" @click="showLangMenu = !showLangMenu">{{ lang === 'en' ? 'English' : 'العربية' }}</button>
+      <template v-if="showLangMenu">
+        <div class="lang-menu-backdrop" @click="showLangMenu = false" />
+        <div class="lang-menu auth-lang-menu" role="menu">
+          <button type="button" role="menuitem" :class="{ active: lang === 'en' }" @click="setLang('en'); showLangMenu = false">English</button>
+          <button type="button" role="menuitem" :class="{ active: lang === 'ar' }" @click="setLang('ar'); showLangMenu = false">العربية</button>
+        </div>
+      </template>
+    </div>
     <h1>{{ t('appName') }}</h1><p>{{ isLogin ? t('signInToContinue') : t('createYourAccount') }}</p>
     <div v-if="error" class="auth-error">{{ error }}</div>
     <div class="input-group"><label>{{ t('username') }}</label><input v-model="username" :placeholder="t('enterUsername')" autocomplete="username" required></div>

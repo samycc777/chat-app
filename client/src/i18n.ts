@@ -5,6 +5,12 @@ export type Language = 'en' | 'ar';
 
 const en = {
   classroom: 'Classroom',
+  welcomeClassroom: 'Your class is waiting.',
+  classCodePlaceholder: 'Enter your code',
+  tools: 'Tools',
+  closeTools: 'Close tools',
+  chooseColor: 'Choose color',
+  selectedTool: 'Selected tool: {tool}',
   enterClassCode: 'Enter the class code to join the live room.',
   classCode: 'Class code',
   joinClass: 'Join class',
@@ -128,6 +134,12 @@ const en = {
 
 const ar_: typeof en = {
   classroom: 'الفصل الدراسي',
+  welcomeClassroom: 'فصلك بانتظارك.',
+  classCodePlaceholder: 'أدخل الرمز',
+  tools: 'الأدوات',
+  closeTools: 'إغلاق الأدوات',
+  chooseColor: 'اختر اللون',
+  selectedTool: 'الأداة المحددة: {tool}',
   enterClassCode: 'أدخل رمز الفصل للانضمام إلى الغرفة المباشرة.',
   classCode: 'رمز الفصل',
   joinClass: 'انضم إلى الفصل',

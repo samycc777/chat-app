@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
+import { Moon, Sun } from 'lucide-vue-next';
 import type { Conversation, User } from './types';
 import { api } from './api';
 import { useI18n } from './i18n';
@@ -14,7 +15,10 @@ const conversation = ref<Conversation | null>(null);
 const onlineUsers = ref(new Set<string>());
 const whiteboard = ref<{ conversationId: string; pdfUrl: string | null; presenterId: string } | null>(null);
 const showWhiteboard = ref(false);
+const theme = ref<'light' | 'dark'>(localStorage.getItem('classroom-theme') === 'dark' ? 'dark' : 'light');
 const { t } = useI18n();
+watch(theme, value => { localStorage.setItem('classroom-theme', value); });
+function toggleTheme() { theme.value = theme.value === 'light' ? 'dark' : 'light'; }
 
 function openRoom(user: User, conversationId: string) {
   currentUser.value = user;
@@ -31,7 +35,8 @@ function joined(result: { token: string; user: User; conversationId: string }) {
   const socket = connectSocket(result.token);
   socket.on('presence', (data: { userId: string; online: boolean }) => {
     const next = new Set(onlineUsers.value);
-    data.online ? next.add(data.userId) : next.delete(data.userId);
+    if (data.online) next.add(data.userId);
+    else next.delete(data.userId);
     onlineUsers.value = next;
   });
   socket.on('wb_started', (data: { conversationId: string; presenterId: string; pdfUrl: string | null }) => {
@@ -48,7 +53,10 @@ onMounted(async () => {
     openRoom(user, 'classroom');
     const socket = connectSocket(token.value);
     socket.on('presence', (data: { userId: string; online: boolean }) => {
-      const next = new Set(onlineUsers.value); data.online ? next.add(data.userId) : next.delete(data.userId); onlineUsers.value = next;
+      const next = new Set(onlineUsers.value);
+      if (data.online) next.add(data.userId);
+      else next.delete(data.userId);
+      onlineUsers.value = next;
     });
     socket.on('wb_started', (data: { conversationId: string; presenterId: string; pdfUrl: string | null }) => { whiteboard.value = data; showWhiteboard.value = true; });
     socket.on('wb_ended', () => { whiteboard.value = null; showWhiteboard.value = false; });
@@ -69,10 +77,12 @@ function leaveClass() {
 }
 </script>
 <template>
-  <Auth v-if="!token || !currentUser" @auth="joined" />
+  <div class="app-shell" :data-theme="theme">
+  <Auth v-if="!token || !currentUser" @auth="joined" @toggle-theme="toggleTheme" :theme="theme" />
   <main v-else-if="conversation && currentUser" class="classroom-layout">
-    <div class="classroom-bar"><span>{{ t('classroom') }} · {{ currentUser.displayName }}</span><button class="icon-btn" @click="leaveClass">{{ t('leaveClass') }}</button></div>
+    <div class="classroom-bar"><span>{{ t('classroom') }} <span class="classroom-bar-dot">·</span> {{ currentUser.displayName }}</span><div class="classroom-bar-actions"><button class="theme-toggle" :title="t('toggleTheme')" :aria-label="t('toggleTheme')" @click="toggleTheme"><Sun v-if="theme === 'dark'" :size="18"/><Moon v-else :size="18"/></button><button class="leave-class-btn" @click="leaveClass">{{ t('leaveClass') }}</button></div></div>
     <ChatView :conversation="conversation" :current-user="currentUser" :online-users="onlineUsers" @whiteboard="openWhiteboard" />
     <WhiteboardView v-if="showWhiteboard && whiteboard" :conversation-id="whiteboard.conversationId" :pdf-url="whiteboard.pdfUrl" :presenter-id="whiteboard.presenterId" :current-user="currentUser" @end="endWhiteboard" />
   </main>
+  </div>
 </template>

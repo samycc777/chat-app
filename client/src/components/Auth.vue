@@ -1,38 +1,35 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { api } from '../api';
 import { useI18n } from '../i18n';
-const emit = defineEmits<{ auth: [token: string] }>();
+const emit = defineEmits<{ auth: [result: { token: string; user: any; conversationId: string }] }>();
 const { t, lang, setLang, translateError } = useI18n();
-const isLogin = ref(true), username = ref(''), displayName = ref(''), password = ref(''), error = ref(''), loading = ref(false);
-const showLangMenu = ref(false);
+const savedName = ref(localStorage.getItem('displayName') || '');
+const visitorId = ref(localStorage.getItem('visitorId') || crypto.randomUUID());
+localStorage.setItem('visitorId', visitorId.value);
+const displayName = ref(savedName.value), code = ref(''), error = ref(''), loading = ref(false);
+const needsName = computed(() => !savedName.value);
 async function submit() {
   error.value = ''; loading.value = true;
   try {
-    const result = isLogin.value ? await api.login(username.value, password.value) : await api.register(username.value, displayName.value, password.value);
-    localStorage.setItem('token', result.token); emit('auth', result.token);
+    const name = (needsName.value ? displayName.value : savedName.value).trim();
+    const result = await api.joinClass(code.value, visitorId.value, name);
+    localStorage.setItem('displayName', result.user.displayName);
+    sessionStorage.setItem('token', result.token);
+    emit('auth', result);
   } catch (cause) { error.value = translateError(cause instanceof Error ? cause.message : ''); }
   finally { loading.value = false; }
 }
+function changeName() { savedName.value = ''; displayName.value = ''; localStorage.removeItem('displayName'); }
 </script>
 <template>
   <div class="auth-container"><form class="auth-card" @submit.prevent="submit">
-    <div class="auth-language lang-switcher">
-      <button class="auth-language-trigger" type="button" :aria-expanded="showLangMenu" @click="showLangMenu = !showLangMenu">{{ lang === 'en' ? 'English' : 'العربية' }}</button>
-      <template v-if="showLangMenu">
-        <div class="lang-menu-backdrop" @click="showLangMenu = false" />
-        <div class="lang-menu auth-lang-menu" role="menu">
-          <button type="button" role="menuitem" :class="{ active: lang === 'en' }" @click="setLang('en'); showLangMenu = false">English</button>
-          <button type="button" role="menuitem" :class="{ active: lang === 'ar' }" @click="setLang('ar'); showLangMenu = false">العربية</button>
-        </div>
-      </template>
-    </div>
-    <h1>{{ t('appName') }}</h1><p>{{ isLogin ? t('signInToContinue') : t('createYourAccount') }}</p>
-    <div v-if="error" class="auth-error">{{ error }}</div>
-    <div class="input-group"><label>{{ t('username') }}</label><input v-model="username" :placeholder="t('enterUsername')" autocomplete="username" required></div>
-    <div v-if="!isLogin" class="input-group"><label>{{ t('displayName') }}</label><input v-model="displayName" :placeholder="t('yourName')" required></div>
-    <div class="input-group"><label>{{ t('password') }}</label><input v-model="password" type="password" :placeholder="t('enterPassword')" :autocomplete="isLogin ? 'current-password' : 'new-password'" required></div>
-    <button class="auth-btn" type="submit" :disabled="loading">{{ loading ? t('pleaseWait') : isLogin ? t('signIn') : t('createAccount') }}</button>
-    <div class="auth-switch">{{ isLogin ? t('noAccount') : t('haveAccount') }}<span @click="isLogin = !isLogin; error = ''">{{ isLogin ? t('signUp') : t('signIn') }}</span></div>
+    <div class="auth-language"><button type="button" @click="setLang(lang === 'en' ? 'ar' : 'en')">{{ lang === 'en' ? 'العربية' : 'English' }}</button></div>
+    <h1>{{ t('classroom') }}</h1><p>{{ t('enterClassCode') }}</p>
+    <div v-if="error" class="auth-error" role="alert">{{ error }}</div>
+    <div class="input-group"><label>{{ t('classCode') }}</label><input v-model="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required autofocus></div>
+    <div v-if="needsName" class="input-group"><label>{{ t('displayName') }}</label><input v-model="displayName" :placeholder="t('yourName')" autocomplete="name" maxlength="60" required></div>
+    <div v-else class="saved-name">{{ t('joiningAs', { name: savedName }) }} <button type="button" @click="changeName">{{ t('changeName') }}</button></div>
+    <button class="auth-btn" type="submit" :disabled="loading">{{ loading ? t('pleaseWait') : t('joinClass') }}</button>
   </form></div>
 </template>

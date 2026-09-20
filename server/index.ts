@@ -56,9 +56,8 @@ app.use((_req, res, next) => {
 app.use(express.json({ limit: '64kb' }));
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-app.use('/api/auth', rateLimit('auth', 12, 15 * 60_000), authRouter);
+app.use('/api/auth', rateLimit('auth', 100, 15 * 60_000), authRouter);
 app.use('/api/upload', rateLimit('upload', 10, 60_000));
-app.use('/api/users/search', rateLimit('search', 60, 60_000));
 app.use('/api', rateLimit('api', 180, 60_000), apiRouter);
 app.use('/uploads', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {

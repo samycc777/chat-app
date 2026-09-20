@@ -4,6 +4,17 @@ import { enUS, ar } from 'date-fns/locale';
 export type Language = 'en' | 'ar';
 
 const en = {
+  classroom: 'Classroom',
+  enterClassCode: 'Enter the class code to join the live room.',
+  classCode: 'Class code',
+  joinClass: 'Join class',
+  joiningAs: 'Joining as {name}',
+  changeName: 'Change name',
+  leaveClass: 'Leave class',
+  errIncorrectClassCode: 'Incorrect class code',
+  errInvalidVisitorIdentity: 'Could not identify this browser. Refresh and try again.',
+  errDisplayNameRequired: 'Enter your display name',
+  errDisplayNameLength: 'Display name must be at most 60 characters',
   appName: 'ChatApp',
   signInToContinue: 'Sign in to continue',
   createYourAccount: 'Create your account',
@@ -116,6 +127,17 @@ const en = {
 };
 
 const ar_: typeof en = {
+  classroom: 'الفصل الدراسي',
+  enterClassCode: 'أدخل رمز الفصل للانضمام إلى الغرفة المباشرة.',
+  classCode: 'رمز الفصل',
+  joinClass: 'انضم إلى الفصل',
+  joiningAs: 'الانضمام باسم {name}',
+  changeName: 'تغيير الاسم',
+  leaveClass: 'مغادرة الفصل',
+  errIncorrectClassCode: 'رمز الفصل غير صحيح',
+  errInvalidVisitorIdentity: 'تعذر تحديد هذا المتصفح. حدّث الصفحة وحاول مرة أخرى.',
+  errDisplayNameRequired: 'أدخل اسم العرض',
+  errDisplayNameLength: 'يجب ألا يتجاوز اسم العرض 60 حرفًا',
   appName: 'تطبيق الدردشة',
   signInToContinue: 'سجّل الدخول للمتابعة',
   createYourAccount: 'أنشئ حسابك',
@@ -232,6 +254,10 @@ const translations: Record<Language, typeof en> = { en, ar: ar_ };
 export type TranslationKey = keyof typeof en;
 
 const ERROR_KEY_MAP: Record<string, TranslationKey> = {
+  'Incorrect class code': 'errIncorrectClassCode',
+  'Invalid visitor identity': 'errInvalidVisitorIdentity',
+  'Display name is required': 'errDisplayNameRequired',
+  'Display name must be at most 60 characters': 'errDisplayNameLength',
   'No token provided': 'errNoToken',
   'Invalid token': 'errInvalidToken',
   'All fields are required': 'errAllFieldsRequired',

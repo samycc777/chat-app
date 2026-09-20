@@ -240,6 +240,25 @@ input {
   height: 100dvh;
 }
 
+.classroom-layout {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+}
+.classroom-bar {
+  min-height: 44px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.classroom-layout > .chat-area { flex: 1; min-height: 0; }
+
 /* Sidebar */
 .sidebar {
   width: 420px;

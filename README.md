@@ -1,12 +1,12 @@
-# ChatApp
+# Classroom
 
-ChatApp is a Vue 3/Vite chat client with an Express, Socket.IO, and SQLite server. It supports direct and group chats, image/PDF attachments, WebRTC calls, and shared PDF whiteboards.
+Classroom is a single-room live class app built with Vue 3, Express, Socket.IO, and SQLite. Participants enter the temporary class code `0000`, choose a display name the first time they visit, and join the shared chat. The display name and browser identity are saved locally; the class code is requested for each new browser session.
+
+The room supports messages, image/PDF attachments, group voice during presentations, shared screen viewing, and a PDF whiteboard with synchronized annotation. For now, every attendee with the class code can start a presentation. The first attendee to start owns its controls until the presentation ends.
 
 ## Local development
 
 Install the root and client dependencies, then run `npm run dev`. The server listens on port 3001 and Vite on port 5173. Local development uses a development-only JWT key and stores the SQLite database and uploads in the repository directory.
-
-For local development, copy `.env.example` to `.env`, then export its values before starting the app (for example, `set -a && source .env && set +a && npm run dev` in zsh). Do not use the local JWT key outside development.
 
 ## Production deployment
 
@@ -14,10 +14,6 @@ Set `NODE_ENV=production`, `JWT_SECRET` to a random value of at least 32 charact
 
 Run `npm run build` to compile the server and create the client bundle, then `npm start` to serve both from the Node process. `/api/health` is the deployment health endpoint.
 
-Uploads are limited to signature-checked images and PDFs, with a default maximum size of 10 MB (`MAX_UPLOAD_BYTES` can change the limit). They are served only to authenticated members of the conversation. Existing local chat uploads with safe filenames and recognized image/PDF contents are adopted during database startup. Old whiteboard PDFs that were referenced only by in-memory sessions must be uploaded again.
+Uploads are limited to signature-checked images and PDFs, with a default maximum size of 10 MB (`MAX_UPLOAD_BYTES` can change the limit). SQLite and local uploads require one application instance. Presence and whiteboard sessions are held in memory and are lost on restart. WebRTC uses public STUN servers by default. For restrictive networks, configure an external TURN service with `TURN_URLS`, `TURN_USERNAME`, and `TURN_CREDENTIAL`.
 
-SQLite and local uploads require one application instance. Presence and whiteboard sessions are held in memory and are lost on restart. WebRTC uses public STUN servers by default. For restrictive networks, configure an external TURN service with `TURN_URLS` (comma-separated `turn:` / `turns:` URLs), `TURN_USERNAME`, and `TURN_CREDENTIAL`. These values are served only through the authenticated ICE configuration endpoint; use short-lived provider credentials where possible and rotate them through your deployment secret manager. Calls can still fail on networks that block both direct traffic and the configured TURN transports.
-
-## Environment variables
-
-See `.env.example` for the required production variables and development defaults.
+The `0000` class code and shared attendee presentation controls are temporary. Replace class admission and presenter authorization with managed secrets before using the app for a private class.

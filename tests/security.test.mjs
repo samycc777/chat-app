@@ -15,12 +15,15 @@ let baseUrl;
 let db;
 const sockets = [];
 
-async function register(username) {
-  const response = await fetch(`${baseUrl}/api/auth/register`, {
+let visitorSequence = 1;
+async function join(displayName) {
+  const n = String(visitorSequence++).padStart(12, '0');
+  const visitorId = `00000000-0000-4000-8000-${n}`;
+  const response = await fetch(`${baseUrl}/api/auth/join`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, displayName: username, password: 'correct-horse-battery-staple' }),
+    body: JSON.stringify({ classCode: '0000', visitorId, displayName }),
   });
-  assert.equal(response.status, 201);
+  assert.equal(response.status, 200);
   return response.json();
 }
 
@@ -53,18 +56,11 @@ after(async () => {
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test('conversation members can fetch attachments and outsiders cannot', async () => {
-  const alice = await register('alice_test');
-  const bob = await register('bob_test');
-  const eve = await register('eve_test');
+test('classroom members can fetch attachments and unadmitted users cannot', async () => {
+  const alice = await join('Alice');
+  const bob = await join('Bob');
+  const conversationId = 'classroom';
   const auth = token => ({ Authorization: `Bearer ${token}` });
-  const created = await fetch(`${baseUrl}/api/conversations`, {
-    method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'direct', memberIds: [bob.user.id] }),
-  });
-  assert.equal(created.status, 201);
-  const { id: conversationId } = await created.json();
-
   const form = new FormData();
   form.append('conversationId', conversationId);
   form.append('file', new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/F+4AAAAASUVORK5CYII=', 'base64')], { type: 'image/png' }), 'tiny.png');
@@ -72,47 +68,66 @@ test('conversation members can fetch attachments and outsiders cannot', async ()
   assert.equal(uploaded.status, 200);
   const { attachmentId } = await uploaded.json();
   assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth(bob.token) })).status, 200);
-  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth(eve.token) })).status, 404);
-  assert.equal((await fetch(`${baseUrl}/uploads/${attachmentId}`, { headers: auth(eve.token) })).status, 404);
+  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth('invalid') })).status, 401);
+  assert.equal((await fetch(`${baseUrl}/uploads/${attachmentId}`, { headers: auth('invalid') })).status, 404);
 
-  const [aliceSocket, , eveSocket] = await Promise.all([
-    connect(alice.token), connect(bob.token), connect(eve.token),
-  ]);
-  eveSocket.emit('join_conversation', { conversationId });
+  const [aliceSocket, bobSocket] = await Promise.all([connect(alice.token), connect(bob.token)]);
   const outsiderMessage = new Promise(resolve => {
     const timer = setTimeout(() => resolve(false), 150);
-    eveSocket.once('new_message', () => { clearTimeout(timer); resolve(true); });
+    bobSocket.once('new_message', () => { clearTimeout(timer); resolve(true); });
   });
   const ack = await new Promise(resolve => aliceSocket.emit('send_message', {
     conversationId, content: 'member message', type: 'text',
   }, resolve));
   assert.ok(ack.id);
-  assert.equal(await outsiderMessage, false);
+  assert.equal(await outsiderMessage, true);
+  const rooms = await fetch(`${baseUrl}/api/conversations`, { headers: auth(alice.token) });
+  assert.equal(rooms.status, 200);
+  assert.deepEqual((await rooms.json()).map(room => room.id), [conversationId]);
+  assert.equal((await fetch(`${baseUrl}/api/conversations`, {
+    method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'direct', memberIds: [bob.user.id] }),
+  })).status, 404);
+  assert.equal((await fetch(`${baseUrl}/api/conversations/not-the-classroom/messages`, { headers: auth(alice.token) })).status, 403);
 
-  let unauthorizedCallReceived = false;
-  aliceSocket.once('incoming_call', () => { unauthorizedCallReceived = true; });
-  eveSocket.emit('call_user', {
-    targetUserId: alice.user.id, conversationId, offer: { type: 'offer', sdp: 'invalid' }, callType: 'audio',
-  });
+  const aliceStarted = new Promise(resolve => aliceSocket.once('wb_started', resolve));
+  const bobStarted = new Promise(resolve => bobSocket.once('wb_started', resolve));
+  aliceSocket.emit('wb_start', { conversationId });
+  const [aliceSession, bobSession] = await Promise.all([aliceStarted, bobStarted]);
+  assert.equal(aliceSession.presenterId, alice.user.id);
+  assert.equal(bobSession.presenterId, alice.user.id);
+  bobSocket.emit('wb_start', { conversationId });
+  const state = new Promise(resolve => bobSocket.once('wb_state', resolve));
+  bobSocket.emit('wb_get_state', { conversationId });
+  assert.equal((await state).presenterId, alice.user.id);
+  let unauthorizedEnd = false;
+  aliceSocket.once('wb_ended', () => { unauthorizedEnd = true; });
+  bobSocket.emit('wb_end', { conversationId });
   await new Promise(resolve => setTimeout(resolve, 100));
-  assert.equal(unauthorizedCallReceived, false);
+  assert.equal(unauthorizedEnd, false);
 });
 
-test('conversation creation rejects unknown and repeated members', async () => {
-  const user = await register('charlie_test');
-  const headers = { Authorization: `Bearer ${user.token}`, 'Content-Type': 'application/json' };
-  const unknown = await fetch(`${baseUrl}/api/conversations`, {
-    method: 'POST', headers, body: JSON.stringify({ type: 'group', memberIds: ['missing'], name: 'group' }),
+test('class code is required and the display name is restored from browser identity', async () => {
+  const rejected = await fetch(`${baseUrl}/api/auth/join`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ classCode: '9999', visitorId: '00000000-0000-4000-8000-000000000001', displayName: 'Eve' }),
   });
-  assert.equal(unknown.status, 400);
-  const repeated = await fetch(`${baseUrl}/api/conversations`, {
-    method: 'POST', headers, body: JSON.stringify({ type: 'group', memberIds: [user.user.id, user.user.id], name: 'group' }),
+  assert.equal(rejected.status, 401);
+  const visitorId = '00000000-0000-4000-8000-000000000002';
+  const initial = await fetch(`${baseUrl}/api/auth/join`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ classCode: '0000', visitorId, displayName: 'Charlie' }),
   });
-  assert.equal(repeated.status, 400);
+  assert.equal((await initial.json()).user.displayName, 'Charlie');
+  const restored = await fetch(`${baseUrl}/api/auth/join`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ classCode: '0000', visitorId }),
+  });
+  assert.equal((await restored.json()).user.displayName, 'Charlie');
 });
 
 test('ICE configuration requires authentication and rejects incomplete TURN settings', async () => {
-  const user = await register('iceconfig_test');
+  const user = await join('ICE Config');
   assert.equal((await fetch(`${baseUrl}/api/ice-config`)).status, 401);
   const original = {
     urls: process.env.TURN_URLS,

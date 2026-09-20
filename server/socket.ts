@@ -1,7 +1,7 @@
 import { Server } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import { v4 as uuid } from 'uuid';
-import db from './database';
+import db, { CLASSROOM_ID } from './database';
 import { verifyToken } from './auth';
 
 const onlineUsers = new Map<string, Set<string>>();
@@ -25,9 +25,6 @@ interface WhiteboardSession {
 }
 
 const whiteboardSessions = new Map<string, WhiteboardSession>();
-const activeCalls = new Map<string, { conversationId: string; users: Set<string> }>();
-
-function callKey(a: string, b: string) { return [a, b].sort().join(':'); }
 function memberInConversation(conversationId: string, userId: string) {
   return Boolean(db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(conversationId, userId));
 }
@@ -51,7 +48,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     const token = socket.handshake.auth.token;
     if (!token) return next(new Error('No token'));
     const userId = verifyToken(token);
-    if (!userId) return next(new Error('Invalid token'));
+    if (!userId || !db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(CLASSROOM_ID, userId)) return next(new Error('Invalid classroom session'));
     socket.data.userId = userId;
     next();
   });
@@ -70,12 +67,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     });
     const isMember = (conversationId: unknown) => typeof conversationId === 'string' && Boolean(db.prepare(
       'SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
-    ).get(conversationId, userId));
-    const isCallPeer = (conversationId: unknown, targetUserId: unknown) => {
-      if (typeof targetUserId !== 'string' || !isMember(conversationId)) return false;
-      const call = activeCalls.get(callKey(userId, targetUserId));
-      return Boolean(call && call.conversationId === conversationId && call.users.has(userId) && call.users.has(targetUserId));
-    };
+    ).get(conversationId, userId)) && conversationId === CLASSROOM_ID;
 
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId)!.add(socket.id);
@@ -83,8 +75,8 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
 
     const conversations = db.prepare(
-      'SELECT conversation_id FROM conversation_members WHERE user_id = ?'
-    ).all(userId) as any[];
+      'SELECT conversation_id FROM conversation_members WHERE user_id = ? AND conversation_id = ?'
+    ).all(userId, CLASSROOM_ID) as any[];
     for (const c of conversations) {
       socket.join(`conv:${c.conversation_id}`);
     }
@@ -211,78 +203,10 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       if (data && isMember(data.conversationId)) socket.join(`conv:${data.conversationId}`);
     });
 
-    socket.on('call_user', (data: { targetUserId: string; conversationId: string; offer: any; callType: 'audio' | 'video' }) => {
-      if (!data || !['audio', 'video'].includes(data.callType) || !data.offer || !isMember(data.conversationId)) return;
-      const direct = db.prepare(`SELECT 1 FROM conversations c WHERE c.id = ? AND c.type = 'direct'
-        AND EXISTS (SELECT 1 FROM conversation_members WHERE conversation_id = c.id AND user_id = ?)
-        AND EXISTS (SELECT 1 FROM conversation_members WHERE conversation_id = c.id AND user_id = ?)`)
-        .get(data.conversationId, userId, data.targetUserId);
-      if (!direct) return;
-      const caller = db.prepare('SELECT id, username, display_name, avatar_color FROM users WHERE id = ?').get(userId) as any;
-      if (!caller) return;
-
-      const targetSockets = onlineUsers.get(data.targetUserId);
-      if (!targetSockets || targetSockets.size === 0) {
-        socket.emit('call_failed', { reason: 'User is offline' });
-        return;
-      }
-      activeCalls.set(callKey(userId, data.targetUserId), { conversationId: data.conversationId, users: new Set([userId, data.targetUserId]) });
-
-      for (const sid of targetSockets) {
-        io.to(sid).emit('incoming_call', {
-          from: { id: caller.id, username: caller.username, displayName: caller.display_name, avatarColor: caller.avatar_color },
-          conversationId: data.conversationId,
-          offer: data.offer,
-          callType: data.callType,
-        });
-      }
-    });
-
-    socket.on('call_answer', (data: { targetUserId: string; answer: any }) => {
-      const call = activeCalls.get(callKey(userId, data?.targetUserId));
-      if (!call || !call.users.has(userId)) return;
-      const targetSockets = onlineUsers.get(data.targetUserId);
-      if (!targetSockets) return;
-      for (const sid of targetSockets) {
-        io.to(sid).emit('call_answered', { from: userId, answer: data.answer });
-      }
-    });
-
-    socket.on('ice_candidate', (data: { targetUserId: string; candidate: any }) => {
-      const call = activeCalls.get(callKey(userId, data?.targetUserId));
-      if (!call || !call.users.has(userId)) return;
-      const targetSockets = onlineUsers.get(data.targetUserId);
-      if (!targetSockets) return;
-      for (const sid of targetSockets) {
-        io.to(sid).emit('ice_candidate', { from: userId, candidate: data.candidate });
-      }
-    });
-
-    socket.on('call_reject', (data: { targetUserId: string }) => {
-      const call = activeCalls.get(callKey(userId, data?.targetUserId));
-      if (!call || !call.users.has(userId)) return;
-      activeCalls.delete(callKey(userId, data.targetUserId));
-      const targetSockets = onlineUsers.get(data.targetUserId);
-      if (!targetSockets) return;
-      for (const sid of targetSockets) {
-        io.to(sid).emit('call_rejected', { from: userId });
-      }
-    });
-
-    socket.on('call_end', (data: { targetUserId: string }) => {
-      const call = activeCalls.get(callKey(userId, data?.targetUserId));
-      if (!call || !call.users.has(userId)) return;
-      activeCalls.delete(callKey(userId, data.targetUserId));
-      const targetSockets = onlineUsers.get(data.targetUserId);
-      if (!targetSockets) return;
-      for (const sid of targetSockets) {
-        io.to(sid).emit('call_ended', { from: userId });
-      }
-    });
-
     // Whiteboard events
     socket.on('wb_start', (data: { conversationId: string; attachmentId?: string }) => {
       if (!data || !isMember(data.conversationId)) return;
+      if (whiteboardSessions.has(data.conversationId)) return;
       let initialPdfId: string | null = null;
       if (data.attachmentId) {
         const attachment = db.prepare("SELECT id FROM attachments WHERE id = ? AND conversation_id = ? AND mime_type = 'application/pdf'").get(data.attachmentId, data.conversationId) as { id: string } | undefined;
@@ -575,7 +499,6 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     });
 
     socket.on('disconnect', () => {
-      for (const [key, call] of activeCalls) if (call.users.has(userId)) activeCalls.delete(key);
       const sockets = onlineUsers.get(userId);
       if (sockets) {
         sockets.delete(socket.id);

@@ -77,6 +77,18 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
 `);
 
+const userColumns = db.pragma('table_info(users)') as { name: string }[];
+if (!userColumns.some(column => column.name === 'visitor_id')) {
+  db.exec('ALTER TABLE users ADD COLUMN visitor_id TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_visitor_id ON users(visitor_id)');
+}
+
+export const CLASSROOM_ID = 'classroom';
+const classroomExists = db.prepare('SELECT 1 FROM conversations WHERE id = ?').get(CLASSROOM_ID);
+if (!classroomExists) {
+  db.prepare("INSERT INTO conversations (id, type, name) VALUES (?, 'group', 'Classroom')").run(CLASSROOM_ID);
+}
+
 // Apply additive schema changes to databases created before attachment IDs existed.
 const messageColumns = db.pragma('table_info(messages)') as { name: string }[];
 if (!messageColumns.some(column => column.name === 'attachment_id')) {

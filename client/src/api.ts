@@ -1,7 +1,7 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
 function getToken(): string | null {
-  return localStorage.getItem('token');
+  return sessionStorage.getItem('token');
 }
 
 async function request(path: string, options: RequestInit = {}) {
@@ -27,20 +27,12 @@ export const api = {
     const data = await request('/api/ice-config');
     return { iceServers: data.iceServers };
   },
-  register: (username: string, displayName: string, password: string) =>
-    request('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, displayName, password }) }),
-
-  login: (username: string, password: string) =>
-    request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  joinClass: (classCode: string, visitorId: string, displayName: string) =>
+    request('/api/auth/join', { method: 'POST', body: JSON.stringify({ classCode, visitorId, displayName }) }),
 
   getMe: () => request('/api/me'),
 
-  searchUsers: (q: string) => request(`/api/users/search?q=${encodeURIComponent(q)}`),
-
   getConversations: () => request('/api/conversations'),
-
-  createConversation: (type: string, memberIds: string[], name?: string) =>
-    request('/api/conversations', { method: 'POST', body: JSON.stringify({ type, memberIds, name }) }),
 
   getMessages: (conversationId: string, before?: number) =>
     request(`/api/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`),

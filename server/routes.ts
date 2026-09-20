@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import db from './database';
 import { AuthRequest, authMiddleware } from './auth';
+import { CLASSROOM_ID } from './database';
 
 const router = Router();
 router.use(authMiddleware);
@@ -44,7 +45,7 @@ router.get('/ice-config', (_req: AuthRequest, res: Response) => {
 });
 
 function memberOf(conversationId: string, userId: string) {
-  return Boolean(db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(conversationId, userId));
+  return conversationId === CLASSROOM_ID && Boolean(db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(CLASSROOM_ID, userId));
 }
 
 function detectMime(buffer: Buffer): string | null {
@@ -70,19 +71,6 @@ router.get('/me', (req: AuthRequest, res: Response) => {
   });
 });
 
-router.get('/users/search', (req: AuthRequest, res: Response) => {
-  const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
-  if (!q) { res.json([]); return; }
-  const users = db.prepare(
-    `SELECT id, username, display_name, avatar_color, status FROM users
-     WHERE (username LIKE ? OR display_name LIKE ?) AND id != ? LIMIT 20`
-  ).all(`%${q}%`, `%${q}%`, req.userId!) as any[];
-  res.json(users.map(u => ({
-    id: u.id, username: u.username, displayName: u.display_name,
-    avatarColor: u.avatar_color, status: u.status,
-  })));
-});
-
 router.get('/conversations', (req: AuthRequest, res: Response) => {
   const conversations = db.prepare(`
     SELECT c.id, c.type, c.name, c.created_at,
@@ -95,9 +83,9 @@ router.get('/conversations', (req: AuthRequest, res: Response) => {
        AND NOT EXISTS (SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id = ?)) as unread_count
     FROM conversations c
     JOIN conversation_members cm ON cm.conversation_id = c.id
-    WHERE cm.user_id = ?
+    WHERE cm.user_id = ? AND c.id = ?
     ORDER BY last_message_time DESC NULLS LAST
-  `).all(req.userId!, req.userId!, req.userId!) as any[];
+  `).all(req.userId!, req.userId!, req.userId!, CLASSROOM_ID) as any[];
 
   const result = conversations.map(c => {
     const members = db.prepare(`
@@ -121,59 +109,6 @@ router.get('/conversations', (req: AuthRequest, res: Response) => {
   res.json(result);
 });
 
-router.post('/conversations', (req: AuthRequest, res: Response) => {
-  const { type, memberIds, name } = req.body;
-
-  if (!Array.isArray(memberIds) || !['direct', 'group'].includes(type) || memberIds.length > 49 ||
-      memberIds.some((id: unknown) => typeof id !== 'string') || new Set(memberIds).size !== memberIds.length ||
-      memberIds.includes(req.userId!)) {
-    res.status(400).json({ error: 'Invalid conversation members' });
-    return;
-  }
-  if (type === 'direct') {
-    if (memberIds.length !== 1) {
-      res.status(400).json({ error: 'Direct conversation needs exactly one other member' });
-      return;
-    }
-    const existing = db.prepare(`
-      SELECT c.id FROM conversations c
-      WHERE c.type = 'direct'
-        AND EXISTS (SELECT 1 FROM conversation_members WHERE conversation_id = c.id AND user_id = ?)
-        AND EXISTS (SELECT 1 FROM conversation_members WHERE conversation_id = c.id AND user_id = ?)
-        AND (SELECT COUNT(*) FROM conversation_members WHERE conversation_id = c.id) = 2
-    `).get(req.userId!, memberIds[0]) as any;
-
-    if (existing) {
-      res.json({ id: existing.id, existing: true });
-      return;
-    }
-  }
-  if (type === 'group' && (!memberIds.length || typeof name !== 'string' || !name.trim() || name.trim().length > 80)) {
-    res.status(400).json({ error: 'Group name and members are required' }); return;
-  }
-  const foundMembers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE id IN (${memberIds.map(() => '?').join(',') || "''"})`).get(...memberIds) as { count: number };
-  if (foundMembers.count !== memberIds.length) { res.status(400).json({ error: 'Unknown conversation member' }); return; }
-
-  const id = uuid();
-  const allMembers = [req.userId!, ...(memberIds || [])];
-
-  const insertConversation = db.prepare(
-    'INSERT INTO conversations (id, type, name, created_by) VALUES (?, ?, ?, ?)'
-  );
-  const insertMember = db.prepare(
-    'INSERT INTO conversation_members (conversation_id, user_id) VALUES (?, ?)'
-  );
-
-  db.transaction(() => {
-    insertConversation.run(id, type, type === 'group' ? name.trim() : null, req.userId!);
-    for (const memberId of allMembers) {
-      insertMember.run(id, memberId);
-    }
-  })();
-
-  res.status(201).json({ id });
-});
-
 router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const before = req.query.before as string | undefined;
@@ -187,7 +122,7 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   const isMember = db.prepare(
     'SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
   ).get(id, req.userId!);
-  if (!isMember) { res.status(403).json({ error: 'Not a member' }); return; }
+  if (id !== CLASSROOM_ID || !isMember) { res.status(403).json({ error: 'Not a classroom member' }); return; }
 
   let query = `
     SELECT m.id, m.conversation_id, m.sender_id, m.content, m.type, m.file_url, m.file_name, m.attachment_id,

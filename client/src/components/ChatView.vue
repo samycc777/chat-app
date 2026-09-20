@@ -16,8 +16,6 @@ import {
   Pencil,
   Trash2,
   X,
-  Phone,
-  Video,
   Monitor,
 } from "lucide-vue-next";
 import type { Conversation, Message, User } from "../types";
@@ -33,7 +31,6 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   back: [];
-  call: [type: "audio" | "video"];
   whiteboard: [];
 }>();
 const { t, dateLocale } = useI18n();
@@ -270,7 +267,7 @@ function dateLabel(timestamp: number) {
         >
           {{
             conversation.type === "group"
-              ? t("members", { count: conversation.members.length })
+              ? t("classroom")
               : other && onlineUsers.has(other.id)
                 ? t("online")
                 : ""
@@ -283,21 +280,8 @@ function dateLabel(timestamp: number) {
           :title="t('whiteboard')"
           @click="emit('whiteboard')"
         >
-          <Monitor :size="20" /></button
-        ><template v-if="conversation.type === 'direct'"
-          ><button
-            class="icon-btn"
-            :title="t('voiceCall')"
-            @click="emit('call', 'audio')"
-          >
-            <Phone :size="20" /></button
-          ><button
-            class="icon-btn"
-            :title="t('videoCall')"
-            @click="emit('call', 'video')"
-          >
-            <Video :size="20" /></button
-        ></template>
+          <Monitor :size="20" />
+        </button>
       </div>
     </div>
     <div ref="container" class="messages-container" @scroll="onScroll">

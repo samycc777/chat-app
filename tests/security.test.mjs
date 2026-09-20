@@ -107,6 +107,36 @@ test('classroom members can fetch attachments and unadmitted users cannot', asyn
   assert.equal(unauthorizedEnd, false);
 });
 
+test('large PDFs up to the 100 MB default upload limit are accepted', async () => {
+  const user = await join('Large PDF');
+  const auth = { Authorization: `Bearer ${user.token}` };
+  const pdf = Buffer.alloc(Math.floor(12.8 * 1024 * 1024));
+  pdf.write('%PDF-1.7');
+  const form = new FormData();
+  form.append('conversationId', 'classroom');
+  form.append('file', new Blob([pdf], { type: 'application/pdf' }), 'large-class.pdf');
+  const uploaded = await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth, body: form });
+  assert.equal(uploaded.status, 200);
+  const { attachmentId } = await uploaded.json();
+  const fetched = await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth });
+  assert.equal(fetched.status, 200);
+  assert.equal(Number(fetched.headers.get('content-length')), pdf.length);
+});
+
+test('uploads larger than 100 MB are rejected with a clear size error', async () => {
+  const user = await join('Oversized PDF');
+  const pdf = Buffer.alloc(100 * 1024 * 1024 + 1);
+  pdf.write('%PDF-1.7');
+  const form = new FormData();
+  form.append('conversationId', 'classroom');
+  form.append('file', new Blob([pdf], { type: 'application/pdf' }), 'too-large.pdf');
+  const rejected = await fetch(`${baseUrl}/api/upload`, {
+    method: 'POST', headers: { Authorization: `Bearer ${user.token}` }, body: form,
+  });
+  assert.equal(rejected.status, 413);
+  assert.match((await rejected.json()).error, /100 MB/i);
+});
+
 test('class code is required and the display name is restored from browser identity', async () => {
   const rejected = await fetch(`${baseUrl}/api/auth/join`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -126,30 +156,52 @@ test('class code is required and the display name is restored from browser ident
   assert.equal((await restored.json()).user.displayName, 'Charlie');
 });
 
-test('ICE configuration requires authentication and rejects incomplete TURN settings', async () => {
+test('ICE configuration requires auth, provides Twilio relay credentials, and fails clearly without production credentials', async () => {
   const user = await join('ICE Config');
   assert.equal((await fetch(`${baseUrl}/api/ice-config`)).status, 401);
-  const original = {
-    urls: process.env.TURN_URLS,
-    username: process.env.TURN_USERNAME,
-    credential: process.env.TURN_CREDENTIAL,
-  };
+  const original = Object.fromEntries(['NODE_ENV', 'TWILIO_ACCOUNT_SID', 'TWILIO_API_KEY', 'TWILIO_API_SECRET'].map(key => [key, process.env[key]]));
+  const originalFetch = globalThis.fetch;
   try {
-    process.env.TURN_URLS = 'turn:relay.example:3478';
-    delete process.env.TURN_USERNAME;
-    delete process.env.TURN_CREDENTIAL;
-    const invalid = await fetch(`${baseUrl}/api/ice-config`, { headers: { Authorization: `Bearer ${user.token}` } });
-    assert.equal(invalid.status, 503);
-    process.env.TURN_USERNAME = 'test-user';
-    process.env.TURN_CREDENTIAL = 'test-secret';
+    process.env.NODE_ENV = 'production';
+    delete process.env.TWILIO_ACCOUNT_SID;
+    delete process.env.TWILIO_API_KEY;
+    delete process.env.TWILIO_API_SECRET;
+    const missing = await fetch(`${baseUrl}/api/ice-config`, { headers: { Authorization: `Bearer ${user.token}` } });
+    assert.equal(missing.status, 503);
+    assert.match((await missing.json()).error, /TWILIO_ACCOUNT_SID/);
+
+    process.env.TWILIO_ACCOUNT_SID = 'AC-test-account';
+    process.env.TWILIO_API_KEY = 'SK-test-key';
+    process.env.TWILIO_API_SECRET = 'server-only-secret';
+    let requestOptions;
+    globalThis.fetch = async (url, options) => {
+      if (!String(url).startsWith('https://api.twilio.com/')) return originalFetch(url, options);
+      assert.equal(url, 'https://api.twilio.com/2010-04-01/Accounts/AC-test-account/Tokens.json');
+      requestOptions = options;
+      return new Response(JSON.stringify({ ice_servers: [
+        { urls: 'stun:global.stun.twilio.com:3478' },
+        { urls: 'turn:global.turn.twilio.com:3478?transport=udp', username: 'ephemeral-user', credential: 'ephemeral-password' },
+        { urls: 'turn:global.turn.twilio.com:443?transport=tcp', username: 'ephemeral-user', credential: 'ephemeral-password' },
+      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
     const configured = await fetch(`${baseUrl}/api/ice-config`, { headers: { Authorization: `Bearer ${user.token}` } });
     assert.equal(configured.status, 200);
     const body = await configured.json();
-    assert.equal(body.iceServers.at(-1).urls[0], 'turn:relay.example:3478');
-    assert.equal(body.iceServers.at(-1).username, 'test-user');
-    assert.equal(body.iceServers.at(-1).credential, 'test-secret');
+    assert.equal(new URLSearchParams(requestOptions.body).get('Ttl'), '3600');
+    assert.equal(body.iceServers[1].username, 'ephemeral-user');
+    assert.equal(body.iceServers[1].credential, 'ephemeral-password');
+    assert.equal(body.iceServers[2].urls, 'turn:global.turn.twilio.com:443?transport=tcp');
+    assert.doesNotMatch(JSON.stringify(body), /server-only-secret|AC-test-account|SK-test-key/);
+
+    globalThis.fetch = async (url, options) => String(url).startsWith('https://api.twilio.com/')
+      ? new Response('Twilio unavailable', { status: 503 })
+      : originalFetch(url, options);
+    const unavailable = await fetch(`${baseUrl}/api/ice-config`, { headers: { Authorization: `Bearer ${user.token}` } });
+    assert.equal(unavailable.status, 503);
+    assert.match((await unavailable.json()).error, /temporarily unavailable/i);
   } finally {
-    for (const [key, value] of Object.entries({ TURN_URLS: original.urls, TURN_USERNAME: original.username, TURN_CREDENTIAL: original.credential })) {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(original)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }

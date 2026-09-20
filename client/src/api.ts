@@ -1,4 +1,8 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '';
+export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+let cachedIceConfig: RTCConfiguration | null = null;
+let cachedIceUntil = 0;
+let pendingIceConfig: Promise<RTCConfiguration> | null = null;
 
 function getToken(): string | null {
   return sessionStorage.getItem('token');
@@ -23,9 +27,15 @@ async function request(path: string, options: RequestInit = {}) {
 }
 
 export const api = {
-  getIceConfiguration: async (): Promise<RTCConfiguration> => {
-    const data = await request('/api/ice-config');
-    return { iceServers: data.iceServers };
+  getIceConfiguration: (): Promise<RTCConfiguration> => {
+    if (cachedIceConfig && Date.now() < cachedIceUntil) return Promise.resolve(cachedIceConfig);
+    if (pendingIceConfig) return pendingIceConfig;
+    pendingIceConfig = request('/api/ice-config').then(data => {
+      cachedIceConfig = { iceServers: data.iceServers };
+      cachedIceUntil = Date.now() + 50 * 60 * 1000;
+      return cachedIceConfig;
+    }).finally(() => { pendingIceConfig = null; });
+    return pendingIceConfig;
   },
   joinClass: (classCode: string, visitorId: string, displayName: string) =>
     request('/api/auth/join', { method: 'POST', body: JSON.stringify({ classCode, visitorId, displayName }) }),
@@ -38,6 +48,7 @@ export const api = {
     request(`/api/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`),
 
   uploadFile: (file: File, conversationId: string) => {
+    if (file.size > MAX_ATTACHMENT_BYTES) throw new Error('File exceeds the upload size limit (100 MB).');
     const formData = new FormData();
     formData.append('conversationId', conversationId);
     formData.append('file', file);

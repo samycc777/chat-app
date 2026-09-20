@@ -6,6 +6,7 @@ import fs from 'fs';
 import db from './database';
 import { AuthRequest, authMiddleware } from './auth';
 import { CLASSROOM_ID } from './database';
+import { MAX_UPLOAD_BYTES } from './config';
 
 const router = Router();
 router.use(authMiddleware);
@@ -19,28 +20,55 @@ const storage = multer.diskStorage({
     cb(null, uuid());
   },
 });
-const upload = multer({ storage, limits: { fileSize: Number(process.env.MAX_UPLOAD_BYTES) || 10 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: MAX_UPLOAD_BYTES } });
 
 interface IceServerConfig { urls: string | string[]; username?: string; credential?: string; }
 
-function getIceServers(): IceServerConfig[] {
-  const urls = (process.env.TURN_URLS || '').split(',').map(value => value.trim()).filter(Boolean);
-  const username = process.env.TURN_USERNAME?.trim();
-  const credential = process.env.TURN_CREDENTIAL;
-  const anyTurnSetting = Boolean(process.env.TURN_URLS || username || credential);
-  if (anyTurnSetting && (!urls.length || !username || !credential)) throw new Error('TURN_URLS, TURN_USERNAME, and TURN_CREDENTIAL must be configured together');
-  return [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-    ...(urls.length ? [{ urls, username, credential }] : []),
-  ];
+async function getIceServers(): Promise<IceServerConfig[]> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
+  const apiKey = process.env.TWILIO_API_KEY?.trim();
+  const apiSecret = process.env.TWILIO_API_SECRET;
+  const configured = Boolean(accountSid || apiKey || apiSecret);
+  if (!configured && process.env.NODE_ENV !== 'production') {
+    return [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+  }
+  if (!accountSid || !apiKey || !apiSecret) {
+    throw new Error('Twilio TURN is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_API_KEY, and TWILIO_API_SECRET.');
+  }
+
+  let response: globalThis.Response;
+  try {
+    response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Tokens.json`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${apiKey}:${apiSecret}`).toString('base64')}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ Ttl: '3600' }),
+    });
+  } catch {
+    throw new Error('Twilio TURN credentials are temporarily unavailable.');
+  }
+  if (!response.ok) throw new Error('Twilio TURN credentials are temporarily unavailable.');
+
+  let data: { ice_servers?: IceServerConfig[] };
+  try {
+    data = await response.json() as { ice_servers?: IceServerConfig[] };
+  } catch {
+    throw new Error('Twilio returned an invalid TURN configuration.');
+  }
+  if (!Array.isArray(data.ice_servers) || !data.ice_servers.length) {
+    throw new Error('Twilio returned an invalid TURN configuration.');
+  }
+  return data.ice_servers;
 }
 
-router.get('/ice-config', (_req: AuthRequest, res: Response) => {
+router.get('/ice-config', async (_req: AuthRequest, res: Response) => {
   try {
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ iceServers: getIceServers() });
+    res.json({ iceServers: await getIceServers() });
   } catch (error) {
-    res.status(503).json({ error: error instanceof Error ? error.message : 'ICE configuration unavailable' });
+    res.status(503).json({ error: error instanceof Error ? error.message : 'ICE configuration unavailable.' });
   }
 });
 

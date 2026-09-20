@@ -6,6 +6,7 @@ import fs from 'fs';
 import authRouter from './auth';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
+import { DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES } from './config';
 
 const production = process.env.NODE_ENV === 'production';
 if (production && !process.env.DATA_DIR) throw new Error('DATA_DIR must point to a persistent Railway Volume');
@@ -62,7 +63,10 @@ app.use('/api', rateLimit('api', 180, 60_000), apiRouter);
 app.use('/uploads', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (res.headersSent) return next(err);
-  if (err?.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'File is too large' });
+  if (err?.code === 'LIMIT_FILE_SIZE') {
+    const limitMb = MAX_UPLOAD_BYTES === DEFAULT_MAX_UPLOAD_BYTES ? '100 MB by default' : `${(MAX_UPLOAD_BYTES / 1024 / 1024).toFixed(1)} MB`;
+    return res.status(413).json({ error: `File exceeds the upload size limit (${limitMb}).` });
+  }
   if (err?.message === 'Origin not allowed') return res.status(403).json({ error: 'Origin not allowed' });
   if (err instanceof SyntaxError && 'body' in err) return res.status(400).json({ error: 'Invalid JSON' });
   console.error('Request failed:', err?.message || 'unknown error');

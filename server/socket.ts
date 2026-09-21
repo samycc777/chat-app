@@ -27,7 +27,13 @@ const whiteboardSessions = new Map<string, WhiteboardSession>();
 
 export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = []) {
   const io = new Server(httpServer, {
-    cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
+    cors: {
+      origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error('Origin not allowed'));
+      },
+      methods: ['GET', 'POST'],
+    },
     maxHttpBufferSize: 256 * 1024,
   });
 

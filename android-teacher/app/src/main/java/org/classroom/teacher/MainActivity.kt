@@ -98,8 +98,14 @@ class MainActivity : AppCompatActivity() {
           else setStatus("Another teacher already has an active lesson.")
         }
       }
+      socket?.on(Socket.EVENT_CONNECT) {
+        socket?.emit("wb_start", JSONObject().put("conversationId", "classroom"))
+      }
+      socket?.on(Socket.EVENT_CONNECT_ERROR) { args ->
+        val msg = (args.firstOrNull() as? Exception)?.message ?: "Socket connection failed"
+        runOnUiThread { stopLesson("Connection error: $msg") }
+      }
       socket?.connect()
-      socket?.emit("wb_start", JSONObject().put("conversationId", "classroom"))
     } catch (error: Exception) { stopLesson("Could not connect. Check the website URL and lesson configuration.") }
   }
 

@@ -16,7 +16,7 @@ class LessonCaptureService : Service() {
     val manager = getSystemService(NotificationManager::class.java)
     manager.createNotificationChannel(NotificationChannel(channelId, "Lesson sharing", NotificationManager.IMPORTANCE_LOW))
     val notification = NotificationCompat.Builder(this, channelId)
-      .setSmallIcon(android.R.drawable.ic_menu_camera)
+      .setSmallIcon(R.drawable.ic_screen_share)
       .setContentTitle("Lesson screen sharing is active")
       .setContentText("Return to Classroom Teacher to stop sharing.")
       .addAction(0, "Stop lesson", PendingIntent.getActivity(this, 0,

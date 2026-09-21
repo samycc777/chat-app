@@ -41,16 +41,12 @@ async function toggleMic() {
   } catch { error.value = t('voiceSetupFailed'); }
 }
 async function connect() {
-  if (!isE2EESupported()) { error.value = t('e2eeUnsupported'); status.value = ''; return; }
   try {
     const credentials = await api.getLiveKitToken(props.conversationId);
-    const keys = new ExternalE2EEKeyProvider();
-    await keys.setKey(credentials.encryptionKey);
-    room = new Room({ encryption: { keyProvider: keys, worker: new Worker(new URL('livekit-client/e2ee-worker', import.meta.url), { type: 'module' }) } });
+    room = new Room();
     room.on(RoomEvent.TrackSubscribed, (track) => attach(track as RemoteTrack));
     room.on(RoomEvent.AudioPlaybackStatusChanged, () => { audioBlocked.value = !room!.canPlaybackAudio; });
     room.on(RoomEvent.Disconnected, () => { if (!error.value) status.value = t('lessonDisconnected'); });
-    await room.setE2EEEnabled(true);
     await room.connect(credentials.url, credentials.token);
     for (const participant of room.remoteParticipants.values()) {
       for (const publication of participant.trackPublications.values()) if (publication.track) attach(publication.track);

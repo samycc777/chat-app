@@ -113,6 +113,9 @@ class MainActivity : AppCompatActivity() {
     try {
       if (room != null) return
       val credentials = getCredentials(authToken!!)
+      livekit.org.webrtc.PeerConnectionFactory.initialize(
+        livekit.org.webrtc.PeerConnectionFactory.InitializationOptions.builder(applicationContext).createInitializationOptions()
+      )
       val keyProvider = BaseKeyProvider().also { it.setSharedKey(credentials.getString("encryptionKey")) }
       room = LiveKit.create(applicationContext, options = RoomOptions(e2eeOptions = E2EEOptions(keyProvider = keyProvider)))
       room!!.connect(credentials.getString("url"), credentials.getString("token"))

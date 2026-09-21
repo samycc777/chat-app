@@ -112,9 +112,9 @@ class MainActivity : AppCompatActivity() {
     } catch (error: Exception) { stopLesson("Could not connect. Check the website URL and lesson configuration.") }
   }
 
-  private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+  private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted: Boolean ->
     if (!granted) { setStatus("Microphone permission is required"); return@registerForActivityResult }
-    lifecycleScope.launch { startLesson() }
+    startLesson()
   }
 
   private suspend fun connectLessonMedia() {

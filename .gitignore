@@ -9,3 +9,9 @@ uploads/*
 *.log
 .DS_Store
 .vite/
+android-teacher/keystore.properties
+android-teacher/*.jks
+android-teacher/*.keystore
+android-teacher/.gradle/
+android-teacher/local.properties
+android-teacher/app/build/

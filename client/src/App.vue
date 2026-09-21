@@ -4,10 +4,10 @@ import { Moon, Sun } from 'lucide-vue-next';
 import type { Conversation, User } from './types';
 import { api } from './api';
 import { useI18n } from './i18n';
-import { connectSocket, disconnectSocket } from './socket';
+import { connectSocket, disconnectSocket, getSocket } from './socket';
 import Auth from './components/Auth.vue';
 import ChatView from './components/ChatView.vue';
-import WhiteboardView from './components/WhiteboardView.vue';
+import LessonView from './components/LessonView.vue';
 
 const token = ref(sessionStorage.getItem('token'));
 const currentUser = ref<User | null>(null);
@@ -41,7 +41,7 @@ function joined(result: { token: string; user: User; conversationId: string }) {
   });
   socket.on('wb_started', (data: { conversationId: string; presenterId: string; pdfUrl: string | null }) => {
     whiteboard.value = data;
-    showWhiteboard.value = true;
+    showWhiteboard.value = data.presenterId === result.user.id;
   });
   socket.on('wb_ended', () => { whiteboard.value = null; showWhiteboard.value = false; });
   socket.emit('join_conversation', { conversationId: result.conversationId });
@@ -58,7 +58,7 @@ onMounted(async () => {
       else next.delete(data.userId);
       onlineUsers.value = next;
     });
-    socket.on('wb_started', (data: { conversationId: string; presenterId: string; pdfUrl: string | null }) => { whiteboard.value = data; showWhiteboard.value = true; });
+    socket.on('wb_started', (data: { conversationId: string; presenterId: string; pdfUrl: string | null }) => { whiteboard.value = data; showWhiteboard.value = data.presenterId === user.id; });
     socket.on('wb_ended', () => { whiteboard.value = null; showWhiteboard.value = false; });
   } catch { sessionStorage.removeItem('token'); token.value = null; }
 });
@@ -70,7 +70,11 @@ function openWhiteboard() {
   socket.emit('wb_start', { conversationId: conversation.value.id });
   socket.emit('wb_get_state', { conversationId: conversation.value.id });
 }
-function endWhiteboard() { showWhiteboard.value = false; whiteboard.value = null; }
+function leaveLesson() { showWhiteboard.value = false; }
+function endLesson() {
+  if (conversation.value && currentUser.value && whiteboard.value?.presenterId === currentUser.value.id) getSocket()?.emit('wb_end', { conversationId: conversation.value.id });
+  showWhiteboard.value = false;
+}
 function leaveClass() {
   disconnectSocket(); sessionStorage.removeItem('token'); token.value = null;
   currentUser.value = null; conversation.value = null; whiteboard.value = null; showWhiteboard.value = false;
@@ -81,8 +85,8 @@ function leaveClass() {
   <Auth v-if="!token || !currentUser" @auth="joined" @toggle-theme="toggleTheme" :theme="theme" />
   <main v-else-if="conversation && currentUser" class="classroom-layout">
     <div class="classroom-bar"><span>{{ t('classroom') }} <span class="classroom-bar-dot">·</span> {{ currentUser.displayName }}</span><div class="classroom-bar-actions"><button class="theme-toggle" :title="t('toggleTheme')" :aria-label="t('toggleTheme')" @click="toggleTheme"><Sun v-if="theme === 'dark'" :size="18"/><Moon v-else :size="18"/></button><button class="leave-class-btn" @click="leaveClass">{{ t('leaveClass') }}</button></div></div>
-    <ChatView :conversation="conversation" :current-user="currentUser" :online-users="onlineUsers" @whiteboard="openWhiteboard" />
-    <WhiteboardView v-if="showWhiteboard && whiteboard" :conversation-id="whiteboard.conversationId" :pdf-url="whiteboard.pdfUrl" :presenter-id="whiteboard.presenterId" :current-user="currentUser" @end="endWhiteboard" />
+    <ChatView :conversation="conversation" :current-user="currentUser" :online-users="onlineUsers" :lesson-active="Boolean(whiteboard)" @whiteboard="openWhiteboard" />
+    <LessonView v-if="showWhiteboard && whiteboard" :conversation-id="whiteboard.conversationId" :presenter="whiteboard.presenterId === currentUser.id" @leave="leaveLesson" @end="endLesson" />
   </main>
   </div>
 </template>

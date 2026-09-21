@@ -1,9 +1,7 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 type UploadResult = { attachmentId: string; name: string; type: 'image' | 'file' };
-let cachedIceConfig: RTCConfiguration | null = null;
-let cachedIceUntil = 0;
-let pendingIceConfig: Promise<RTCConfiguration> | null = null;
+export type LiveKitCredentials = { url: string; token: string; roomName: string; encryptionKey: string };
 let cachedUploadLimit: number | null = null;
 let pendingUploadLimit: Promise<number> | null = null;
 
@@ -30,16 +28,8 @@ async function request(path: string, options: RequestInit = {}) {
 }
 
 export const api = {
-  getIceConfiguration: (): Promise<RTCConfiguration> => {
-    if (cachedIceConfig && Date.now() < cachedIceUntil) return Promise.resolve(cachedIceConfig);
-    if (pendingIceConfig) return pendingIceConfig;
-    pendingIceConfig = request('/api/ice-config').then(data => {
-      cachedIceConfig = { iceServers: data.iceServers };
-      cachedIceUntil = Date.now() + 50 * 60 * 1000;
-      return cachedIceConfig;
-    }).finally(() => { pendingIceConfig = null; });
-    return pendingIceConfig;
-  },
+  getLiveKitToken: (conversationId: string): Promise<LiveKitCredentials> =>
+    request('/api/livekit/token', { method: 'POST', body: JSON.stringify({ conversationId }) }),
   getUploadLimit: (): Promise<number> => {
     if (cachedUploadLimit !== null) return Promise.resolve(cachedUploadLimit);
     if (pendingUploadLimit) return pendingUploadLimit;

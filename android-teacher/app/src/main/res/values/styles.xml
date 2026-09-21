@@ -1,0 +1,3 @@
+<resources>
+  <style name="Theme.ClassroomTeacher" parent="Theme.AppCompat.DayNight.NoActionBar" />
+</resources>

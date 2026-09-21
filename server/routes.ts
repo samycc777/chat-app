@@ -7,6 +7,8 @@ import db from './database';
 import { AuthRequest, authMiddleware } from './auth';
 import { CLASSROOM_ID } from './database';
 import { MAX_UPLOAD_BYTES } from './config';
+import { AccessToken, TrackSource } from 'livekit-server-sdk';
+import { getLessonSession } from './lesson';
 
 const router = Router();
 router.use(authMiddleware);
@@ -22,59 +24,44 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: MAX_UPLOAD_BYTES } });
 
-interface IceServerConfig { urls: string | string[]; username?: string; credential?: string; }
-
-async function getIceServers(): Promise<IceServerConfig[]> {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
-  const apiKey = process.env.TWILIO_API_KEY?.trim();
-  const apiSecret = process.env.TWILIO_API_SECRET;
-  const configured = Boolean(accountSid || apiKey || apiSecret);
-  if (!configured && process.env.NODE_ENV !== 'production') {
-    return [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
-  }
-  if (!accountSid || !apiKey || !apiSecret) {
-    throw new Error('Twilio TURN is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_API_KEY, and TWILIO_API_SECRET.');
-  }
-
-  let response: globalThis.Response;
-  try {
-    response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Tokens.json`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${apiKey}:${apiSecret}`).toString('base64')}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({ Ttl: '3600' }),
-    });
-  } catch {
-    throw new Error('Twilio TURN credentials are temporarily unavailable.');
-  }
-  if (!response.ok) throw new Error('Twilio TURN credentials are temporarily unavailable.');
-
-  let data: { ice_servers?: IceServerConfig[] };
-  try {
-    data = await response.json() as { ice_servers?: IceServerConfig[] };
-  } catch {
-    throw new Error('Twilio returned an invalid TURN configuration.');
-  }
-  if (!Array.isArray(data.ice_servers) || !data.ice_servers.length) {
-    throw new Error('Twilio returned an invalid TURN configuration.');
-  }
-  return data.ice_servers;
-}
-
-router.get('/ice-config', async (_req: AuthRequest, res: Response) => {
-  try {
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ iceServers: await getIceServers() });
-  } catch (error) {
-    res.status(503).json({ error: error instanceof Error ? error.message : 'ICE configuration unavailable.' });
-  }
-});
-
 router.get('/upload-config', (_req: AuthRequest, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ maxUploadBytes: MAX_UPLOAD_BYTES });
+});
+
+router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
+  const conversationId = req.body?.conversationId;
+  if (typeof conversationId !== 'string' || !memberOf(conversationId, req.userId!)) {
+    res.status(403).json({ error: 'Not a classroom member' }); return;
+  }
+  const session = getLessonSession(conversationId);
+  if (!session) { res.status(409).json({ error: 'No lesson is active' }); return; }
+
+  const url = process.env.LIVEKIT_URL?.trim();
+  const apiKey = process.env.LIVEKIT_API_KEY?.trim();
+  const apiSecret = process.env.LIVEKIT_API_SECRET;
+  if (!url || !apiKey || !apiSecret) {
+    res.status(503).json({ error: 'Lesson streaming is not configured' }); return;
+  }
+
+  const isPresenter = session.presenterId === req.userId;
+  const user = db.prepare('SELECT display_name FROM users WHERE id = ?').get(req.userId!) as { display_name?: string } | undefined;
+  const token = new AccessToken(apiKey, apiSecret, {
+    identity: req.userId!,
+    name: user?.display_name || 'Classroom member',
+    ttl: '1h',
+  });
+  token.addGrant({
+    roomJoin: true,
+    room: session.roomName,
+    canSubscribe: true,
+    canPublish: true,
+    canPublishSources: isPresenter
+      ? [TrackSource.SCREEN_SHARE, TrackSource.MICROPHONE]
+      : [TrackSource.MICROPHONE],
+  });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ url, token: await token.toJwt(), roomName: session.roomName, encryptionKey: session.encryptionKey });
 });
 
 function memberOf(conversationId: string, userId: string) {

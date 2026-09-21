@@ -28,6 +28,7 @@ const props = defineProps<{
   conversation: Conversation;
   currentUser: User;
   onlineUsers: Set<string>;
+  lessonActive?: boolean;
 }>();
 const emit = defineEmits<{
   back: [];
@@ -283,6 +284,10 @@ function dateLabel(timestamp: number) {
           <Monitor :size="20" />
         </button>
       </div>
+    </div>
+    <div v-if="lessonActive" class="lesson-banner" role="status">
+      <div><strong>{{ t('liveLesson') }}</strong><span>{{ t('lessonInProgress') }}</span></div>
+      <button class="lesson-join-btn" @click="emit('whiteboard')">{{ t('joinLesson') }}</button>
     </div>
     <div ref="container" class="messages-container" @scroll="onScroll">
       <template v-for="(message, index) in messages" :key="message.id"

@@ -512,6 +512,21 @@ input {
   gap: 4px;
 }
 
+.lesson-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 18px; background: #e8f3ee; border-bottom: 1px solid var(--border-color); color: #285943; }
+.lesson-banner > div { display: flex; flex-direction: column; gap: 2px; }
+.lesson-banner span { font-size: 12px; color: var(--text-secondary); }
+.lesson-join-btn, .lesson-audio, .lesson-mic { border: 0; border-radius: 10px; min-height: 38px; padding: 0 12px; display: inline-flex; align-items: center; gap: 7px; font-weight: 650; cursor: pointer; }
+.lesson-join-btn { background: #287e57; color: white; }
+.lesson-overlay { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--bg-chat); }
+.lesson-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 20px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); }
+.lesson-header p { margin: 2px 0 0; color: var(--text-secondary); font-size: 12px; }
+.lesson-actions { display: flex; align-items: center; gap: 8px; }
+.lesson-audio, .lesson-mic { background: var(--bg-secondary); color: var(--text-primary); }
+.lesson-mic.active { background: #287e57; color: #fff; }
+.lesson-stage { position: relative; flex: 1; display: grid; place-items: center; padding: 16px; background: #101512; }
+.lesson-screen { width: min(100%, 1280px); max-height: 100%; object-fit: contain; background: #000; }
+.lesson-waiting { position: absolute; color: #d7e3dc; }
+
 /* Messages */
 .messages-container {
   flex: 1;
@@ -1897,6 +1912,10 @@ body { height: 100dvh; background: var(--bg-chat); color: var(--text-primary); f
   .classroom-bar { min-height: 44px; padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right)); }
   .leave-class-btn { min-height: 34px; padding-inline: 10px; font-size: 12px; }
   .chat-header { height: 62px; padding: 7px 12px; gap: 8px; }
+  .lesson-banner { padding: 9px 12px; }
+  .lesson-header { min-height: 56px; padding: 7px 10px; }
+  .lesson-actions { gap: 5px; }
+  .lesson-mic, .lesson-audio { padding: 0 8px; font-size: 12px; }
   .chat-header .avatar { width: 42px; height: 42px; }
   .chat-header-actions .icon-btn { width: 44px; height: 44px; color: var(--text-accent); background: var(--bg-secondary); border-radius: 14px; }
   .messages-container { padding: 12px 13px; }

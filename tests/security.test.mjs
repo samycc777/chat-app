@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import jwt from 'jsonwebtoken';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const requireFromClient = createRequire(path.join(root, 'client', 'package.json'));
@@ -100,11 +101,45 @@ test('classroom members can fetch attachments and unadmitted users cannot', asyn
   const state = new Promise(resolve => bobSocket.once('wb_state', resolve));
   bobSocket.emit('wb_get_state', { conversationId });
   assert.equal((await state).presenterId, alice.user.id);
+
+  const previousLiveKit = Object.fromEntries(['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'].map(key => [key, process.env[key]]));
+  assert.equal((await fetch(`${baseUrl}/api/livekit/token`)).status, 401);
+  const unavailableMedia = await fetch(`${baseUrl}/api/livekit/token`, {
+    method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
+  });
+  assert.equal(unavailableMedia.status, 503);
+  process.env.LIVEKIT_URL = 'wss://test.livekit.cloud';
+  process.env.LIVEKIT_API_KEY = 'test-key';
+  process.env.LIVEKIT_API_SECRET = 'test-secret';
+  const presenterMedia = await fetch(`${baseUrl}/api/livekit/token`, {
+    method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
+  });
+  assert.equal(presenterMedia.status, 200);
+  const presenterCredentials = await presenterMedia.json();
+  assert.equal(presenterCredentials.url, process.env.LIVEKIT_URL);
+  assert.ok(presenterCredentials.encryptionKey.length >= 32);
+  const presenterGrant = jwt.decode(presenterCredentials.token).video;
+  assert.equal(presenterGrant.room, presenterCredentials.roomName);
+  assert.deepEqual(presenterGrant.canPublishSources.sort(), ['microphone', 'screen_share']);
+  const studentMedia = await fetch(`${baseUrl}/api/livekit/token`, {
+    method: 'POST', headers: { ...auth(bob.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
+  });
+  assert.equal(studentMedia.status, 200);
+  const studentGrant = jwt.decode((await studentMedia.json()).token).video;
+  assert.notDeepEqual(studentGrant.canPublishSources.sort(), presenterGrant.canPublishSources.sort());
+  for (const [key, value] of Object.entries(previousLiveKit)) value === undefined ? delete process.env[key] : process.env[key] = value;
+
   let unauthorizedEnd = false;
   aliceSocket.once('wb_ended', () => { unauthorizedEnd = true; });
   bobSocket.emit('wb_end', { conversationId });
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(unauthorizedEnd, false);
+  aliceSocket.emit('wb_end', { conversationId });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const endedMedia = await fetch(`${baseUrl}/api/livekit/token`, {
+    method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
+  });
+  assert.equal(endedMedia.status, 409);
 });
 
 test('large PDFs up to the 100 MB default upload limit are accepted', async () => {
@@ -162,56 +197,4 @@ test('class code is required and the display name is restored from browser ident
     body: JSON.stringify({ classCode: '0000', visitorId }),
   });
   assert.equal((await restored.json()).user.displayName, 'Charlie');
-});
-
-test('ICE configuration requires auth, provides Twilio relay credentials, and fails clearly without production credentials', async () => {
-  const user = await join('ICE Config');
-  assert.equal((await fetch(`${baseUrl}/api/ice-config`)).status, 401);
-  const original = Object.fromEntries(['NODE_ENV', 'TWILIO_ACCOUNT_SID', 'TWILIO_API_KEY', 'TWILIO_API_SECRET'].map(key => [key, process.env[key]]));
-  const originalFetch = globalThis.fetch;
-  try {
-    process.env.NODE_ENV = 'production';
-    delete process.env.TWILIO_ACCOUNT_SID;
-    delete process.env.TWILIO_API_KEY;
-    delete process.env.TWILIO_API_SECRET;
-    const missing = await fetch(`${baseUrl}/api/ice-config`, { headers: { Authorization: `Bearer ${user.token}` } });
-    assert.equal(missing.status, 503);
-    assert.match((await missing.json()).error, /TWILIO_ACCOUNT_SID/);
-
-    process.env.TWILIO_ACCOUNT_SID = 'AC-test-account';
-    process.env.TWILIO_API_KEY = 'SK-test-key';
-    process.env.TWILIO_API_SECRET = 'server-only-secret';
-    let requestOptions;
-    globalThis.fetch = async (url, options) => {
-      if (!String(url).startsWith('https://api.twilio.com/')) return originalFetch(url, options);
-      assert.equal(url, 'https://api.twilio.com/2010-04-01/Accounts/AC-test-account/Tokens.json');
-      requestOptions = options;
-      return new Response(JSON.stringify({ ice_servers: [
-        { urls: 'stun:global.stun.twilio.com:3478' },
-        { urls: 'turn:global.turn.twilio.com:3478?transport=udp', username: 'ephemeral-user', credential: 'ephemeral-password' },
-        { urls: 'turn:global.turn.twilio.com:443?transport=tcp', username: 'ephemeral-user', credential: 'ephemeral-password' },
-      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    };
-    const configured = await fetch(`${baseUrl}/api/ice-config`, { headers: { Authorization: `Bearer ${user.token}` } });
-    assert.equal(configured.status, 200);
-    const body = await configured.json();
-    assert.equal(new URLSearchParams(requestOptions.body).get('Ttl'), '3600');
-    assert.equal(body.iceServers[1].username, 'ephemeral-user');
-    assert.equal(body.iceServers[1].credential, 'ephemeral-password');
-    assert.equal(body.iceServers[2].urls, 'turn:global.turn.twilio.com:443?transport=tcp');
-    assert.doesNotMatch(JSON.stringify(body), /server-only-secret|AC-test-account|SK-test-key/);
-
-    globalThis.fetch = async (url, options) => String(url).startsWith('https://api.twilio.com/')
-      ? new Response('Twilio unavailable', { status: 503 })
-      : originalFetch(url, options);
-    const unavailable = await fetch(`${baseUrl}/api/ice-config`, { headers: { Authorization: `Bearer ${user.token}` } });
-    assert.equal(unavailable.status, 503);
-    assert.match((await unavailable.json()).error, /temporarily unavailable/i);
-  } finally {
-    globalThis.fetch = originalFetch;
-    for (const [key, value] of Object.entries(original)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
 });

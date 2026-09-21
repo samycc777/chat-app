@@ -61,7 +61,6 @@ class MainActivity : AppCompatActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    if (android.os.Build.VERSION.SDK_INT >= 33) ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
     val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(40, 56, 40, 40); gravity = Gravity.CENTER_HORIZONTAL }
     serverUrl = field(root, "Website URL", "https://your-classroom.example")
     classCode = field(root, "Class code", "0000")
@@ -84,15 +83,16 @@ class MainActivity : AppCompatActivity() {
     return EditText(this).also { it.hint = hint; root.addView(it, LinearLayout.LayoutParams(-1, -2)) }
   }
 
-  private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted: Boolean ->
-    if (!granted) { setStatus("Microphone permission is required"); return@registerForActivityResult }
+  private val permissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results: Map<String, Boolean> ->
+    if (results[Manifest.permission.RECORD_AUDIO] != true) { setStatus("Microphone permission is required"); return@registerForActivityResult }
     lifecycleScope.launch { doStartLesson() }
   }
 
   private fun startLesson() {
-    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-      micPermission.launch(Manifest.permission.RECORD_AUDIO); return
-    }
+    val needed = mutableListOf<String>()
+    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.RECORD_AUDIO)
+    if (android.os.Build.VERSION.SDK_INT >= 33 && ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.POST_NOTIFICATIONS)
+    if (needed.isNotEmpty()) { permissionsLauncher.launch(needed.toTypedArray()); return }
     lifecycleScope.launch { doStartLesson() }
   }
 

@@ -16,7 +16,7 @@ class LessonCaptureService : Service() {
     val manager = getSystemService(NotificationManager::class.java)
     manager.createNotificationChannel(NotificationChannel(channelId, "Lesson sharing", NotificationManager.IMPORTANCE_LOW))
     val notification = NotificationCompat.Builder(this, channelId)
-      .setSmallIcon(android.R.drawable.presence_video_online)
+      .setSmallIcon(android.R.drawable.ic_menu_camera)
       .setContentTitle("Lesson screen sharing is active")
       .setContentText("Return to Classroom Teacher to stop sharing.")
       .addAction(0, "Stop lesson", PendingIntent.getActivity(this, 0,
@@ -25,7 +25,7 @@ class LessonCaptureService : Service() {
       .setOngoing(true)
       .build()
     ServiceCompat.startForeground(this, 101, notification,
-      ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+      ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
     return START_NOT_STICKY
   }
   override fun onBind(intent: Intent?): IBinder? = null

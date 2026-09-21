@@ -12,6 +12,6 @@
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
     </activity>
-    <service android:name=".LessonCaptureService" android:exported="false" android:foregroundServiceType="mediaProjection|microphone" />
+    <service android:name=".LessonCaptureService" android:exported="false" android:foregroundServiceType="mediaProjection" />
   </application>
 </manifest>

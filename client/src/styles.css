@@ -1259,10 +1259,37 @@ input {
 }
 
 .wb-voice-status {
+  order: 3;
   max-width: 260px;
   color: #b42318;
   font-size: 12px;
   line-height: 1.3;
+}
+
+.wb-voice-retry-btn {
+  order: 3;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: #fff;
+  background: #a43d36;
+  font-size: 12px;
+}
+
+.wb-voice-diagnostics {
+  flex: 0 0 auto;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.wb-voice-diagnostics summary { cursor: pointer; }
+.wb-voice-diagnostics-content { display: grid; gap: 5px; max-height: 180px; overflow: auto; padding-top: 8px; }
+.wb-voice-peer-diagnostic { display: grid; gap: 2px; padding: 6px 8px; border-radius: 6px; background: var(--bg-secondary); }
+
+@media (max-width: 700px) {
+  .wb-voice-status { max-width: 120px; font-size: 10px; }
+  .wb-voice-retry-btn { padding: 6px; font-size: 10px; }
 }
 
 .wb-voice-btn:hover {

@@ -141,9 +141,13 @@ class MainActivity : AppCompatActivity() {
       livekit.org.webrtc.PeerConnectionFactory.initialize(
         livekit.org.webrtc.PeerConnectionFactory.InitializationOptions.builder(applicationContext).createInitializationOptions()
       )
-      val keyProvider = BaseKeyProvider().also { it.setSharedKey(credentials.getString("encryptionKey")) }
+      val keyProvider = BaseKeyProvider().also {
+        it.enableSharedKey = true
+        it.setSharedKey(credentials.getString("encryptionKey"))
+      }
       room = LiveKit.create(applicationContext, options = RoomOptions(e2eeOptions = E2EEOptions(keyProvider = keyProvider)))
       room!!.connect(credentials.getString("url"), credentials.getString("token"))
+      room!!.e2eeManager?.enableE2EE(true)
       room!!.localParticipant.setMicrophoneEnabled(true)
       val projection = getSystemService(MediaProjectionManager::class.java)
       screenCapture.launch(projection.createScreenCaptureIntent())

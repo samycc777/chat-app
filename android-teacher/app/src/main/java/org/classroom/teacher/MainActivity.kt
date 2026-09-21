@@ -62,9 +62,9 @@ class MainActivity : AppCompatActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(40, 56, 40, 40); gravity = Gravity.CENTER_HORIZONTAL }
-    serverUrl = field(root, "Website URL", "https://your-classroom.example")
+    serverUrl = field(root, "Website URL", "https://nurturing-dedication-production-9379.up.railway.app")
     classCode = field(root, "Class code", "0000")
-    displayName = field(root, "Teacher name", "")
+    displayName = field(root, "Teacher name", "test")
     startStop = Button(this).apply { text = "Start lesson"; setOnClickListener { if (sharing) stopLesson("Lesson stopped") else startLesson() } }
     mute = Button(this).apply { text = "Mute microphone"; visibility = View.GONE; setOnClickListener { toggleMute() } }
     status = TextView(this).apply { text = "Sign in, then start a lesson. The PDF stays in JNotes on this phone."; setPadding(0, 28, 0, 0) }
@@ -80,7 +80,7 @@ class MainActivity : AppCompatActivity() {
 
   private fun field(root: LinearLayout, label: String, hint: String): EditText {
     root.addView(TextView(this).apply { text = label })
-    return EditText(this).also { it.hint = hint; root.addView(it, LinearLayout.LayoutParams(-1, -2)) }
+    return EditText(this).also { it.setText(hint); root.addView(it, LinearLayout.LayoutParams(-1, -2)) }
   }
 
   private val permissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results: Map<String, Boolean> ->

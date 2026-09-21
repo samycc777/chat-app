@@ -84,11 +84,20 @@ class MainActivity : AppCompatActivity() {
     return EditText(this).also { it.hint = hint; root.addView(it, LinearLayout.LayoutParams(-1, -2)) }
   }
 
-  private fun startLesson() = lifecycleScope.launch {
+  private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted: Boolean ->
+    if (!granted) { setStatus("Microphone permission is required"); return@registerForActivityResult }
+    lifecycleScope.launch { doStartLesson() }
+  }
+
+  private fun startLesson() {
+    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+      micPermission.launch(Manifest.permission.RECORD_AUDIO); return
+    }
+    lifecycleScope.launch { doStartLesson() }
+  }
+
+  private suspend fun doStartLesson() {
     try {
-      if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-        micPermission.launch(Manifest.permission.RECORD_AUDIO); return@launch
-      }
       setStatus("Signing in…")
       val identity = joinClass()
       authToken = identity.getString("token")
@@ -110,11 +119,6 @@ class MainActivity : AppCompatActivity() {
       }
       socket?.connect()
     } catch (error: Exception) { stopLesson("Could not connect. Check the website URL and lesson configuration.") }
-  }
-
-  private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted: Boolean ->
-    if (!granted) { setStatus("Microphone permission is required"); return@registerForActivityResult }
-    startLesson()
   }
 
   private suspend fun connectLessonMedia() {

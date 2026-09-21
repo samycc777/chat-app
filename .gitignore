@@ -17,6 +17,7 @@ android-teacher/.idea/
 android-teacher/build/
 android-teacher/local.properties
 android-teacher/app/build/
+android-teacher/app/release/
 android-teacher/gradle/
 android-teacher/gradlew
 android-teacher/gradlew.bat

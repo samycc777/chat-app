@@ -11,7 +11,8 @@ const { t } = useI18n();
 const video = ref<HTMLVideoElement>();
 const status = ref(t('joiningLesson'));
 const error = ref('');
-const micEnabled = ref(false);
+const micJoined = ref(false);
+const micMuted = ref(false);
 const audioBlocked = ref(false);
 let room: Room | null = null;
 const detachedAudio: HTMLMediaElement[] = [];
@@ -33,11 +34,20 @@ function attach(track: RemoteTrack) {
 async function enableAudio() {
   try { await room?.startAudio(); audioBlocked.value = false; } catch { error.value = t('voicePlaybackBlocked'); }
 }
-async function toggleMic() {
+async function joinMic() {
   if (!room) return;
   try {
-    await room.localParticipant.setMicrophoneEnabled(!micEnabled.value);
-    micEnabled.value = !micEnabled.value;
+    await room.localParticipant.setMicrophoneEnabled(true);
+    micJoined.value = true;
+    micMuted.value = false;
+  } catch { error.value = t('voiceSetupFailed'); }
+}
+async function toggleMute() {
+  if (!room || !micJoined.value) return;
+  try {
+    const newMuted = !micMuted.value;
+    await room.localParticipant.setMicrophoneEnabled(!newMuted);
+    micMuted.value = newMuted;
   } catch { error.value = t('voiceSetupFailed'); }
 }
 async function connect() {
@@ -64,7 +74,7 @@ onBeforeUnmount(leave);
 
 <template>
   <section class="lesson-overlay" aria-label="Live lesson">
-    <header class="lesson-header"><div><strong>{{ t('liveLesson') }}</strong><p v-if="status">{{ status }}</p></div><div class="lesson-actions"><button v-if="audioBlocked" class="lesson-audio" @click="enableAudio"><Volume2 :size="18"/>{{ t('enableAudio') }}</button><button class="lesson-mic" :class="{ active: micEnabled }" @click="toggleMic"><Mic v-if="micEnabled" :size="18"/><MicOff v-else :size="18"/>{{ micEnabled ? t('voiceOn') : t('joinVoice') }}</button><button class="whiteboard-end-btn" @click="finish"><X :size="18"/><span>{{ presenter ? t('end') : t('leave') }}</span></button></div></header>
+    <header class="lesson-header"><div><strong>{{ t('liveLesson') }}</strong><p v-if="status">{{ status }}</p></div><div class="lesson-actions"><button v-if="audioBlocked" class="lesson-audio" @click="enableAudio"><Volume2 :size="18"/>{{ t('enableAudio') }}</button><button v-if="!micJoined" class="lesson-mic" @click="joinMic"><MicOff :size="18"/>{{ t('joinVoice') }}</button><button v-else class="lesson-mic active" @click="toggleMute"><Mic v-if="!micMuted" :size="18"/><MicOff v-else :size="18"/>{{ micMuted ? t('muted') : t('voiceOn') }}</button><button class="whiteboard-end-btn" @click="finish"><X :size="18"/><span>{{ presenter ? t('end') : t('leave') }}</span></button></div></header>
     <main class="lesson-stage"><p v-if="error" class="whiteboard-error">{{ error }}</p><video ref="video" class="lesson-screen" autoplay playsinline controls="false"/><p v-if="!error && status !== t('lessonLive')" class="lesson-waiting">{{ status }}</p></main>
   </section>
 </template>

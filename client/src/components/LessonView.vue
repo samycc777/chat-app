@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { Mic, MicOff, Volume2, X } from 'lucide-vue-next';
-import { ExternalE2EEKeyProvider, isE2EESupported, Room, RoomEvent, Track, type RemoteTrack } from 'livekit-client';
+import { Room, RoomEvent, Track, type RemoteTrack } from 'livekit-client';
 import { api } from '../api';
 import { useI18n } from '../i18n';
 

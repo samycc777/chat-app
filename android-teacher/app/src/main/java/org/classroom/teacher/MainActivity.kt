@@ -86,6 +86,9 @@ class MainActivity : AppCompatActivity() {
 
   private fun startLesson() = lifecycleScope.launch {
     try {
+      if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        micPermission.launch(Manifest.permission.RECORD_AUDIO); return@launch
+      }
       setStatus("Signing in…")
       val identity = joinClass()
       authToken = identity.getString("token")
@@ -109,6 +112,11 @@ class MainActivity : AppCompatActivity() {
     } catch (error: Exception) { stopLesson("Could not connect. Check the website URL and lesson configuration.") }
   }
 
+  private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    if (!granted) { setStatus("Microphone permission is required"); return@registerForActivityResult }
+    lifecycleScope.launch { startLesson() }
+  }
+
   private suspend fun connectLessonMedia() {
     try {
       if (room != null) return
@@ -119,9 +127,6 @@ class MainActivity : AppCompatActivity() {
       val keyProvider = BaseKeyProvider().also { it.setSharedKey(credentials.getString("encryptionKey")) }
       room = LiveKit.create(applicationContext, options = RoomOptions(e2eeOptions = E2EEOptions(keyProvider = keyProvider)))
       room!!.connect(credentials.getString("url"), credentials.getString("token"))
-      if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-        ActivityCompat.requestPermissions(this@MainActivity, arrayOf(Manifest.permission.RECORD_AUDIO), 2)
-      }
       room!!.localParticipant.setMicrophoneEnabled(true)
       val projection = getSystemService(MediaProjectionManager::class.java)
       screenCapture.launch(projection.createScreenCaptureIntent())

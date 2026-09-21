@@ -45,16 +45,29 @@ class MainActivity : AppCompatActivity() {
   private var room: Room? = null
   private var sharing = false
 
+  private fun buildCaptureNotification(): android.app.Notification {
+    val channelId = "lesson_capture"
+    val manager = getSystemService(android.app.NotificationManager::class.java)
+    manager.createNotificationChannel(android.app.NotificationChannel(channelId, "Lesson sharing", android.app.NotificationManager.IMPORTANCE_LOW))
+    return androidx.core.app.NotificationCompat.Builder(this, channelId)
+      .setSmallIcon(R.drawable.ic_screen_share)
+      .setContentTitle("Lesson screen sharing is active")
+      .setContentText("Return to Classroom Teacher to stop sharing.")
+      .setOngoing(true)
+      .build()
+  }
+
   private val screenCapture = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
     if (result.resultCode != Activity.RESULT_OK || result.data == null) { setStatus("Screen sharing was cancelled"); return@registerForActivityResult }
     lifecycleScope.launch {
       try {
-        ContextCompat.startForegroundService(this@MainActivity, Intent(this@MainActivity, LessonCaptureService::class.java))
-        room?.localParticipant?.setScreenShareEnabled(true, ScreenCaptureParams(result.data!!, onStop = {
-          runOnUiThread { stopLesson("Android stopped screen sharing") }
-        }))
+        room?.localParticipant?.setScreenShareEnabled(true, ScreenCaptureParams(result.data!!,
+          notificationId = 101,
+          notification = buildCaptureNotification(),
+          onStop = { runOnUiThread { stopLesson("Android stopped screen sharing") } }
+        ))
         sharing = true; startStop.text = "Stop lesson"; mute.visibility = View.VISIBLE
-        setStatus("Sharing. Switch to JNotes and select it in the Android share picker.")
+        setStatus("Sharing. Switch to JNotes and teach.")
       } catch (error: Exception) { stopLesson("Could not start screen sharing") }
     }
   }
@@ -148,7 +161,7 @@ class MainActivity : AppCompatActivity() {
     sharing = false
     try { room?.localParticipant?.setScreenShareEnabled(false); room?.disconnect(); room?.release() } catch (_: Exception) { }
     socket?.emit("wb_end", JSONObject().put("conversationId", "classroom")); socket?.disconnect(); socket = null; room = null
-    stopService(Intent(this@MainActivity, LessonCaptureService::class.java)); startStop.text = "Start lesson"; mute.visibility = View.GONE; setStatus(message)
+    startStop.text = "Start lesson"; mute.visibility = View.GONE; setStatus(message)
   }
 
   private suspend fun joinClass(): JSONObject = withContext(Dispatchers.IO) {

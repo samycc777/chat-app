@@ -16,10 +16,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import io.livekit.android.LiveKit
+import io.livekit.android.RoomOptions
 import io.livekit.android.e2ee.BaseKeyProvider
 import io.livekit.android.e2ee.E2EEOptions
 import io.livekit.android.room.Room
-import io.livekit.android.room.RoomOptions
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
 import io.socket.client.IO
 import io.socket.client.Socket
@@ -108,7 +108,7 @@ class MainActivity : AppCompatActivity() {
       if (room != null) return
       val credentials = getCredentials(authToken!!)
       val keyProvider = BaseKeyProvider().also { it.setSharedKey(credentials.getString("encryptionKey")) }
-      room = LiveKit.create(applicationContext, options = RoomOptions(encryptionOptions = E2EEOptions(keyProvider = keyProvider)))
+      room = LiveKit.create(applicationContext, options = RoomOptions(e2eeOptions = E2EEOptions(keyProvider = keyProvider)))
       room!!.connect(credentials.getString("url"), credentials.getString("token"))
       if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
         ActivityCompat.requestPermissions(this@MainActivity, arrayOf(Manifest.permission.RECORD_AUDIO), 2)

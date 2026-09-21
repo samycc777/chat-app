@@ -1,3 +1,12 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+
+val signingProperties = Properties()
+val signingPropertiesFile = rootProject.file("keystore.properties")
+if (signingPropertiesFile.isFile) {
+  signingPropertiesFile.inputStream().use(signingProperties::load)
+}
+
 plugins {
   id("com.android.application")
   kotlin("android")
@@ -13,6 +22,36 @@ android {
     targetSdk = 35
     versionCode = 1
     versionName = "1.0.0"
+  }
+
+  compileOptions {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
+
+  signingConfigs {
+    if (signingPropertiesFile.isFile) {
+      create("release") {
+        keyAlias = signingProperties.getProperty("keyAlias")
+        keyPassword = signingProperties.getProperty("keyPassword")
+        storeFile = rootProject.file(signingProperties.getProperty("storeFile"))
+        storePassword = signingProperties.getProperty("storePassword")
+      }
+    }
+  }
+
+  buildTypes {
+    release {
+      isMinifyEnabled = false
+      signingConfig = signingConfigs.findByName("release")
+        ?: error("A private release signing key is required. Add android-teacher/keystore.properties locally.")
+    }
+  }
+}
+
+kotlin {
+  compilerOptions {
+    jvmTarget.set(JvmTarget.JVM_17)
   }
 }
 

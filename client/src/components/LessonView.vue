@@ -55,13 +55,19 @@ async function connect() {
     const credentials = await api.getLiveKitToken(props.conversationId);
     room = new Room();
     room.on(RoomEvent.TrackSubscribed, (track) => attach(track as RemoteTrack));
+    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+      if (track.source !== Track.Source.ScreenShare) return;
+      track.detach();
+      status.value = t('waitingForTeacherScreen');
+    });
     room.on(RoomEvent.AudioPlaybackStatusChanged, () => { audioBlocked.value = !room!.canPlaybackAudio; });
     room.on(RoomEvent.Disconnected, () => { if (!error.value) status.value = t('lessonDisconnected'); });
     await room.connect(credentials.url, credentials.token);
     for (const participant of room.remoteParticipants.values()) {
       for (const publication of participant.trackPublications.values()) if (publication.track) attach(publication.track);
     }
-    status.value = t('waitingForTeacherScreen');
+    // The teacher may already be sharing, in which case attach() has just marked the lesson live.
+    if (status.value !== t('lessonLive')) status.value = t('waitingForTeacherScreen');
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('lessonJoinFailed'); status.value = '';
   }

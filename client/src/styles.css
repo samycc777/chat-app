@@ -1091,57 +1091,90 @@ textarea:focus-visible,
   color: var(--danger);
 }
 
-/* Live lesson */
+/* Live lesson: the teacher's screen fills the viewport and the header and controls float over it. */
 .lesson-overlay {
   position: fixed;
   inset: 0;
   z-index: 200;
   min-width: 320px;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: clamp(14px, 2vw, 24px);
-  background:
-    radial-gradient(circle at 14% 7%, rgba(89, 205, 160, 0.14), transparent 38%),
-    #09110e;
+  overflow: hidden;
+  color: #edf3ef;
+  background: #000000;
+}
+
+.lesson-overlay.chrome-hidden {
+  cursor: none;
+}
+
+.lesson-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  /* A definite cell lets the video's 100% height resolve, so portrait screens are fitted instead of cropped. */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+}
+
+.lesson-screen {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000000;
+  object-fit: contain;
 }
 
 .lesson-header,
-.lesson-stage,
 .lesson-controls {
-  width: min(1180px, 100%);
-  margin-inline: auto;
+  position: absolute;
+  inset-inline: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  transition: opacity 220ms ease, transform 220ms ease;
 }
 
 .lesson-header {
-  min-height: 74px;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  padding: 10px 16px;
-  border: 1px solid var(--border-color);
-  border-bottom: 0;
-  border-radius: 22px 22px 0 0;
-  color: var(--text-primary);
-  background: var(--bg-primary);
+  top: 0;
+  padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 28px max(16px, env(safe-area-inset-left));
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.72), transparent);
+}
+
+.lesson-controls {
+  bottom: 0;
+  justify-content: center;
+  gap: 6px;
+  padding: 30px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.78), transparent);
+}
+
+.chrome-hidden .lesson-header {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-100%);
+}
+
+.chrome-hidden .lesson-controls {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(100%);
 }
 
 .lesson-title {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 10px;
 }
 
 .lesson-title-icon {
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   display: grid;
   place-items: center;
-  border-radius: 14px;
-  color: var(--text-accent);
-  background: var(--accent-soft);
+  border-radius: 12px;
+  color: #59cda0;
+  background: rgba(89, 205, 160, 0.16);
 }
 
 .lesson-title > div {
@@ -1150,41 +1183,15 @@ textarea:focus-visible,
 }
 
 .lesson-title strong {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .lesson-title p {
   overflow: hidden;
-  color: var(--text-secondary);
+  color: rgba(237, 243, 239, 0.7);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.lesson-stage {
-  min-height: 0;
-  flex: 1;
-  position: relative;
-  display: grid;
-  /* A definite cell lets the video's 100% height resolve, so portrait screens are fitted instead of cropped. */
-  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
-  place-items: center;
-  overflow: hidden;
-  padding: clamp(10px, 2.5vw, 28px);
-  border-inline: 1px solid var(--border-color);
-  background: var(--stage-bg);
-}
-
-.lesson-screen {
-  width: 100%;
-  height: 100%;
-  max-width: 1120px;
-  max-height: 100%;
-  display: block;
-  border-radius: 12px;
-  background: #000000;
-  object-fit: contain;
-  box-shadow: 0 16px 54px rgba(0, 0, 0, 0.32);
 }
 
 .lesson-state-card {
@@ -1228,53 +1235,44 @@ textarea:focus-visible,
   background: rgba(240, 119, 110, 0.13);
 }
 
-.lesson-controls {
-  min-height: 70px;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 14px max(10px, env(safe-area-inset-bottom));
-  border: 1px solid var(--border-color);
-  border-top: 0;
-  border-radius: 0 0 22px 22px;
-  background: var(--bg-primary);
-}
-
 .lesson-control {
-  min-height: 44px;
+  min-width: 72px;
+  min-height: 56px;
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 0 14px;
-  border-radius: 14px;
-  color: var(--text-primary);
-  background: var(--bg-secondary);
-  font-size: 12px;
-  font-weight: 700;
-  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  color: #edf3ef;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  transition: background 160ms ease, color 160ms ease;
 }
 
 .lesson-control:hover {
-  background: var(--bg-tertiary);
-  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.12);
 }
 
-.lesson-control.active {
-  color: var(--text-on-accent);
-  background: var(--text-accent);
+.lesson-control.active svg {
+  color: #59cda0;
 }
 
-.lesson-control.muted {
-  color: #8d6611;
-  background: var(--warning-soft);
+.lesson-control.muted svg {
+  color: #f0776e;
 }
 
 .lesson-control.danger {
+  min-width: 64px;
+  margin-inline-start: 10px;
   color: #ffffff;
-  background: var(--danger);
+  background: #e0453b;
+}
+
+.lesson-control.danger:hover {
+  background: #c9382f;
 }
 
 /* RTL and mixed-direction details */
@@ -1461,51 +1459,6 @@ html[dir='rtl'] body {
     border-radius: 12px;
   }
 
-  .lesson-overlay {
-    padding: 0;
-  }
-
-  .lesson-header {
-    min-height: auto;
-    padding: max(8px, env(safe-area-inset-top)) 12px 8px;
-    border-width: 0;
-    border-radius: 0;
-    color: #edf3ef;
-    background: #09110e;
-  }
-
-  .lesson-title-icon {
-    width: 38px;
-    height: 38px;
-    flex-basis: 38px;
-    border-radius: 12px;
-  }
-
-  .lesson-stage {
-    border: 0;
-    padding: 0;
-  }
-
-  .lesson-screen {
-    border-radius: 0;
-    box-shadow: none;
-  }
-
-  .lesson-controls {
-    min-height: auto;
-    gap: 6px;
-    padding: 8px 9px max(9px, env(safe-area-inset-bottom));
-    border-width: 0;
-    border-radius: 0;
-    background: #09110e;
-  }
-
-  .lesson-control {
-    min-width: 46px;
-    min-height: 46px;
-    padding-inline: 12px;
-  }
-
   .lesson-state-card {
     padding: 18px;
   }
@@ -1538,17 +1491,9 @@ html[dir='rtl'] body {
     display: none;
   }
 
-  .lesson-controls {
-    justify-content: stretch;
-  }
-
   .lesson-control {
-    flex: 1;
-    padding-inline: 8px;
-  }
-
-  .lesson-control span {
-    font-size: 11px;
+    min-width: 64px;
+    padding-inline: 6px;
   }
 }
 
@@ -1610,15 +1555,15 @@ html[dir='rtl'] body {
   }
 
   .lesson-header {
-    min-height: 52px;
+    padding-bottom: 18px;
   }
 
   .lesson-controls {
-    min-height: 54px;
+    padding-top: 18px;
   }
 
   .lesson-control {
-    min-height: 40px;
+    min-height: 48px;
   }
 }
 

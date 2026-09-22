@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Mic, MicOff, Radio, Volume2, X } from 'lucide-vue-next';
 import { Room, RoomEvent, Track, type RemoteTrack } from 'livekit-client';
 import { api } from '../api';
@@ -14,8 +14,26 @@ const error = ref('');
 const micJoined = ref(false);
 const micMuted = ref(false);
 const audioBlocked = ref(false);
+const chromeVisible = ref(true);
+const live = computed(() => status.value === t('lessonLive') && !error.value);
 let room: Room | null = null;
+let hideChromeTimer: ReturnType<typeof setTimeout> | undefined;
 const detachedAudio: HTMLMediaElement[] = [];
+
+// Like a video call, the header and controls float over the teacher's screen and fade out while it is live.
+function showChrome() {
+  chromeVisible.value = true;
+  clearTimeout(hideChromeTimer);
+  if (live.value) hideChromeTimer = setTimeout(() => { chromeVisible.value = false; }, 4000);
+}
+function onStageTap(event: PointerEvent) {
+  if (event.pointerType !== 'mouse' && chromeVisible.value && live.value) {
+    clearTimeout(hideChromeTimer);
+    chromeVisible.value = false;
+  } else showChrome();
+}
+function onPointerMove(event: PointerEvent) { if (event.pointerType === 'mouse') showChrome(); }
+watch(live, showChrome);
 
 function attach(track: RemoteTrack) {
   if (track.kind === Track.Kind.Video && track.source === Track.Source.ScreenShare && video.value) {
@@ -72,14 +90,20 @@ async function connect() {
     error.value = cause instanceof Error ? cause.message : t('lessonJoinFailed'); status.value = '';
   }
 }
-function leave() { room?.disconnect(); room = null; detachedAudio.splice(0).forEach(element => element.remove()); emit('leave'); }
+function leave() { clearTimeout(hideChromeTimer); room?.disconnect(); room = null; detachedAudio.splice(0).forEach(element => element.remove()); emit('leave'); }
 function finish() { if (props.presenter) emit('end'); else leave(); }
 onMounted(() => { void connect(); });
 onBeforeUnmount(leave);
 </script>
 
 <template>
-  <section class="lesson-overlay" :aria-label="t('liveLesson')">
+  <section
+    class="lesson-overlay"
+    :class="{ 'chrome-hidden': !chromeVisible }"
+    :aria-label="t('liveLesson')"
+    @pointermove="onPointerMove"
+    @focusin="showChrome"
+  >
     <header class="lesson-header">
       <div class="lesson-title">
         <span class="lesson-title-icon"><Radio :size="20" /></span>
@@ -91,7 +115,7 @@ onBeforeUnmount(leave);
       </div>
     </header>
 
-    <main class="lesson-stage">
+    <main class="lesson-stage" @pointerup="onStageTap">
       <video ref="video" class="lesson-screen" autoplay playsinline />
       <div v-if="error" class="lesson-state-card error" role="alert">
         <span class="lesson-state-icon"><X :size="22" /></span>
@@ -105,7 +129,7 @@ onBeforeUnmount(leave);
       </div>
     </main>
 
-    <footer class="lesson-controls">
+    <footer class="lesson-controls" @pointerdown="showChrome">
       <button v-if="audioBlocked" class="lesson-control" type="button" @click="enableAudio">
         <Volume2 :size="19" />
         <span>{{ t('enableAudio') }}</span>

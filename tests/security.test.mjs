@@ -120,6 +120,8 @@ test('classroom members can fetch attachments and unadmitted users cannot', asyn
   assert.ok(presenterCredentials.encryptionKey.length >= 32);
   const presenterGrant = jwt.decode(presenterCredentials.token).video;
   assert.equal(presenterGrant.room, presenterCredentials.roomName);
+  assert.equal(presenterGrant.canPublishData, true);
+  assert.equal(typeof presenterCredentials.startedAt, 'number');
   assert.deepEqual(presenterGrant.canPublishSources.sort(), ['microphone', 'screen_share']);
   const studentMedia = await fetch(`${baseUrl}/api/livekit/token`, {
     method: 'POST', headers: { ...auth(bob.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),

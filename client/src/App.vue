@@ -91,7 +91,9 @@ function leaveClass() {
       @leave="leaveClass"
     />
     <ChatView :conversation="conversation" :current-user="currentUser" :online-users="onlineUsers" :lesson-active="Boolean(whiteboard)" @whiteboard="openWhiteboard" />
-    <LessonView v-if="showWhiteboard && whiteboard" :conversation-id="whiteboard.conversationId" :presenter="whiteboard.presenterId === currentUser.id" @leave="leaveLesson" @end="endLesson" />
+    <LessonView v-if="showWhiteboard && whiteboard" :conversation-id="whiteboard.conversationId" :user-id="currentUser.id" :presenter="whiteboard.presenterId === currentUser.id" :presenter-id="whiteboard.presenterId" @leave="leaveLesson" @end="endLesson">
+      <template #chat><ChatView :conversation="conversation" :current-user="currentUser" :online-users="onlineUsers" /></template>
+    </LessonView>
   </main>
   </div>
 </template>

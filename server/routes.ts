@@ -56,12 +56,14 @@ router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
     room: session.roomName,
     canSubscribe: true,
     canPublish: true,
+    // Raised hands and reactions travel over LiveKit data messages.
+    canPublishData: true,
     canPublishSources: isPresenter
       ? [TrackSource.SCREEN_SHARE, TrackSource.MICROPHONE]
       : [TrackSource.MICROPHONE],
   });
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ url, token: await token.toJwt(), roomName: session.roomName, encryptionKey: session.encryptionKey });
+  res.json({ url, token: await token.toJwt(), roomName: session.roomName, encryptionKey: session.encryptionKey, startedAt: session.startedAt });
 });
 
 function memberOf(conversationId: string, userId: string) {

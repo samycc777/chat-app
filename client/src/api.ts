@@ -1,7 +1,7 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 type UploadResult = { attachmentId: string; name: string; type: 'image' | 'file' };
-export type LiveKitCredentials = { url: string; token: string; roomName: string; encryptionKey: string };
+export type LiveKitCredentials = { url: string; token: string; roomName: string; encryptionKey: string; startedAt: number };
 let cachedUploadLimit: number | null = null;
 let pendingUploadLimit: Promise<number> | null = null;
 

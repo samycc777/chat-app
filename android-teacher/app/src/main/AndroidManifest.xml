@@ -17,6 +17,6 @@
     <service
       android:name=".LessonService"
       android:exported="false"
-      android:foregroundServiceType="mediaProjection|microphone" />
+      android:foregroundServiceType="microphone" />
   </application>
 </manifest>

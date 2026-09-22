@@ -49,8 +49,7 @@ class LessonService : Service() {
       .build()
 
     if (Build.VERSION.SDK_INT >= 34) {
-      startForeground(NOTIFICATION_ID, notification,
-        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+      startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
     } else {
       startForeground(NOTIFICATION_ID, notification)
     }

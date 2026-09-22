@@ -55,6 +55,8 @@ class MainActivity : AppCompatActivity() {
   private var socket: Socket? = null
   private var room: Room? = null
   private var sharing = false
+  private var lessonActive = false
+  private lateinit var shareBtn: Button
 
   private fun buildCaptureNotification(): android.app.Notification {
     val channelId = "lesson_capture"
@@ -75,10 +77,10 @@ class MainActivity : AppCompatActivity() {
         room?.localParticipant?.setScreenShareEnabled(true, ScreenCaptureParams(result.data!!,
           notificationId = 101,
           notification = buildCaptureNotification(),
-          onStop = { runOnUiThread { stopLesson("Android stopped screen sharing") } }
+          onStop = { runOnUiThread { onScreenShareStopped() } }
         ))
         sharing = true
-        startForegroundService(Intent(this@MainActivity, LessonService::class.java))
+        shareBtn.text = "Stop sharing"
         showLessonUI()
         statusText.text = "Sharing. Switch to JNotes and teach."
       } catch (error: Exception) { stopLesson("Could not start screen sharing") }
@@ -148,6 +150,12 @@ class MainActivity : AppCompatActivity() {
       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
     }
     topBar.addView(title)
+
+    shareBtn = Button(this).apply {
+      text = "Resume sharing"
+      setOnClickListener { toggleScreenShare() }
+    }
+    topBar.addView(shareBtn)
 
     muteBtn = Button(this).apply {
       text = "Mute"
@@ -348,7 +356,7 @@ class MainActivity : AppCompatActivity() {
     val handler = android.os.Handler(mainLooper)
     val updater = object : Runnable {
       override fun run() {
-        if (sharing) { updateParticipants(); handler.postDelayed(this, 3000) }
+        if (lessonActive) { updateParticipants(); handler.postDelayed(this, 3000) }
       }
     }
     handler.postDelayed(updater, 3000)
@@ -408,10 +416,32 @@ class MainActivity : AppCompatActivity() {
       room = LiveKit.create(applicationContext)
       room!!.connect(credentials.getString("url"), credentials.getString("token"))
       room!!.localParticipant.setMicrophoneEnabled(true)
+      lessonActive = true
+      startForegroundService(Intent(this@MainActivity, LessonService::class.java))
       setupRoomListeners()
       val projection = getSystemService(MediaProjectionManager::class.java)
       screenCapture.launch(projection.createScreenCaptureIntent())
     } catch (error: Exception) { stopLesson("Could not connect. Check the website URL and lesson configuration.") }
+  }
+
+  private fun onScreenShareStopped() {
+    sharing = false
+    shareBtn.text = "Resume sharing"
+    statusText.text = "Screen sharing stopped. Audio is still live."
+  }
+
+  private fun toggleScreenShare() {
+    if (sharing) {
+      lifecycleScope.launch {
+        try { room?.localParticipant?.setScreenShareEnabled(false) } catch (_: Exception) { }
+        sharing = false
+        shareBtn.text = "Resume sharing"
+        statusText.text = "Screen sharing stopped. Audio is still live."
+      }
+    } else {
+      val projection = getSystemService(MediaProjectionManager::class.java)
+      screenCapture.launch(projection.createScreenCaptureIntent())
+    }
   }
 
   private fun toggleMute() = lifecycleScope.launch {
@@ -422,8 +452,9 @@ class MainActivity : AppCompatActivity() {
   }
 
   private fun stopLesson(message: String) = lifecycleScope.launch {
-    if (!sharing && room == null) { statusText.text = message; return@launch }
+    if (!lessonActive && room == null) { statusText.text = message; return@launch }
     sharing = false
+    lessonActive = false
     stopService(Intent(this@MainActivity, LessonService::class.java))
     try { room?.localParticipant?.setScreenShareEnabled(false); room?.disconnect(); room?.release() } catch (_: Exception) { }
     socket?.emit("wb_end", JSONObject().put("conversationId", "classroom")); socket?.disconnect(); socket = null; room = null

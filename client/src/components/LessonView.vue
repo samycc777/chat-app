@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import { Mic, MicOff, Volume2, X } from 'lucide-vue-next';
+import { Mic, MicOff, Radio, Volume2, X } from 'lucide-vue-next';
 import { Room, RoomEvent, Track, type RemoteTrack } from 'livekit-client';
 import { api } from '../api';
 import { useI18n } from '../i18n';
@@ -73,8 +73,57 @@ onBeforeUnmount(leave);
 </script>
 
 <template>
-  <section class="lesson-overlay" aria-label="Live lesson">
-    <header class="lesson-header"><div><strong>{{ t('liveLesson') }}</strong><p v-if="status">{{ status }}</p></div><div class="lesson-actions"><button v-if="audioBlocked" class="lesson-audio" @click="enableAudio"><Volume2 :size="18"/>{{ t('enableAudio') }}</button><button v-if="!micJoined" class="lesson-mic" @click="joinMic"><MicOff :size="18"/>{{ t('joinVoice') }}</button><button v-else class="lesson-mic active" @click="toggleMute"><Mic v-if="!micMuted" :size="18"/><MicOff v-else :size="18"/>{{ micMuted ? t('muted') : t('voiceOn') }}</button><button class="whiteboard-end-btn" @click="finish"><X :size="18"/><span>{{ presenter ? t('end') : t('leave') }}</span></button></div></header>
-    <main class="lesson-stage"><p v-if="error" class="whiteboard-error">{{ error }}</p><video ref="video" class="lesson-screen" autoplay playsinline controls="false"/><p v-if="!error && status !== t('lessonLive')" class="lesson-waiting">{{ status }}</p></main>
+  <section class="lesson-overlay" :aria-label="t('liveLesson')">
+    <header class="lesson-header">
+      <div class="lesson-title">
+        <span class="lesson-title-icon"><Radio :size="20" /></span>
+        <div>
+          <span class="lesson-eyebrow"><span class="live-dot" />{{ t('liveNow') }}</span>
+          <strong>{{ t('liveLesson') }}</strong>
+          <p v-if="status">{{ status }}</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="lesson-stage">
+      <video ref="video" class="lesson-screen" autoplay playsinline />
+      <div v-if="error" class="lesson-state-card error" role="alert">
+        <span class="lesson-state-icon"><X :size="22" /></span>
+        <strong>{{ t('lessonJoinFailed') }}</strong>
+        <p dir="auto">{{ error }}</p>
+      </div>
+      <div v-else-if="status !== t('lessonLive')" class="lesson-state-card" role="status">
+        <span class="lesson-state-icon"><Radio :size="22" /></span>
+        <strong>{{ t('lessonWaitingTitle') }}</strong>
+        <p>{{ status || t('lessonWaitingBody') }}</p>
+      </div>
+    </main>
+
+    <footer class="lesson-controls">
+      <button v-if="audioBlocked" class="lesson-control" type="button" @click="enableAudio">
+        <Volume2 :size="19" />
+        <span>{{ t('enableAudio') }}</span>
+      </button>
+      <button v-if="!micJoined" class="lesson-control" type="button" @click="joinMic">
+        <MicOff :size="19" />
+        <span>{{ t('joinVoice') }}</span>
+      </button>
+      <button
+        v-else
+        class="lesson-control"
+        :class="{ active: !micMuted, muted: micMuted }"
+        type="button"
+        :aria-pressed="!micMuted"
+        @click="toggleMute"
+      >
+        <Mic v-if="!micMuted" :size="19" />
+        <MicOff v-else :size="19" />
+        <span>{{ micMuted ? t('muted') : t('voiceOn') }}</span>
+      </button>
+      <button class="lesson-control danger" type="button" @click="finish">
+        <X :size="19" />
+        <span>{{ presenter ? t('end') : t('leave') }}</span>
+      </button>
+    </footer>
   </section>
 </template>

@@ -6,60 +6,57 @@ import {
   onMounted,
   ref,
   watch,
-} from "vue";
-import { format, isToday, isYesterday, isSameDay } from "date-fns";
+} from 'vue';
+import { format, isSameDay, isToday, isYesterday } from 'date-fns';
 import {
-  ArrowLeft,
+  MessageCircle,
   Paperclip,
-  Send,
-  Reply,
   Pencil,
+  RefreshCw,
+  Reply,
+  Send,
   Trash2,
   X,
-  Monitor,
-} from "lucide-vue-next";
-import type { Conversation, Message, User } from "../types";
-import { api } from "../api";
-import { getSocket } from "../socket";
-import { useI18n } from "../i18n";
-import Avatar from "./Avatar.vue";
-import Attachment from "./Attachment.vue";
+} from 'lucide-vue-next';
+import type { Conversation, Message, User } from '../types';
+import { api } from '../api';
+import { getSocket } from '../socket';
+import { useI18n } from '../i18n';
+import Attachment from './Attachment.vue';
+import Avatar from './Avatar.vue';
+
 const props = defineProps<{
   conversation: Conversation;
   currentUser: User;
   onlineUsers: Set<string>;
   lessonActive?: boolean;
 }>();
-const emit = defineEmits<{
-  back: [];
-  whiteboard: [];
-}>();
-const { t, dateLocale } = useI18n();
-const messages = ref<Message[]>([]),
-  input = ref(""),
-  replyTo = ref<Message | null>(null),
-  editingMsg = ref<Message | null>(null),
-  typingUsers = ref(new Set<string>());
-const container = ref<HTMLElement | null>(null),
-  textarea = ref<HTMLTextAreaElement | null>(null),
-  fileInput = ref<HTMLInputElement | null>(null);
-const contextMenu = ref<{ x: number; y: number; message: Message } | null>(
-  null,
-);
+
+const emit = defineEmits<{ whiteboard: [] }>();
+const { t, dateLocale, translateError } = useI18n();
+
+const messages = ref<Message[]>([]);
+const input = ref('');
+const replyTo = ref<Message | null>(null);
+const editingMsg = ref<Message | null>(null);
+const typingUsers = ref(new Set<string>());
+const loadingMessages = ref(true);
+const loadError = ref('');
+const feedback = ref<{
+  kind: 'uploading' | 'success' | 'error';
+  message: string;
+  progress?: number;
+} | null>(null);
+
+const container = ref<HTMLElement | null>(null);
+const textarea = ref<HTMLTextAreaElement | null>(null);
+const fileInput = ref<HTMLInputElement | null>(null);
+const contextMenu = ref<{ x: number; y: number; message: Message } | null>(null);
+
 let typingTimer: ReturnType<typeof setTimeout> | undefined;
+let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 let atBottom = true;
-const other = computed(() =>
-  props.conversation.type === "direct"
-    ? props.conversation.members.find(
-        (member) => member.id !== props.currentUser.id,
-      )
-    : null,
-);
-const chatName = computed(() =>
-  props.conversation.type === "group"
-    ? props.conversation.name || t("groupChat")
-    : other.value?.displayName || t("chat"),
-);
+
 const typingNames = computed(() =>
   [...typingUsers.value]
     .map(
@@ -69,229 +66,306 @@ const typingNames = computed(() =>
     )
     .filter((name): name is string => Boolean(name)),
 );
+
 function scrollBottom() {
-  if (atBottom)
-    nextTick(() =>
-      container.value?.lastElementChild?.scrollIntoView({ behavior: "smooth" }),
-    );
+  if (!atBottom) return;
+  nextTick(() =>
+    container.value?.lastElementChild?.scrollIntoView({ behavior: 'smooth' }),
+  );
 }
+
 function markRead() {
-  getSocket()?.emit("mark_read", { conversationId: props.conversation.id });
+  getSocket()?.emit('mark_read', { conversationId: props.conversation.id });
 }
+
+async function loadMessages(id: string) {
+  loadingMessages.value = true;
+  loadError.value = '';
+  messages.value = [];
+  try {
+    messages.value = await api.getMessages(id);
+    await nextTick();
+    container.value?.lastElementChild?.scrollIntoView();
+    markRead();
+  } catch {
+    loadError.value = t('messagesLoadFailed');
+  } finally {
+    loadingMessages.value = false;
+  }
+}
+
 function onNewMessage(message: Message) {
   if (message.conversationId !== props.conversation.id) return;
   messages.value.push(message);
   scrollBottom();
   markRead();
 }
-function onEdited(data: {
-  messageId: string;
-  content: string;
-  editedAt: number;
-}) {
-  messages.value = messages.value.map((m) =>
-    m.id === data.messageId
-      ? { ...m, content: data.content, editedAt: data.editedAt }
-      : m,
+
+function onEdited(data: { messageId: string; content: string; editedAt: number }) {
+  messages.value = messages.value.map((message) =>
+    message.id === data.messageId
+      ? { ...message, content: data.content, editedAt: data.editedAt }
+      : message,
   );
 }
+
 function onDeleted(data: { messageId: string }) {
-  messages.value = messages.value.map((m) =>
-    m.id === data.messageId ? { ...m, deleted: true, content: null } : m,
+  messages.value = messages.value.map((message) =>
+    message.id === data.messageId
+      ? { ...message, deleted: true, content: null }
+      : message,
   );
 }
+
 function onTyping(data: { conversationId: string; userId: string }) {
   if (
     data.conversationId === props.conversation.id &&
     data.userId !== props.currentUser.id
-  )
+  ) {
     typingUsers.value.add(data.userId);
+  }
 }
+
 function onStopTyping(data: { conversationId: string; userId: string }) {
-  if (data.conversationId === props.conversation.id)
+  if (data.conversationId === props.conversation.id) {
     typingUsers.value.delete(data.userId);
+  }
 }
+
 watch(
   () => props.conversation.id,
-  async (id) => {
-    messages.value = [];
-    try {
-      messages.value = await api.getMessages(id);
-      await nextTick();
-      container.value?.lastElementChild?.scrollIntoView();
-    } catch {
-      messages.value = [];
-    }
-    markRead();
-  },
+  (id) => void loadMessages(id),
   { immediate: true },
 );
+
 onMounted(() => {
   const socket = getSocket();
   if (!socket) return;
-  socket.on("new_message", onNewMessage);
-  socket.on("message_edited", onEdited);
-  socket.on("message_deleted", onDeleted);
-  socket.on("user_typing", onTyping);
-  socket.on("user_stop_typing", onStopTyping);
+  socket.on('new_message', onNewMessage);
+  socket.on('message_edited', onEdited);
+  socket.on('message_deleted', onDeleted);
+  socket.on('user_typing', onTyping);
+  socket.on('user_stop_typing', onStopTyping);
 });
+
 onBeforeUnmount(() => {
   const socket = getSocket();
-  socket?.off("new_message", onNewMessage);
-  socket?.off("message_edited", onEdited);
-  socket?.off("message_deleted", onDeleted);
-  socket?.off("user_typing", onTyping);
-  socket?.off("user_stop_typing", onStopTyping);
+  socket?.off('new_message', onNewMessage);
+  socket?.off('message_edited', onEdited);
+  socket?.off('message_deleted', onDeleted);
+  socket?.off('user_typing', onTyping);
+  socket?.off('user_stop_typing', onStopTyping);
   clearTimeout(typingTimer);
+  clearTimeout(feedbackTimer);
 });
+
 function onScroll() {
-  if (container.value)
-    atBottom =
-      container.value.scrollHeight -
-        container.value.scrollTop -
-        container.value.clientHeight <
-      100;
+  if (!container.value) return;
+  atBottom =
+    container.value.scrollHeight -
+      container.value.scrollTop -
+      container.value.clientHeight <
+    100;
 }
+
 function updateInput(value: string) {
   input.value = value;
   const socket = getSocket();
-  socket?.emit("typing", { conversationId: props.conversation.id });
+  socket?.emit('typing', { conversationId: props.conversation.id });
   clearTimeout(typingTimer);
   typingTimer = setTimeout(
-    () =>
-      socket?.emit("stop_typing", { conversationId: props.conversation.id }),
+    () => socket?.emit('stop_typing', { conversationId: props.conversation.id }),
     2000,
   );
 }
+
 function send() {
-  const content = input.value.trim(),
-    socket = getSocket();
+  const content = input.value.trim();
+  const socket = getSocket();
   if ((!content && !editingMsg.value) || !socket) return;
+
   if (editingMsg.value) {
-    socket.emit("edit_message", { messageId: editingMsg.value.id, content });
+    socket.emit('edit_message', { messageId: editingMsg.value.id, content });
     editingMsg.value = null;
-    input.value = "";
+    input.value = '';
     return;
   }
-  socket.emit("send_message", {
+
+  socket.emit('send_message', {
     conversationId: props.conversation.id,
     content,
-    type: "text",
+    type: 'text',
     replyTo: replyTo.value?.id || null,
   });
-  socket.emit("stop_typing", { conversationId: props.conversation.id });
-  input.value = "";
+  socket.emit('stop_typing', { conversationId: props.conversation.id });
+  input.value = '';
   replyTo.value = null;
   atBottom = true;
 }
+
 function keydown(event: KeyboardEvent) {
-  if (event.key === "Enter" && !event.shiftKey) {
+  if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     send();
   }
-  if (event.key === "Escape") {
-    replyTo.value = null;
-    editingMsg.value = null;
-    input.value = "";
+  if (event.key === 'Escape') cancelComposition();
+}
+
+function setFeedback(
+  value: typeof feedback.value,
+  clearAfterMs?: number,
+) {
+  clearTimeout(feedbackTimer);
+  feedback.value = value;
+  if (clearAfterMs) {
+    feedbackTimer = setTimeout(() => {
+      feedback.value = null;
+    }, clearAfterMs);
   }
 }
+
 async function upload(event: Event) {
-  const el = event.target as HTMLInputElement,
-    file = el.files?.[0];
+  const element = event.target as HTMLInputElement;
+  const file = element.files?.[0];
   if (!file) return;
+
+  setFeedback({ kind: 'uploading', message: t('uploading'), progress: 0 });
   try {
-    const result = await api.uploadFile(file, props.conversation.id);
+    const result = await api.uploadFile(file, props.conversation.id, (progress) => {
+      feedback.value = { kind: 'uploading', message: t('uploading'), progress };
+    });
     getSocket()?.emit(
-      "send_message",
+      'send_message',
       {
         conversationId: props.conversation.id,
-        content: result.type === "image" ? "" : result.name,
+        content: result.type === 'image' ? '' : result.name,
         type: result.type,
         attachmentId: result.attachmentId,
         fileName: result.name,
       },
       (response: { error?: string }) => {
-        if (response?.error) alert(response.error);
+        if (response?.error) {
+          setFeedback({ kind: 'error', message: response.error });
+        }
       },
     );
     atBottom = true;
+    setFeedback(
+      { kind: 'success', message: t('fileShared', { name: result.name }), progress: 100 },
+      3000,
+    );
   } catch (cause) {
-    alert(cause instanceof Error ? cause.message : "Upload failed");
+    const message = cause instanceof Error ? translateError(cause.message) : t('uploadFailed');
+    setFeedback({ kind: 'error', message });
+  } finally {
+    element.value = '';
   }
-  el.value = "";
 }
+
 function startReply(message: Message) {
   replyTo.value = message;
   editingMsg.value = null;
   contextMenu.value = null;
   textarea.value?.focus();
 }
+
 function startEdit(message: Message) {
   editingMsg.value = message;
-  input.value = message.content || "";
+  input.value = message.content || '';
   replyTo.value = null;
   contextMenu.value = null;
   textarea.value?.focus();
 }
+
 function deleteMessage(message: Message) {
-  getSocket()?.emit("delete_message", { messageId: message.id });
+  getSocket()?.emit('delete_message', { messageId: message.id });
   contextMenu.value = null;
 }
+
+function cancelComposition() {
+  replyTo.value = null;
+  editingMsg.value = null;
+  input.value = '';
+}
+
 function openContext(event: MouseEvent, message: Message) {
   event.preventDefault();
-  contextMenu.value = { x: event.clientX, y: event.clientY, message };
+  const width = 200;
+  const height = message.senderId === props.currentUser.id ? 148 : 54;
+  contextMenu.value = {
+    x: Math.max(12, Math.min(event.clientX, window.innerWidth - width - 12)),
+    y: Math.max(12, Math.min(event.clientY, window.innerHeight - height - 12)),
+    message,
+  };
 }
+
 function dateLabel(timestamp: number) {
   const date = new Date(timestamp);
   return isToday(date)
-    ? t("today")
+    ? t('today')
     : isYesterday(date)
-      ? t("yesterday")
-      : format(date, "EEEE, MMMM d, yyyy", { locale: dateLocale.value });
+      ? t('yesterday')
+      : format(date, 'EEEE, MMMM d, yyyy', { locale: dateLocale.value });
+}
+
+function beginsGroup(index: number) {
+  if (index === 0) return true;
+  const message = messages.value[index];
+  const previous = messages.value[index - 1];
+  return (
+    previous.senderId !== message.senderId ||
+    !isSameDay(new Date(previous.createdAt), new Date(message.createdAt)) ||
+    message.createdAt - previous.createdAt > 5 * 60_000
+  );
+}
+
+function endsGroup(index: number) {
+  if (index === messages.value.length - 1) return true;
+  const message = messages.value[index];
+  const next = messages.value[index + 1];
+  return (
+    next.senderId !== message.senderId ||
+    !isSameDay(new Date(next.createdAt), new Date(message.createdAt)) ||
+    next.createdAt - message.createdAt > 5 * 60_000
+  );
 }
 </script>
+
 <template>
   <div class="chat-area">
-    <div class="chat-header">
-      <button class="icon-btn back-btn" @click="emit('back')">
-        <ArrowLeft :size="20" /></button
-      ><Avatar
-        :name="chatName"
-        :color="other?.avatarColor || '#6366f1'"
-        :online="Boolean(other && onlineUsers.has(other.id))"
-      />
-      <div class="chat-header-info">
-        <h3>{{ chatName }}</h3>
-        <div
-          class="status-text"
-          :class="{ online: other && onlineUsers.has(other.id) }"
-        >
-          {{
-            conversation.type === "group"
-              ? t("classroom")
-              : other && onlineUsers.has(other.id)
-                ? t("online")
-                : ""
-          }}
-        </div>
+    <div v-if="lessonActive" class="lesson-banner" role="status">
+      <div class="lesson-banner-icon"><span class="live-dot" /></div>
+      <div class="lesson-banner-copy">
+        <strong>{{ t('liveLesson') }}</strong>
+        <span>{{ t('lessonInProgress') }}</span>
       </div>
-      <div class="chat-header-actions">
-        <button
-          class="icon-btn"
-          :title="t('whiteboard')"
-          @click="emit('whiteboard')"
-        >
-          <Monitor :size="20" />
+      <button class="lesson-join-btn" type="button" @click="emit('whiteboard')">
+        {{ t('joinLesson') }}
+      </button>
+    </div>
+
+    <div ref="container" class="messages-container" @scroll="onScroll">
+      <div v-if="loadingMessages" class="conversation-state" role="status">
+        <span class="state-icon loading"><RefreshCw :size="22" /></span>
+        <p>{{ t('loadingMessages') }}</p>
+      </div>
+
+      <div v-else-if="loadError" class="conversation-state error" role="alert">
+        <span class="state-icon"><MessageCircle :size="22" /></span>
+        <p>{{ loadError }}</p>
+        <button type="button" @click="loadMessages(conversation.id)">
+          <RefreshCw :size="15" />{{ t('retry') }}
         </button>
       </div>
-    </div>
-    <div v-if="lessonActive" class="lesson-banner" role="status">
-      <div><strong>{{ t('liveLesson') }}</strong><span>{{ t('lessonInProgress') }}</span></div>
-      <button class="lesson-join-btn" @click="emit('whiteboard')">{{ t('joinLesson') }}</button>
-    </div>
-    <div ref="container" class="messages-container" @scroll="onScroll">
-      <template v-for="(message, index) in messages" :key="message.id"
-        ><div
+
+      <div v-else-if="messages.length === 0" class="conversation-state empty">
+        <span class="state-icon"><MessageCircle :size="22" /></span>
+        <strong>{{ t('noMessagesYet') }}</strong>
+        <p>{{ t('startConversation') }}</p>
+      </div>
+
+      <template v-else v-for="(message, index) in messages" :key="message.id">
+        <div
           v-if="
             index === 0 ||
             !isSameDay(
@@ -301,158 +375,195 @@ function dateLabel(timestamp: number) {
           "
           class="date-separator"
         >
-          <span>{{ dateLabel(message.createdAt) }}</span>
+          <span><bdi>{{ dateLabel(message.createdAt) }}</bdi></span>
         </div>
-        <div class="message-group">
+
+        <div
+          class="message-row"
+          :class="[
+            message.senderId === currentUser.id ? 'out' : 'in',
+            { 'starts-group': beginsGroup(index), 'ends-group': endsGroup(index) },
+          ]"
+        >
+          <div v-if="message.senderId !== currentUser.id" class="message-avatar-slot">
+            <Avatar
+              v-if="endsGroup(index)"
+              :name="message.sender.displayName"
+              :color="message.sender.avatarColor"
+              :online="onlineUsers.has(message.senderId)"
+              size="small"
+            />
+          </div>
+
           <div
             class="message-bubble"
             :class="message.senderId === currentUser.id ? 'out' : 'in'"
             @contextmenu="openContext($event, message)"
           >
             <div
-              v-if="
-                conversation.type === 'group' &&
-                message.senderId !== currentUser.id &&
-                (index === 0 ||
-                  messages[index - 1].senderId !== message.senderId)
-              "
+              v-if="message.senderId !== currentUser.id && beginsGroup(index)"
               class="message-sender"
-              :style="{ color: message.sender.avatarColor }"
             >
-              {{ message.sender.displayName }}
+              <bdi>{{ message.sender.displayName }}</bdi>
             </div>
+
             <div v-if="message.replyTo" class="message-reply">
               <div class="reply-sender">
-                {{ message.replyTo.senderDisplayName }}
+                <bdi>{{ message.replyTo.senderDisplayName }}</bdi>
               </div>
-              <div class="reply-text">
+              <div class="reply-text" dir="auto">
                 {{
-                  message.replyTo.type === "image"
-                    ? `📷 ${t("photo")}`
+                  message.replyTo.type === 'image'
+                    ? `📷 ${t('photo')}`
                     : message.replyTo.content
                 }}
               </div>
             </div>
-            <div v-if="message.deleted" class="deleted-message">
-              🚫 {{ t("messageDeleted") }}
+
+            <div v-if="message.deleted" class="deleted-message" dir="auto">
+              {{ t('messageDeleted') }}
             </div>
             <Attachment
               v-else-if="message.type === 'image' && message.attachmentId"
               :attachment-id="message.attachmentId"
               :name="message.fileName || t('sharedImage')"
               image
-            /><Attachment
+            />
+            <Attachment
               v-else-if="message.type === 'file' && message.attachmentId"
               :attachment-id="message.attachmentId"
               :name="message.fileName || t('file')"
             />
-            <div v-else class="message-content">{{ message.content }}</div>
+            <div v-else class="message-content" dir="auto">{{ message.content }}</div>
+
             <div class="message-meta">
-              <span v-if="message.editedAt" class="message-edited">{{
-                t("edited")
-              }}</span
-              ><span class="message-time">{{
-                format(new Date(message.createdAt), "HH:mm")
-              }}</span>
+              <span v-if="message.editedAt" class="message-edited">{{ t('edited') }}</span>
+              <span class="message-time"><bdi>{{ format(new Date(message.createdAt), 'HH:mm') }}</bdi></span>
             </div>
+
             <div class="message-actions">
               <button
                 v-if="!message.deleted"
+                type="button"
                 :title="t('reply')"
+                :aria-label="t('reply')"
                 @click="startReply(message)"
               >
-                <Reply :size="14" /></button
-              ><template
-                v-if="message.senderId === currentUser.id && !message.deleted"
-                ><button :title="t('edit')" @click="startEdit(message)">
-                  <Pencil :size="14" /></button
-                ><button :title="t('delete')" @click="deleteMessage(message)">
-                  <Trash2 :size="14" /></button
-              ></template>
+                <Reply :size="14" />
+              </button>
+              <template v-if="message.senderId === currentUser.id && !message.deleted">
+                <button type="button" :title="t('edit')" :aria-label="t('edit')" @click="startEdit(message)">
+                  <Pencil :size="14" />
+                </button>
+                <button type="button" :title="t('delete')" :aria-label="t('delete')" @click="deleteMessage(message)">
+                  <Trash2 :size="14" />
+                </button>
+              </template>
             </div>
-          </div></div
-      ></template>
-      <div class="messages-end" />
-    </div>
-    <div class="typing-indicator">
-      <span v-if="typingNames.length">{{
-        typingNames.length === 1
-          ? t("isTyping", { names: typingNames.join(", ") })
-          : t("areTyping", { names: typingNames.join(", ") })
-      }}</span>
-    </div>
-    <div v-if="replyTo || editingMsg" class="reply-preview">
-      <div class="reply-preview-content">
-        <div class="reply-preview-sender">
-          {{ editingMsg ? t("editingMessage") : replyTo?.sender.displayName }}
+          </div>
         </div>
-        <div class="reply-preview-text">
-          {{ editingMsg ? editingMsg.content : replyTo?.content }}
-        </div>
+      </template>
+      <div v-if="messages.length" class="messages-end" />
+    </div>
+
+    <div class="chat-bottom">
+      <div v-if="typingNames.length" class="typing-indicator" aria-live="polite">
+        {{
+          typingNames.length === 1
+            ? t('isTyping', { names: typingNames.join(', ') })
+            : t('areTyping', { names: typingNames.join(', ') })
+        }}
       </div>
-      <button
-        class="icon-btn"
-        @click="
-          replyTo = null;
-          editingMsg = null;
-          input = '';
-        "
-      >
-        <X :size="18" />
-      </button>
-    </div>
-    <div class="chat-input-area">
-      <label
-        class="icon-btn"
-        style="cursor: pointer"
-        @click="fileInput?.click()"
-        ><Paperclip :size="20" /><input
+
+      <div v-if="feedback" class="chat-feedback" :class="feedback.kind" aria-live="polite">
+        <div class="feedback-copy">
+          <span>{{ feedback.message }}</span>
+          <div v-if="feedback.kind === 'uploading'" class="upload-progress" role="progressbar" :aria-valuenow="feedback.progress || 0" aria-valuemin="0" aria-valuemax="100">
+            <span :style="{ width: `${feedback.progress || 0}%` }" />
+          </div>
+        </div>
+        <button type="button" :aria-label="t('dismiss')" @click="feedback = null"><X :size="17" /></button>
+      </div>
+
+      <div v-if="replyTo || editingMsg" class="reply-preview">
+        <div class="reply-preview-content">
+          <div class="reply-preview-sender">
+            <bdi>{{ editingMsg ? t('editingMessage') : replyTo?.sender.displayName }}</bdi>
+          </div>
+          <div class="reply-preview-text" dir="auto">
+            {{ editingMsg ? editingMsg.content : replyTo?.content }}
+          </div>
+        </div>
+        <button class="icon-btn" type="button" :aria-label="t('dismiss')" @click="cancelComposition">
+          <X :size="18" />
+        </button>
+      </div>
+
+      <div class="chat-input-area">
+        <button
+          class="icon-btn attach-btn"
+          type="button"
+          :title="t('attachFile')"
+          :aria-label="t('attachFile')"
+          @click="fileInput?.click()"
+        >
+          <Paperclip :size="20" />
+        </button>
+        <input
           ref="fileInput"
           type="file"
           accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
-          style="display: none"
+          hidden
           @change="upload"
-      /></label>
-      <div class="message-input-wrap">
-        <textarea
-          ref="textarea"
-          :value="input"
-          :placeholder="t('typeAMessage')"
-          rows="1"
-          @input="
-            updateInput(($event.target as HTMLTextAreaElement).value);
-            ($event.target as HTMLTextAreaElement).style.height = 'auto';
-            ($event.target as HTMLTextAreaElement).style.height =
-              Math.min(
-                ($event.target as HTMLTextAreaElement).scrollHeight,
-                150,
-              ) + 'px';
-          "
-          @keydown="keydown"
         />
+        <div class="message-input-wrap">
+          <textarea
+            ref="textarea"
+            :value="input"
+            :placeholder="t('typeAMessage')"
+            :aria-label="t('typeAMessage')"
+            rows="1"
+            dir="auto"
+            @input="
+              updateInput(($event.target as HTMLTextAreaElement).value);
+              ($event.target as HTMLTextAreaElement).style.height = 'auto';
+              ($event.target as HTMLTextAreaElement).style.height =
+                Math.min(($event.target as HTMLTextAreaElement).scrollHeight, 150) + 'px';
+            "
+            @keydown="keydown"
+          />
+        </div>
+        <button
+          class="send-btn"
+          type="button"
+          :title="t('sendMessage')"
+          :aria-label="t('sendMessage')"
+          :disabled="!input.trim() && !editingMsg"
+          @click="send"
+        >
+          <Send :size="20" />
+        </button>
       </div>
-      <button class="send-btn" @click="send"><Send :size="20" /></button>
     </div>
-    <template v-if="contextMenu"
-      ><div class="context-menu-backdrop" @click="contextMenu = null" />
+
+    <template v-if="contextMenu">
+      <div class="context-menu-backdrop" @click="contextMenu = null" />
       <div
         class="context-menu"
         :style="{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }"
       >
-        <button @click="startReply(contextMenu.message)">
-          <Reply :size="16" /> {{ t("reply") }}</button
-        ><template
-          v-if="
-            contextMenu.message.senderId === currentUser.id &&
-            !contextMenu.message.deleted
-          "
-          ><button @click="startEdit(contextMenu.message)">
-            <Pencil :size="16" /> {{ t("edit") }}</button
-          ><button class="danger" @click="deleteMessage(contextMenu.message)">
-            <Trash2 :size="16" /> {{ t("delete") }}
-          </button></template
-        >
-      </div></template
-    >
+        <button type="button" @click="startReply(contextMenu.message)">
+          <Reply :size="16" />{{ t('reply') }}
+        </button>
+        <template v-if="contextMenu.message.senderId === currentUser.id && !contextMenu.message.deleted">
+          <button type="button" @click="startEdit(contextMenu.message)">
+            <Pencil :size="16" />{{ t('edit') }}
+          </button>
+          <button class="danger" type="button" @click="deleteMessage(contextMenu.message)">
+            <Trash2 :size="16" />{{ t('delete') }}
+          </button>
+        </template>
+      </div>
+    </template>
   </div>
 </template>

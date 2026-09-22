@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.text.InputType
@@ -35,13 +36,11 @@ import java.util.UUID
 class MainActivity : AppCompatActivity() {
   companion object { const val STOP_LESSON_ACTION = "org.classroom.teacher.STOP_LESSON" }
 
-  // Setup views
   private lateinit var setupLayout: LinearLayout
   private lateinit var serverUrl: EditText
   private lateinit var classCode: EditText
   private lateinit var displayName: EditText
 
-  // Lesson views
   private lateinit var lessonLayout: LinearLayout
   private lateinit var participantList: LinearLayout
   private lateinit var chatMessages: LinearLayout
@@ -49,6 +48,8 @@ class MainActivity : AppCompatActivity() {
   private lateinit var chatInput: EditText
   private lateinit var muteBtn: Button
   private lateinit var statusText: TextView
+  private lateinit var setupStatusText: TextView
+  private lateinit var lessonStatusText: TextView
 
   private var authToken: String? = null
   private var userId: String? = null
@@ -57,6 +58,17 @@ class MainActivity : AppCompatActivity() {
   private var sharing = false
   private var lessonActive = false
   private lateinit var shareBtn: Button
+
+  private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
+
+  private fun roundRect(color: String, radiusDp: Int = 12, strokeColor: String? = null, strokeWidthDp: Int = 1): GradientDrawable {
+    return GradientDrawable().apply {
+      shape = GradientDrawable.RECTANGLE
+      cornerRadius = dp(radiusDp).toFloat()
+      setColor(Color.parseColor(color))
+      if (strokeColor != null) setStroke(dp(strokeWidthDp), Color.parseColor(strokeColor))
+    }
+  }
 
   private fun buildCaptureNotification(): android.app.Notification {
     val channelId = "lesson_capture"
@@ -80,7 +92,7 @@ class MainActivity : AppCompatActivity() {
           onStop = { runOnUiThread { onScreenShareStopped() } }
         ))
         sharing = true
-        shareBtn.text = "Stop sharing"
+        shareBtn.text = "STOP SHARING"
         showLessonUI()
         statusText.text = "Sharing. Switch to JNotes and teach."
       } catch (error: Exception) { stopLesson("Could not start screen sharing") }
@@ -89,6 +101,8 @@ class MainActivity : AppCompatActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    window.statusBarColor = Color.parseColor("#0f1a13")
+    window.navigationBarColor = Color.parseColor("#111a14")
     buildUI()
     if (intent.action == STOP_LESSON_ACTION) stopLesson("Lesson stopped")
   }
@@ -99,170 +113,304 @@ class MainActivity : AppCompatActivity() {
   }
 
   private fun buildUI() {
-    val root = FrameLayout(this)
+    val root = FrameLayout(this).apply {
+      setBackgroundColor(Color.parseColor("#0f1a13"))
+    }
 
-    // Setup screen
     setupLayout = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
-      setPadding(40, 56, 40, 40)
-      gravity = Gravity.CENTER_HORIZONTAL
+      setPadding(dp(28), dp(72), dp(28), dp(28))
     }
-    serverUrl = field(setupLayout, "Website URL", "https://nurturing-dedication-production-9379.up.railway.app")
-    classCode = field(setupLayout, "Class code", "0000")
-    displayName = field(setupLayout, "Teacher name", "test")
+
+    val titleText = TextView(this).apply {
+      text = "Classroom"
+      setTextColor(Color.WHITE)
+      textSize = 28f
+      typeface = Typeface.DEFAULT_BOLD
+      gravity = Gravity.CENTER
+    }
+    setupLayout.addView(titleText, LinearLayout.LayoutParams(-1, -2).apply {
+      bottomMargin = dp(4)
+    })
+
+    val subtitleText = TextView(this).apply {
+      text = "Teacher"
+      setTextColor(Color.parseColor("#3fb950"))
+      textSize = 15f
+      typeface = Typeface.DEFAULT_BOLD
+      gravity = Gravity.CENTER
+      letterSpacing = 0.15f
+    }
+    setupLayout.addView(subtitleText, LinearLayout.LayoutParams(-1, -2).apply {
+      bottomMargin = dp(36)
+    })
+
+    val card = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      background = roundRect("#162b1d", 16)
+      setPadding(dp(20), dp(24), dp(20), dp(24))
+    }
+
+    serverUrl = styledField(card, "Server URL", "https://nurturing-dedication-production-9379.up.railway.app")
+    classCode = styledField(card, "Class code", "0000")
+    displayName = styledField(card, "Your name", "")
+
+    setupLayout.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
+      bottomMargin = dp(24)
+    })
+
     val startBtn = Button(this).apply {
-      text = "Start lesson"
+      text = "Start Lesson"
+      setTextColor(Color.WHITE)
+      textSize = 16f
+      typeface = Typeface.DEFAULT_BOLD
+      isAllCaps = false
+      stateListAnimator = null
+      background = roundRect("#2ea043", 12)
+      setPadding(dp(24), dp(16), dp(24), dp(16))
       setOnClickListener { startLesson() }
     }
-    setupLayout.addView(startBtn)
-    val setupStatus = TextView(this).apply {
-      text = "Sign in, then start a lesson."
-      setPadding(0, 28, 0, 0)
-    }
-    setupLayout.addView(setupStatus)
-    statusText = setupStatus
+    setupLayout.addView(startBtn, LinearLayout.LayoutParams(-1, dp(54)))
 
-    // Lesson screen
+    setupStatusText = TextView(this).apply {
+      text = "Sign in, then start a lesson."
+      setTextColor(Color.parseColor("#8b949e"))
+      textSize = 13f
+      gravity = Gravity.CENTER
+      setPadding(0, dp(20), 0, 0)
+    }
+    setupLayout.addView(setupStatusText)
+    statusText = setupStatusText
+
     lessonLayout = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       visibility = View.GONE
+      setBackgroundColor(Color.parseColor("#0f1a13"))
     }
     buildLessonUI()
 
-    root.addView(setupLayout)
-    root.addView(lessonLayout)
+    root.addView(setupLayout, FrameLayout.LayoutParams(-1, -1))
+    root.addView(lessonLayout, FrameLayout.LayoutParams(-1, -1))
     setContentView(root)
   }
 
-  private fun buildLessonUI() {
-    // Top bar
-    val topBar = LinearLayout(this).apply {
-      orientation = LinearLayout.HORIZONTAL
-      setPadding(24, 24, 24, 12)
-      gravity = Gravity.CENTER_VERTICAL
-      setBackgroundColor(Color.parseColor("#1a2e1f"))
+  private fun styledField(parent: LinearLayout, label: String, defaultValue: String): EditText {
+    val labelView = TextView(this).apply {
+      text = label
+      setTextColor(Color.parseColor("#8fbc8f"))
+      textSize = 12f
+      typeface = Typeface.DEFAULT_BOLD
+      letterSpacing = 0.04f
     }
+    parent.addView(labelView, LinearLayout.LayoutParams(-1, -2).apply {
+      bottomMargin = dp(6)
+    })
+
+    val input = EditText(this).apply {
+      setText(defaultValue)
+      setTextColor(Color.parseColor("#e6edf3"))
+      setHintTextColor(Color.parseColor("#484f58"))
+      textSize = 15f
+      background = roundRect("#1d3a26", 10, "#2d5a3a")
+      setPadding(dp(14), dp(12), dp(14), dp(12))
+      inputType = InputType.TYPE_CLASS_TEXT
+      isSingleLine = true
+    }
+    parent.addView(input, LinearLayout.LayoutParams(-1, -2).apply {
+      bottomMargin = dp(16)
+    })
+
+    return input
+  }
+
+  private fun buildLessonUI() {
+    val topBar = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setBackgroundColor(Color.parseColor("#162b1d"))
+    }
+
+    val titleRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      setPadding(dp(20), dp(16), dp(20), dp(4))
+      gravity = Gravity.CENTER_VERTICAL
+    }
+    val liveDot = TextView(this).apply {
+      text = "●"
+      setTextColor(Color.parseColor("#2ecc71"))
+      textSize = 10f
+      setPadding(0, 0, dp(8), 0)
+    }
+    titleRow.addView(liveDot)
     val title = TextView(this).apply {
       text = "Live Lesson"
       setTextColor(Color.WHITE)
-      textSize = 18f
+      textSize = 20f
       typeface = Typeface.DEFAULT_BOLD
-      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
     }
-    topBar.addView(title)
+    titleRow.addView(title)
+    topBar.addView(titleRow)
+
+    val buttonRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      setPadding(dp(16), dp(6), dp(16), dp(14))
+    }
 
     shareBtn = Button(this).apply {
-      text = "Resume sharing"
+      text = "SHARE"
+      setTextColor(Color.WHITE)
+      textSize = 12f
+      typeface = Typeface.DEFAULT_BOLD
+      isAllCaps = false
+      stateListAnimator = null
+      background = roundRect("#238636", 8)
+      setPadding(dp(14), dp(8), dp(14), dp(8))
       setOnClickListener { toggleScreenShare() }
     }
-    topBar.addView(shareBtn)
+    buttonRow.addView(shareBtn, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
+      marginEnd = dp(8)
+    })
 
     muteBtn = Button(this).apply {
-      text = "Mute"
+      text = "MUTE"
+      setTextColor(Color.WHITE)
+      textSize = 12f
+      typeface = Typeface.DEFAULT_BOLD
+      isAllCaps = false
+      stateListAnimator = null
+      background = roundRect("#30363d", 8)
+      setPadding(dp(14), dp(8), dp(14), dp(8))
       setOnClickListener { toggleMute() }
     }
-    topBar.addView(muteBtn)
+    buttonRow.addView(muteBtn, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
+      marginEnd = dp(8)
+    })
 
     val stopBtn = Button(this).apply {
-      text = "End"
+      text = "END"
       setTextColor(Color.WHITE)
-      setBackgroundColor(Color.parseColor("#c0392b"))
+      textSize = 12f
+      typeface = Typeface.DEFAULT_BOLD
+      isAllCaps = false
+      stateListAnimator = null
+      background = roundRect("#da3633", 8)
+      setPadding(dp(14), dp(8), dp(14), dp(8))
       setOnClickListener { stopLesson("Lesson stopped") }
     }
-    topBar.addView(stopBtn)
+    buttonRow.addView(stopBtn, LinearLayout.LayoutParams(0, dp(38), 1f))
+
+    topBar.addView(buttonRow)
     lessonLayout.addView(topBar)
 
-    // Status
-    statusText = TextView(this).apply {
-      setPadding(24, 8, 24, 8)
-      setTextColor(Color.parseColor("#8fbc8f"))
-      setBackgroundColor(Color.parseColor("#0d1f13"))
-      textSize = 12f
-    }
-    lessonLayout.addView(statusText)
-
-    // Participants section
-    val participantLabel = TextView(this).apply {
-      text = "Participants"
-      setPadding(24, 16, 24, 8)
-      setTextColor(Color.parseColor("#a0c4a0"))
+    lessonStatusText = TextView(this).apply {
+      setPadding(dp(20), dp(10), dp(20), dp(10))
+      setTextColor(Color.parseColor("#3fb950"))
+      setBackgroundColor(Color.parseColor("#0d2818"))
       textSize = 13f
-      typeface = Typeface.DEFAULT_BOLD
-      setBackgroundColor(Color.parseColor("#0d1f13"))
     }
-    lessonLayout.addView(participantLabel)
+    lessonLayout.addView(lessonStatusText)
+
+    val participantHeader = TextView(this).apply {
+      text = "PARTICIPANTS"
+      setPadding(dp(20), dp(16), dp(20), dp(8))
+      setTextColor(Color.parseColor("#8b949e"))
+      textSize = 11f
+      typeface = Typeface.DEFAULT_BOLD
+      letterSpacing = 0.1f
+      setBackgroundColor(Color.parseColor("#0f1a13"))
+    }
+    lessonLayout.addView(participantHeader)
 
     participantList = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
-      setPadding(24, 0, 24, 8)
-      setBackgroundColor(Color.parseColor("#0d1f13"))
+      setPadding(dp(16), 0, dp(16), dp(8))
+      setBackgroundColor(Color.parseColor("#0f1a13"))
     }
     lessonLayout.addView(participantList)
 
-    // Chat section
-    val chatLabel = TextView(this).apply {
-      text = "Chat"
-      setPadding(24, 12, 24, 8)
-      setTextColor(Color.parseColor("#a0c4a0"))
-      textSize = 13f
-      typeface = Typeface.DEFAULT_BOLD
-      setBackgroundColor(Color.parseColor("#111111"))
+    val divider = View(this).apply {
+      setBackgroundColor(Color.parseColor("#1d3a26"))
     }
-    lessonLayout.addView(chatLabel)
+    lessonLayout.addView(divider, LinearLayout.LayoutParams(-1, dp(1)).apply {
+      leftMargin = dp(20); rightMargin = dp(20)
+    })
+
+    val chatHeader = TextView(this).apply {
+      text = "CHAT"
+      setPadding(dp(20), dp(14), dp(20), dp(8))
+      setTextColor(Color.parseColor("#8b949e"))
+      textSize = 11f
+      typeface = Typeface.DEFAULT_BOLD
+      letterSpacing = 0.1f
+      setBackgroundColor(Color.parseColor("#0f1a13"))
+    }
+    lessonLayout.addView(chatHeader)
 
     chatScroll = ScrollView(this).apply {
       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-      setBackgroundColor(Color.parseColor("#111111"))
+      setBackgroundColor(Color.parseColor("#0f1a13"))
     }
     chatMessages = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
-      setPadding(24, 4, 24, 4)
+      setPadding(dp(16), dp(4), dp(16), dp(4))
     }
     chatScroll.addView(chatMessages)
     lessonLayout.addView(chatScroll)
 
-    // Chat input
-    val inputRow = LinearLayout(this).apply {
+    val inputBar = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
-      setPadding(16, 8, 16, 16)
-      setBackgroundColor(Color.parseColor("#1a1a1a"))
+      setPadding(dp(16), dp(12), dp(16), dp(16))
+      setBackgroundColor(Color.parseColor("#111a14"))
       gravity = Gravity.CENTER_VERTICAL
     }
     chatInput = EditText(this).apply {
       hint = "Type a message…"
-      setHintTextColor(Color.parseColor("#666666"))
-      setTextColor(Color.WHITE)
-      setBackgroundColor(Color.parseColor("#222222"))
-      setPadding(24, 16, 24, 16)
+      setHintTextColor(Color.parseColor("#484f58"))
+      setTextColor(Color.parseColor("#e6edf3"))
+      textSize = 14f
+      background = roundRect("#1d3a26", 22, "#2d5a3a")
+      setPadding(dp(18), dp(12), dp(18), dp(12))
       inputType = InputType.TYPE_CLASS_TEXT
+      isSingleLine = true
       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
     }
-    inputRow.addView(chatInput)
+    inputBar.addView(chatInput)
+
     val sendBtn = Button(this).apply {
-      text = "Send"
+      text = "↑"
+      setTextColor(Color.WHITE)
+      textSize = 18f
+      typeface = Typeface.DEFAULT_BOLD
+      isAllCaps = false
+      stateListAnimator = null
+      background = roundRect("#2ea043", 22)
+      setPadding(0, 0, 0, 0)
+      gravity = Gravity.CENTER
       setOnClickListener { sendChatMessage() }
     }
-    inputRow.addView(sendBtn)
-    lessonLayout.addView(inputRow)
+    inputBar.addView(sendBtn, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+      marginStart = dp(10)
+    })
+
+    lessonLayout.addView(inputBar)
   }
 
   private fun showLessonUI() {
     setupLayout.visibility = View.GONE
     lessonLayout.visibility = View.VISIBLE
+    statusText = lessonStatusText
     updateParticipants()
   }
 
   private fun showSetupUI() {
     lessonLayout.visibility = View.GONE
     setupLayout.visibility = View.VISIBLE
+    statusText = setupStatusText
   }
 
   private fun updateParticipants() {
     participantList.removeAllViews()
-    // Teacher (self)
     val micOn = room?.localParticipant?.isMicrophoneEnabled == true
     addParticipantRow("You (Teacher)", micOn, isTeacher = true)
-    // Remote participants
     room?.remoteParticipants?.values?.forEach { p ->
       val name = p.name ?: p.identity?.value ?: "Student"
       val pMicOn = p.isMicrophoneEnabled
@@ -273,59 +421,79 @@ class MainActivity : AppCompatActivity() {
   private fun addParticipantRow(name: String, micOn: Boolean, isTeacher: Boolean) {
     val row = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
-      setPadding(0, 6, 0, 6)
+      setPadding(dp(14), dp(10), dp(14), dp(10))
       gravity = Gravity.CENTER_VERTICAL
+      background = roundRect("#162b1d", 10)
     }
+
     val dot = TextView(this).apply {
       text = "●"
       setTextColor(if (micOn) Color.parseColor("#2ecc71") else Color.parseColor("#e74c3c"))
-      textSize = 14f
-      setPadding(0, 0, 12, 0)
+      textSize = 10f
+      setPadding(0, 0, dp(10), 0)
     }
     row.addView(dot)
+
     val label = TextView(this).apply {
       text = name
-      setTextColor(Color.WHITE)
+      setTextColor(Color.parseColor("#e6edf3"))
       textSize = 14f
       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
     }
     row.addView(label)
-    val micStatus = TextView(this).apply {
+
+    val micIcon = TextView(this).apply {
       text = if (micOn) "🎤" else "🔇"
-      textSize = 16f
+      textSize = 14f
     }
-    row.addView(micStatus)
+    row.addView(micIcon)
+
     if (isTeacher) {
       val badge = TextView(this).apply {
-        text = "  HOST"
-        setTextColor(Color.parseColor("#f1c40f"))
+        text = "HOST"
+        setTextColor(Color.parseColor("#f0c000"))
         textSize = 10f
         typeface = Typeface.DEFAULT_BOLD
+        setPadding(dp(8), dp(3), dp(8), dp(3))
+        background = roundRect("#3d3000", 6)
+        gravity = Gravity.CENTER
       }
-      row.addView(badge)
+      row.addView(badge, LinearLayout.LayoutParams(-2, -2).apply {
+        marginStart = dp(8)
+      })
     }
-    participantList.addView(row)
+
+    participantList.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
+      bottomMargin = dp(6)
+    })
   }
 
   private fun addChatMessage(sender: String, content: String) {
-    val row = LinearLayout(this).apply {
+    val wrapper = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
-      setPadding(0, 4, 0, 4)
+      setPadding(0, dp(3), 0, dp(3))
+    }
+    val bubble = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      background = roundRect("#162b1d", 12)
+      setPadding(dp(14), dp(10), dp(14), dp(10))
     }
     val nameView = TextView(this).apply {
       text = sender
-      setTextColor(Color.parseColor("#2ecc71"))
+      setTextColor(Color.parseColor("#3fb950"))
       textSize = 12f
       typeface = Typeface.DEFAULT_BOLD
     }
-    row.addView(nameView)
+    bubble.addView(nameView)
     val msgView = TextView(this).apply {
       text = content
-      setTextColor(Color.parseColor("#dddddd"))
+      setTextColor(Color.parseColor("#e6edf3"))
       textSize = 14f
+      setPadding(0, dp(2), 0, 0)
     }
-    row.addView(msgView)
-    chatMessages.addView(row)
+    bubble.addView(msgView)
+    wrapper.addView(bubble, LinearLayout.LayoutParams(-2, -2))
+    chatMessages.addView(wrapper)
     chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
   }
 
@@ -360,11 +528,6 @@ class MainActivity : AppCompatActivity() {
       }
     }
     handler.postDelayed(updater, 3000)
-  }
-
-  private fun field(root: LinearLayout, label: String, hint: String): EditText {
-    root.addView(TextView(this).apply { text = label })
-    return EditText(this).also { it.setText(hint); root.addView(it, LinearLayout.LayoutParams(-1, -2)) }
   }
 
   private val permissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results: Map<String, Boolean> ->
@@ -426,7 +589,7 @@ class MainActivity : AppCompatActivity() {
 
   private fun onScreenShareStopped() {
     sharing = false
-    shareBtn.text = "Resume sharing"
+    shareBtn.text = "SHARE"
     statusText.text = "Screen sharing stopped. Audio is still live."
   }
 
@@ -435,7 +598,7 @@ class MainActivity : AppCompatActivity() {
       lifecycleScope.launch {
         try { room?.localParticipant?.setScreenShareEnabled(false) } catch (_: Exception) { }
         sharing = false
-        shareBtn.text = "Resume sharing"
+        shareBtn.text = "SHARE"
         statusText.text = "Screen sharing stopped. Audio is still live."
       }
     } else {
@@ -447,7 +610,7 @@ class MainActivity : AppCompatActivity() {
   private fun toggleMute() = lifecycleScope.launch {
     val enabled = room?.localParticipant?.isMicrophoneEnabled == true
     room?.localParticipant?.setMicrophoneEnabled(!enabled)
-    muteBtn.text = if (enabled) "Unmute" else "Mute"
+    muteBtn.text = if (enabled) "UNMUTE" else "MUTE"
     updateParticipants()
   }
 

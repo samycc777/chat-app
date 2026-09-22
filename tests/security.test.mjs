@@ -142,6 +142,44 @@ test('classroom members can fetch attachments and unadmitted users cannot', asyn
   assert.equal(endedMedia.status, 409);
 });
 
+test('a lesson abandoned by a disconnected presenter can be restarted by another member', async () => {
+  const conversationId = 'classroom';
+  const teacher = await join('Teacher');
+  const substitute = await join('Substitute');
+  const student = await join('Student');
+  const [teacherSocket, substituteSocket, studentSocket] = await Promise.all([teacher, substitute, student].map(member => connect(member.token)));
+  const start = socket => new Promise(resolve => socket.emit('wb_start', { conversationId }, resolve));
+  const credentials = async token => (await fetch(`${baseUrl}/api/livekit/token`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
+  })).json();
+  const previousLiveKit = Object.fromEntries(['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'].map(key => [key, process.env[key]]));
+  Object.assign(process.env, { LIVEKIT_URL: 'wss://test.livekit.cloud', LIVEKIT_API_KEY: 'test-key', LIVEKIT_API_SECRET: 'test-secret' });
+  try {
+    const studentSawLesson = new Promise(resolve => studentSocket.once('wb_started', resolve));
+    assert.equal((await start(teacherSocket)).presenterId, teacher.user.id);
+    await studentSawLesson;
+    const abandonedRoom = (await credentials(teacher.token)).roomName;
+    assert.equal((await start(substituteSocket)).presenterId, teacher.user.id);
+
+    const teacherOffline = new Promise(resolve => studentSocket.on('presence', event => {
+      if (event.userId === teacher.user.id && !event.online) resolve();
+    }));
+    teacherSocket.disconnect();
+    await teacherOffline;
+    const ended = new Promise(resolve => studentSocket.once('wb_ended', resolve));
+    const restarted = new Promise(resolve => studentSocket.once('wb_started', resolve));
+    assert.equal((await start(substituteSocket)).presenterId, substitute.user.id);
+    await ended;
+    assert.equal((await restarted).presenterId, substitute.user.id);
+    const substituteCredentials = await credentials(substitute.token);
+    assert.notEqual(substituteCredentials.roomName, abandonedRoom);
+    assert.ok(jwt.decode(substituteCredentials.token).video.canPublishSources.includes('screen_share'));
+    substituteSocket.emit('wb_end', { conversationId });
+  } finally {
+    for (const [key, value] of Object.entries(previousLiveKit)) value === undefined ? delete process.env[key] : process.env[key] = value;
+  }
+});
+
 test('large PDFs up to the 100 MB default upload limit are accepted', async () => {
   const user = await join('Large PDF');
   const auth = { Authorization: `Bearer ${user.token}` };

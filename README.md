@@ -2,7 +2,7 @@
 
 Classroom is a single-room live class app built with Vue 3, Express, Socket.IO, and SQLite. Participants enter the temporary class code `0000`, choose a display name the first time they visit, and join the shared chat. The display name and browser identity are saved locally; the class code is requested for each new browser session.
 
-The room supports messages, image/PDF attachments, and encrypted live lessons. A teacher can present from the Android companion while using JNotes: the original PDF remains on the teacher's device and students receive only the live screen and microphone stream. The first attendee to start a lesson owns its controls until the lesson ends.
+The room supports messages, image/PDF attachments, and encrypted live lessons. A teacher can present from the Android companion while using JNotes: the original PDF remains on the teacher's device and students receive only the live screen and microphone stream. The first attendee to start a lesson owns its controls until the lesson ends; if they disconnect without ending it, the next attendee to start a lesson replaces it.
 
 ## Local development
 

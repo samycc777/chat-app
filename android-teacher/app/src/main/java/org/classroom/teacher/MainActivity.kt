@@ -22,6 +22,7 @@ import androidx.lifecycle.lifecycleScope
 import io.livekit.android.LiveKit
 import io.livekit.android.room.Room
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
+import io.socket.client.Ack
 import io.socket.client.IO
 import io.socket.client.Socket
 import kotlinx.coroutines.Dispatchers
@@ -602,11 +603,15 @@ class MainActivity : AppCompatActivity() {
         val started = data.firstOrNull() as? JSONObject ?: return@on
         runOnUiThread {
           if (started.optString("presenterId") == userId) lifecycleScope.launch { connectLessonMedia() }
-          else statusText.text = getString(R.string.status_another_teacher)
+          else if (room != null) stopLesson(getString(R.string.status_another_teacher))
         }
       }
-      socket?.on(Socket.EVENT_CONNECT) {
-        socket?.emit("wb_start", JSONObject().put("conversationId", "classroom"))
+      // Only the first connection asks for the lesson, so a reconnect never starts one unprompted.
+      socket?.once(Socket.EVENT_CONNECT) {
+        socket?.emit("wb_start", JSONObject().put("conversationId", "classroom"), Ack { result ->
+          val presenterId = (result.firstOrNull() as? JSONObject)?.optString("presenterId")
+          if (presenterId != userId) runOnUiThread { stopLesson(getString(R.string.status_another_teacher)) }
+        })
       }
       socket?.on(Socket.EVENT_CONNECT_ERROR) { _ ->
         runOnUiThread { stopLesson(getString(R.string.status_connection_error)) }
@@ -665,18 +670,21 @@ class MainActivity : AppCompatActivity() {
   }
 
   private fun stopLesson(message: String) = lifecycleScope.launch {
-    if (!lessonActive && room == null) { statusText.text = message; return@launch }
-    sharing = false
-    lessonActive = false
-    stopService(Intent(this@MainActivity, LessonService::class.java))
-    try {
-      room?.localParticipant?.setScreenShareEnabled(false); room?.disconnect(); room?.release()
-      val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-      @Suppress("DEPRECATION") am.isSpeakerphoneOn = false
-      am.mode = android.media.AudioManager.MODE_NORMAL
-    } catch (_: Exception) { }
-    socket?.emit("wb_end", JSONObject().put("conversationId", "classroom")); socket?.disconnect(); socket = null; room = null
-    showSetupUI()
+    if (lessonActive || room != null) {
+      sharing = false
+      lessonActive = false
+      stopService(Intent(this@MainActivity, LessonService::class.java))
+      try {
+        room?.localParticipant?.setScreenShareEnabled(false); room?.disconnect(); room?.release()
+        val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        @Suppress("DEPRECATION") am.isSpeakerphoneOn = false
+        am.mode = android.media.AudioManager.MODE_NORMAL
+      } catch (_: Exception) { }
+      room = null
+      showSetupUI()
+    }
+    // A failed or refused start must not leave a connected socket that still holds, or later claims, the lesson.
+    socket?.emit("wb_end", JSONObject().put("conversationId", "classroom")); socket?.disconnect(); socket = null
     statusText.text = message
   }
 
@@ -691,6 +699,7 @@ class MainActivity : AppCompatActivity() {
   }
 
   private fun connectSocket(token: String) {
+    socket?.disconnect()
     socket = IO.socket(baseUrl(), IO.Options().apply { auth = mapOf("token" to token); transports = arrayOf("websocket") })
   }
 

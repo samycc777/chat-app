@@ -197,14 +197,22 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     });
 
     // Whiteboard events
-    socket.on('wb_start', (data: { conversationId: string; attachmentId?: string }) => {
+    socket.on('wb_start', (data: { conversationId: string; attachmentId?: string }, callback?: unknown) => {
       if (!data || !isMember(data.conversationId)) return;
-      if (whiteboardSessions.has(data.conversationId)) return;
+      const reply = (presenterId: string) => { if (typeof callback === 'function') callback({ presenterId }); };
+      const existing = whiteboardSessions.get(data.conversationId);
+      // A presenter who disconnected without ending the lesson (app killed, tab closed) must not lock the classroom.
+      if (existing && (existing.presenterId === userId || onlineUsers.has(existing.presenterId))) return reply(existing.presenterId);
       let initialPdfId: string | null = null;
       if (data.attachmentId) {
         const attachment = db.prepare("SELECT id FROM attachments WHERE id = ? AND conversation_id = ? AND mime_type = 'application/pdf'").get(data.attachmentId, data.conversationId) as { id: string } | undefined;
         if (!attachment) return;
         initialPdfId = attachment.id;
+      }
+      if (existing) {
+        whiteboardSessions.delete(data.conversationId);
+        endLessonSession(data.conversationId, existing.presenterId);
+        io.to(`conv:${data.conversationId}`).emit('wb_ended', { conversationId: data.conversationId });
       }
 
       const session: WhiteboardSession = {
@@ -221,6 +229,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
         pdfUrl: session.pdfUrl,
         currentPage: 1,
       });
+      reply(userId);
     });
 
     socket.on('wb_end', (data: { conversationId: string }) => {

@@ -1166,6 +1166,8 @@ textarea:focus-visible,
   flex: 1;
   position: relative;
   display: grid;
+  /* A definite cell lets the video's 100% height resolve, so portrait screens are fitted instead of cropped. */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   overflow: hidden;
   padding: clamp(10px, 2.5vw, 28px);
@@ -1464,18 +1466,12 @@ html[dir='rtl'] body {
   }
 
   .lesson-header {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 2;
     min-height: auto;
     padding: max(8px, env(safe-area-inset-top)) 12px 8px;
     border-width: 0;
     border-radius: 0;
-    background: rgba(9, 17, 14, 0.75);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    color: #edf3ef;
+    background: #09110e;
   }
 
   .lesson-title-icon {
@@ -1496,19 +1492,12 @@ html[dir='rtl'] body {
   }
 
   .lesson-controls {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    z-index: 2;
     min-height: auto;
     gap: 6px;
     padding: 8px 9px max(9px, env(safe-area-inset-bottom));
     border-width: 0;
     border-radius: 0;
-    background: rgba(9, 17, 14, 0.75);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: #09110e;
   }
 
   .lesson-control {

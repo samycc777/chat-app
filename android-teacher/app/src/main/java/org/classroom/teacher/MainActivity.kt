@@ -197,13 +197,13 @@ class MainActivity : AppCompatActivity() {
       setTextColor(Color.parseColor("#a0c4a0"))
       textSize = 13f
       typeface = Typeface.DEFAULT_BOLD
-      setBackgroundColor(Color.parseColor("#111"))
+      setBackgroundColor(Color.parseColor("#111111"))
     }
     lessonLayout.addView(chatLabel)
 
     chatScroll = ScrollView(this).apply {
       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-      setBackgroundColor(Color.parseColor("#111"))
+      setBackgroundColor(Color.parseColor("#111111"))
     }
     chatMessages = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
@@ -221,9 +221,9 @@ class MainActivity : AppCompatActivity() {
     }
     chatInput = EditText(this).apply {
       hint = "Type a message…"
-      setHintTextColor(Color.parseColor("#666"))
+      setHintTextColor(Color.parseColor("#666666"))
       setTextColor(Color.WHITE)
-      setBackgroundColor(Color.parseColor("#222"))
+      setBackgroundColor(Color.parseColor("#222222"))
       setPadding(24, 16, 24, 16)
       inputType = InputType.TYPE_CLASS_TEXT
       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -312,7 +312,7 @@ class MainActivity : AppCompatActivity() {
     row.addView(nameView)
     val msgView = TextView(this).apply {
       text = content
-      setTextColor(Color.parseColor("#ddd"))
+      setTextColor(Color.parseColor("#dddddd"))
       textSize = 14f
     }
     row.addView(msgView)

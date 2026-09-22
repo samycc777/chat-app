@@ -625,6 +625,8 @@ class MainActivity : AppCompatActivity() {
       room = LiveKit.create(applicationContext)
       room!!.connect(credentials.getString("url"), credentials.getString("token"))
       room!!.localParticipant.setMicrophoneEnabled(true)
+      val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+      @Suppress("DEPRECATION") am.isSpeakerphoneOn = true
       lessonActive = true
       startForegroundService(Intent(this@MainActivity, LessonService::class.java))
       setupRoomListeners()
@@ -667,7 +669,12 @@ class MainActivity : AppCompatActivity() {
     sharing = false
     lessonActive = false
     stopService(Intent(this@MainActivity, LessonService::class.java))
-    try { room?.localParticipant?.setScreenShareEnabled(false); room?.disconnect(); room?.release() } catch (_: Exception) { }
+    try {
+      room?.localParticipant?.setScreenShareEnabled(false); room?.disconnect(); room?.release()
+      val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+      @Suppress("DEPRECATION") am.isSpeakerphoneOn = false
+      am.mode = android.media.AudioManager.MODE_NORMAL
+    } catch (_: Exception) { }
     socket?.emit("wb_end", JSONObject().put("conversationId", "classroom")); socket?.disconnect(); socket = null; room = null
     showSetupUI()
     statusText.text = message

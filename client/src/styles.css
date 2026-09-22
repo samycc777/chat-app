@@ -1464,10 +1464,18 @@ html[dir='rtl'] body {
   }
 
   .lesson-header {
-    min-height: 62px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 2;
+    min-height: auto;
     padding: max(8px, env(safe-area-inset-top)) 12px 8px;
-    border-width: 0 0 1px;
+    border-width: 0;
     border-radius: 0;
+    background: rgba(9, 17, 14, 0.75);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   }
 
   .lesson-title-icon {
@@ -1479,19 +1487,28 @@ html[dir='rtl'] body {
 
   .lesson-stage {
     border: 0;
-    padding: 8px;
+    padding: 0;
   }
 
   .lesson-screen {
-    border-radius: 7px;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .lesson-controls {
-    min-height: 64px;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 2;
+    min-height: auto;
     gap: 6px;
     padding: 8px 9px max(9px, env(safe-area-inset-bottom));
-    border-width: 1px 0 0;
+    border-width: 0;
     border-radius: 0;
+    background: rgba(9, 17, 14, 0.75);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   }
 
   .lesson-control {

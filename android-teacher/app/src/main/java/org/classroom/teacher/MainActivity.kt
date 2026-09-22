@@ -8,7 +8,9 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.media.projection.MediaProjectionManager
+import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.os.PowerManager
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -55,6 +57,20 @@ class MainActivity : AppCompatActivity() {
   private var socket: Socket? = null
   private var room: Room? = null
   private var sharing = false
+  private var wakeLock: PowerManager.WakeLock? = null
+  private var wifiLock: WifiManager.WifiLock? = null
+
+  private fun acquireStreamLocks() {
+    val pm = getSystemService(PowerManager::class.java)
+    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "classroom:lesson").apply { acquire() }
+    val wm = applicationContext.getSystemService(WifiManager::class.java)
+    wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "classroom:lesson").apply { acquire() }
+  }
+
+  private fun releaseStreamLocks() {
+    wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null
+    wifiLock?.let { if (it.isHeld) it.release() }; wifiLock = null
+  }
 
   private fun buildCaptureNotification(): android.app.Notification {
     val channelId = "lesson_capture"
@@ -78,6 +94,7 @@ class MainActivity : AppCompatActivity() {
           onStop = { runOnUiThread { stopLesson("Android stopped screen sharing") } }
         ))
         sharing = true
+        acquireStreamLocks()
         showLessonUI()
         statusText.text = "Sharing. Switch to JNotes and teach."
       } catch (error: Exception) { stopLesson("Could not start screen sharing") }
@@ -423,6 +440,7 @@ class MainActivity : AppCompatActivity() {
   private fun stopLesson(message: String) = lifecycleScope.launch {
     if (!sharing && room == null) { statusText.text = message; return@launch }
     sharing = false
+    releaseStreamLocks()
     try { room?.localParticipant?.setScreenShareEnabled(false); room?.disconnect(); room?.release() } catch (_: Exception) { }
     socket?.emit("wb_end", JSONObject().put("conversationId", "classroom")); socket?.disconnect(); socket = null; room = null
     showSetupUI()
@@ -463,5 +481,5 @@ class MainActivity : AppCompatActivity() {
     return JSONObject(response)
   }
 
-  override fun onDestroy() { if (sharing) stopLesson("Lesson stopped"); super.onDestroy() }
+  override fun onDestroy() { releaseStreamLocks(); if (sharing) stopLesson("Lesson stopped"); super.onDestroy() }
 }

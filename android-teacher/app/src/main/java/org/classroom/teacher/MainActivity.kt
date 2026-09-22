@@ -34,7 +34,14 @@ import java.net.URL
 import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
-  companion object { const val STOP_LESSON_ACTION = "org.classroom.teacher.STOP_LESSON" }
+  companion object {
+    const val STOP_LESSON_ACTION = "org.classroom.teacher.STOP_LESSON"
+    private const val DEFAULT_SERVER_URL = "https://nurturing-dedication-production-9379.up.railway.app"
+    private const val DEFAULT_CLASS_CODE = "0000"
+    private const val PREF_SERVER_URL = "serverUrl"
+    private const val PREF_CLASS_CODE = "classCode"
+    private const val PREF_DISPLAY_NAME = "displayName"
+  }
 
   private lateinit var setupLayout: LinearLayout
   private lateinit var serverUrl: EditText
@@ -58,6 +65,7 @@ class MainActivity : AppCompatActivity() {
   private var sharing = false
   private var lessonActive = false
   private lateinit var shareBtn: Button
+  private val preferences by lazy { getSharedPreferences("teacher", Context.MODE_PRIVATE) }
 
   private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
 
@@ -73,17 +81,26 @@ class MainActivity : AppCompatActivity() {
   private fun buildCaptureNotification(): android.app.Notification {
     val channelId = "lesson_capture"
     val manager = getSystemService(android.app.NotificationManager::class.java)
-    manager.createNotificationChannel(android.app.NotificationChannel(channelId, "Lesson sharing", android.app.NotificationManager.IMPORTANCE_LOW))
+    manager.createNotificationChannel(
+      android.app.NotificationChannel(
+        channelId,
+        getString(R.string.notification_channel_screen_share),
+        android.app.NotificationManager.IMPORTANCE_LOW
+      )
+    )
     return androidx.core.app.NotificationCompat.Builder(this, channelId)
       .setSmallIcon(R.drawable.ic_screen_share)
-      .setContentTitle("Lesson screen sharing is active")
-      .setContentText("Return to Classroom Teacher to stop sharing.")
+      .setContentTitle(getString(R.string.notification_screen_share_title))
+      .setContentText(getString(R.string.notification_screen_share_text))
       .setOngoing(true)
       .build()
   }
 
   private val screenCapture = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-    if (result.resultCode != Activity.RESULT_OK || result.data == null) { statusText.text = "Screen sharing was cancelled"; return@registerForActivityResult }
+    if (result.resultCode != Activity.RESULT_OK || result.data == null) {
+      statusText.text = getString(R.string.status_screen_share_cancelled)
+      return@registerForActivityResult
+    }
     lifecycleScope.launch {
       try {
         room?.localParticipant?.setScreenShareEnabled(true, ScreenCaptureParams(result.data!!,
@@ -92,10 +109,10 @@ class MainActivity : AppCompatActivity() {
           onStop = { runOnUiThread { onScreenShareStopped() } }
         ))
         sharing = true
-        shareBtn.text = "STOP SHARING"
+        shareBtn.text = getString(R.string.action_stop_sharing)
         showLessonUI()
-        statusText.text = "Sharing. Switch to JNotes and teach."
-      } catch (error: Exception) { stopLesson("Could not start screen sharing") }
+        statusText.text = getString(R.string.status_sharing)
+      } catch (error: Exception) { stopLesson(getString(R.string.status_screen_share_failed)) }
     }
   }
 
@@ -104,17 +121,19 @@ class MainActivity : AppCompatActivity() {
     window.statusBarColor = Color.parseColor("#0f1a13")
     window.navigationBarColor = Color.parseColor("#111a14")
     buildUI()
-    if (intent.action == STOP_LESSON_ACTION) stopLesson("Lesson stopped")
+    if (intent.action == STOP_LESSON_ACTION) stopLesson(getString(R.string.status_lesson_stopped))
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
-    if (intent.action == STOP_LESSON_ACTION) stopLesson("Lesson stopped")
+    if (intent.action == STOP_LESSON_ACTION) stopLesson(getString(R.string.status_lesson_stopped))
   }
 
   private fun buildUI() {
     val root = FrameLayout(this).apply {
       setBackgroundColor(Color.parseColor("#0f1a13"))
+      layoutDirection = View.LAYOUT_DIRECTION_RTL
+      textDirection = View.TEXT_DIRECTION_LOCALE
     }
 
     setupLayout = LinearLayout(this).apply {
@@ -123,7 +142,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     val titleText = TextView(this).apply {
-      text = "Classroom"
+      text = getString(R.string.setup_title)
       setTextColor(Color.WHITE)
       textSize = 28f
       typeface = Typeface.DEFAULT_BOLD
@@ -134,12 +153,11 @@ class MainActivity : AppCompatActivity() {
     })
 
     val subtitleText = TextView(this).apply {
-      text = "Teacher"
+      text = getString(R.string.setup_subtitle)
       setTextColor(Color.parseColor("#3fb950"))
       textSize = 15f
       typeface = Typeface.DEFAULT_BOLD
       gravity = Gravity.CENTER
-      letterSpacing = 0.15f
     }
     setupLayout.addView(subtitleText, LinearLayout.LayoutParams(-1, -2).apply {
       bottomMargin = dp(36)
@@ -151,16 +169,32 @@ class MainActivity : AppCompatActivity() {
       setPadding(dp(20), dp(24), dp(20), dp(24))
     }
 
-    serverUrl = styledField(card, "Server URL", "https://nurturing-dedication-production-9379.up.railway.app")
-    classCode = styledField(card, "Class code", "0000")
-    displayName = styledField(card, "Your name", "")
+    serverUrl = styledField(
+      card,
+      getString(R.string.field_server_url),
+      preferences.getString(PREF_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
+    ).apply {
+      layoutDirection = View.LAYOUT_DIRECTION_LTR
+      textDirection = View.TEXT_DIRECTION_LTR
+      gravity = Gravity.START or Gravity.CENTER_VERTICAL
+    }
+    classCode = styledField(
+      card,
+      getString(R.string.field_class_code),
+      preferences.getString(PREF_CLASS_CODE, DEFAULT_CLASS_CODE) ?: DEFAULT_CLASS_CODE
+    )
+    displayName = styledField(
+      card,
+      getString(R.string.field_teacher_name),
+      preferences.getString(PREF_DISPLAY_NAME, "") ?: ""
+    )
 
     setupLayout.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
       bottomMargin = dp(24)
     })
 
     val startBtn = Button(this).apply {
-      text = "Start Lesson"
+      text = getString(R.string.action_start_lesson)
       setTextColor(Color.WHITE)
       textSize = 16f
       typeface = Typeface.DEFAULT_BOLD
@@ -173,7 +207,7 @@ class MainActivity : AppCompatActivity() {
     setupLayout.addView(startBtn, LinearLayout.LayoutParams(-1, dp(54)))
 
     setupStatusText = TextView(this).apply {
-      text = "Sign in, then start a lesson."
+      text = getString(R.string.setup_instruction)
       setTextColor(Color.parseColor("#8b949e"))
       textSize = 13f
       gravity = Gravity.CENTER
@@ -200,7 +234,7 @@ class MainActivity : AppCompatActivity() {
       setTextColor(Color.parseColor("#8fbc8f"))
       textSize = 12f
       typeface = Typeface.DEFAULT_BOLD
-      letterSpacing = 0.04f
+      gravity = Gravity.END
     }
     parent.addView(labelView, LinearLayout.LayoutParams(-1, -2).apply {
       bottomMargin = dp(6)
@@ -215,6 +249,7 @@ class MainActivity : AppCompatActivity() {
       setPadding(dp(14), dp(12), dp(14), dp(12))
       inputType = InputType.TYPE_CLASS_TEXT
       isSingleLine = true
+      gravity = Gravity.END or Gravity.CENTER_VERTICAL
     }
     parent.addView(input, LinearLayout.LayoutParams(-1, -2).apply {
       bottomMargin = dp(16)
@@ -242,7 +277,7 @@ class MainActivity : AppCompatActivity() {
     }
     titleRow.addView(liveDot)
     val title = TextView(this).apply {
-      text = "Live Lesson"
+      text = getString(R.string.lesson_title)
       setTextColor(Color.WHITE)
       textSize = 20f
       typeface = Typeface.DEFAULT_BOLD
@@ -256,7 +291,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     shareBtn = Button(this).apply {
-      text = "SHARE"
+      text = getString(R.string.action_share)
       setTextColor(Color.WHITE)
       textSize = 12f
       typeface = Typeface.DEFAULT_BOLD
@@ -271,7 +306,7 @@ class MainActivity : AppCompatActivity() {
     })
 
     muteBtn = Button(this).apply {
-      text = "MUTE"
+      text = getString(R.string.action_mute)
       setTextColor(Color.WHITE)
       textSize = 12f
       typeface = Typeface.DEFAULT_BOLD
@@ -286,7 +321,7 @@ class MainActivity : AppCompatActivity() {
     })
 
     val stopBtn = Button(this).apply {
-      text = "END"
+      text = getString(R.string.action_end)
       setTextColor(Color.WHITE)
       textSize = 12f
       typeface = Typeface.DEFAULT_BOLD
@@ -294,7 +329,7 @@ class MainActivity : AppCompatActivity() {
       stateListAnimator = null
       background = roundRect("#da3633", 8)
       setPadding(dp(14), dp(8), dp(14), dp(8))
-      setOnClickListener { stopLesson("Lesson stopped") }
+      setOnClickListener { stopLesson(getString(R.string.status_lesson_stopped)) }
     }
     buttonRow.addView(stopBtn, LinearLayout.LayoutParams(0, dp(38), 1f))
 
@@ -306,16 +341,17 @@ class MainActivity : AppCompatActivity() {
       setTextColor(Color.parseColor("#3fb950"))
       setBackgroundColor(Color.parseColor("#0d2818"))
       textSize = 13f
+      gravity = Gravity.END
     }
     lessonLayout.addView(lessonStatusText)
 
     val participantHeader = TextView(this).apply {
-      text = "PARTICIPANTS"
+      text = getString(R.string.participants_title)
       setPadding(dp(20), dp(16), dp(20), dp(8))
       setTextColor(Color.parseColor("#8b949e"))
       textSize = 11f
       typeface = Typeface.DEFAULT_BOLD
-      letterSpacing = 0.1f
+      gravity = Gravity.END
       setBackgroundColor(Color.parseColor("#0f1a13"))
     }
     lessonLayout.addView(participantHeader)
@@ -335,12 +371,12 @@ class MainActivity : AppCompatActivity() {
     })
 
     val chatHeader = TextView(this).apply {
-      text = "CHAT"
+      text = getString(R.string.chat_title)
       setPadding(dp(20), dp(14), dp(20), dp(8))
       setTextColor(Color.parseColor("#8b949e"))
       textSize = 11f
       typeface = Typeface.DEFAULT_BOLD
-      letterSpacing = 0.1f
+      gravity = Gravity.END
       setBackgroundColor(Color.parseColor("#0f1a13"))
     }
     lessonLayout.addView(chatHeader)
@@ -363,7 +399,7 @@ class MainActivity : AppCompatActivity() {
       gravity = Gravity.CENTER_VERTICAL
     }
     chatInput = EditText(this).apply {
-      hint = "Type a message…"
+      hint = getString(R.string.chat_hint)
       setHintTextColor(Color.parseColor("#484f58"))
       setTextColor(Color.parseColor("#e6edf3"))
       textSize = 14f
@@ -371,12 +407,14 @@ class MainActivity : AppCompatActivity() {
       setPadding(dp(18), dp(12), dp(18), dp(12))
       inputType = InputType.TYPE_CLASS_TEXT
       isSingleLine = true
+      gravity = Gravity.END or Gravity.CENTER_VERTICAL
       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
     }
     inputBar.addView(chatInput)
 
     val sendBtn = Button(this).apply {
       text = "↑"
+      contentDescription = getString(R.string.action_send_message)
       setTextColor(Color.WHITE)
       textSize = 18f
       typeface = Typeface.DEFAULT_BOLD
@@ -410,9 +448,9 @@ class MainActivity : AppCompatActivity() {
   private fun updateParticipants() {
     participantList.removeAllViews()
     val micOn = room?.localParticipant?.isMicrophoneEnabled == true
-    addParticipantRow("You (Teacher)", micOn, isTeacher = true)
+    addParticipantRow(getString(R.string.participant_teacher), micOn, isTeacher = true)
     room?.remoteParticipants?.values?.forEach { p ->
-      val name = p.name ?: p.identity?.value ?: "Student"
+      val name = p.name ?: p.identity?.value ?: getString(R.string.participant_student)
       val pMicOn = p.isMicrophoneEnabled
       addParticipantRow(name, pMicOn, isTeacher = false)
     }
@@ -439,6 +477,7 @@ class MainActivity : AppCompatActivity() {
       setTextColor(Color.parseColor("#e6edf3"))
       textSize = 14f
       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+      gravity = Gravity.END
     }
     row.addView(label)
 
@@ -450,7 +489,7 @@ class MainActivity : AppCompatActivity() {
 
     if (isTeacher) {
       val badge = TextView(this).apply {
-        text = "HOST"
+        text = getString(R.string.participant_host_badge)
         setTextColor(Color.parseColor("#f0c000"))
         textSize = 10f
         typeface = Typeface.DEFAULT_BOLD
@@ -472,6 +511,7 @@ class MainActivity : AppCompatActivity() {
     val wrapper = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       setPadding(0, dp(3), 0, dp(3))
+      gravity = Gravity.END
     }
     val bubble = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
@@ -483,6 +523,7 @@ class MainActivity : AppCompatActivity() {
       setTextColor(Color.parseColor("#3fb950"))
       textSize = 12f
       typeface = Typeface.DEFAULT_BOLD
+      gravity = Gravity.END
     }
     bubble.addView(nameView)
     val msgView = TextView(this).apply {
@@ -490,6 +531,7 @@ class MainActivity : AppCompatActivity() {
       setTextColor(Color.parseColor("#e6edf3"))
       textSize = 14f
       setPadding(0, dp(2), 0, 0)
+      gravity = Gravity.END
     }
     bubble.addView(msgView)
     wrapper.addView(bubble, LinearLayout.LayoutParams(-2, -2))
@@ -511,7 +553,8 @@ class MainActivity : AppCompatActivity() {
   private fun setupSocketListeners() {
     socket?.on("message") { args ->
       val msg = args.firstOrNull() as? JSONObject ?: return@on
-      val sender = msg.optJSONObject("sender")?.optString("displayName") ?: "Unknown"
+      val sender = msg.optJSONObject("sender")?.optString("displayName")
+        ?: getString(R.string.participant_unknown)
       val content = msg.optString("content", "")
       val type = msg.optString("type", "text")
       if (type == "text" && content.isNotEmpty()) {
@@ -531,11 +574,15 @@ class MainActivity : AppCompatActivity() {
   }
 
   private val permissionsLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results: Map<String, Boolean> ->
-    if (results[Manifest.permission.RECORD_AUDIO] != true) { statusText.text = "Microphone permission is required"; return@registerForActivityResult }
+    if (results[Manifest.permission.RECORD_AUDIO] != true) {
+      statusText.text = getString(R.string.status_microphone_required)
+      return@registerForActivityResult
+    }
     lifecycleScope.launch { doStartLesson() }
   }
 
   private fun startLesson() {
+    saveSettings()
     val needed = mutableListOf<String>()
     if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.RECORD_AUDIO)
     if (android.os.Build.VERSION.SDK_INT >= 33 && ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -545,7 +592,7 @@ class MainActivity : AppCompatActivity() {
 
   private suspend fun doStartLesson() {
     try {
-      statusText.text = "Signing in…"
+      statusText.text = getString(R.string.status_signing_in)
       val identity = joinClass()
       authToken = identity.getString("token")
       userId = identity.getJSONObject("user").getString("id")
@@ -555,18 +602,17 @@ class MainActivity : AppCompatActivity() {
         val started = data.firstOrNull() as? JSONObject ?: return@on
         runOnUiThread {
           if (started.optString("presenterId") == userId) lifecycleScope.launch { connectLessonMedia() }
-          else statusText.text = "Another teacher already has an active lesson."
+          else statusText.text = getString(R.string.status_another_teacher)
         }
       }
       socket?.on(Socket.EVENT_CONNECT) {
         socket?.emit("wb_start", JSONObject().put("conversationId", "classroom"))
       }
-      socket?.on(Socket.EVENT_CONNECT_ERROR) { args ->
-        val msg = (args.firstOrNull() as? Exception)?.message ?: "Socket connection failed"
-        runOnUiThread { stopLesson("Connection error: $msg") }
+      socket?.on(Socket.EVENT_CONNECT_ERROR) { _ ->
+        runOnUiThread { stopLesson(getString(R.string.status_connection_error)) }
       }
       socket?.connect()
-    } catch (error: Exception) { stopLesson("Could not connect. Check the website URL and lesson configuration.") }
+    } catch (error: Exception) { stopLesson(getString(R.string.status_connection_failed)) }
   }
 
   private suspend fun connectLessonMedia() {
@@ -583,14 +629,15 @@ class MainActivity : AppCompatActivity() {
       startForegroundService(Intent(this@MainActivity, LessonService::class.java))
       setupRoomListeners()
       val projection = getSystemService(MediaProjectionManager::class.java)
+      Toast.makeText(this@MainActivity, getString(R.string.screen_share_picker_instruction), Toast.LENGTH_LONG).show()
       screenCapture.launch(projection.createScreenCaptureIntent())
-    } catch (error: Exception) { stopLesson("Could not connect. Check the website URL and lesson configuration.") }
+    } catch (error: Exception) { stopLesson(getString(R.string.status_connection_failed)) }
   }
 
   private fun onScreenShareStopped() {
     sharing = false
-    shareBtn.text = "SHARE"
-    statusText.text = "Screen sharing stopped. Audio is still live."
+    shareBtn.text = getString(R.string.action_share)
+    statusText.text = getString(R.string.status_screen_share_stopped)
   }
 
   private fun toggleScreenShare() {
@@ -598,11 +645,12 @@ class MainActivity : AppCompatActivity() {
       lifecycleScope.launch {
         try { room?.localParticipant?.setScreenShareEnabled(false) } catch (_: Exception) { }
         sharing = false
-        shareBtn.text = "SHARE"
-        statusText.text = "Screen sharing stopped. Audio is still live."
+        shareBtn.text = getString(R.string.action_share)
+        statusText.text = getString(R.string.status_screen_share_stopped)
       }
     } else {
       val projection = getSystemService(MediaProjectionManager::class.java)
+      Toast.makeText(this, getString(R.string.screen_share_picker_instruction), Toast.LENGTH_LONG).show()
       screenCapture.launch(projection.createScreenCaptureIntent())
     }
   }
@@ -610,7 +658,7 @@ class MainActivity : AppCompatActivity() {
   private fun toggleMute() = lifecycleScope.launch {
     val enabled = room?.localParticipant?.isMicrophoneEnabled == true
     room?.localParticipant?.setMicrophoneEnabled(!enabled)
-    muteBtn.text = if (enabled) "UNMUTE" else "MUTE"
+    muteBtn.text = getString(if (enabled) R.string.action_unmute else R.string.action_mute)
     updateParticipants()
   }
 
@@ -641,9 +689,17 @@ class MainActivity : AppCompatActivity() {
 
   private fun baseUrl() = serverUrl.text.toString().trim().removeSuffix("/")
 
+  private fun saveSettings() {
+    preferences.edit()
+      .putString(PREF_SERVER_URL, serverUrl.text.toString().trim())
+      .putString(PREF_CLASS_CODE, classCode.text.toString().trim())
+      .putString(PREF_DISPLAY_NAME, displayName.text.toString().trim())
+      .apply()
+  }
+
   private fun visitorId(): String {
-    val p = getSharedPreferences("teacher", Context.MODE_PRIVATE)
-    return p.getString("visitorId", null) ?: UUID.randomUUID().toString().also { p.edit().putString("visitorId", it).apply() }
+    return preferences.getString("visitorId", null)
+      ?: UUID.randomUUID().toString().also { preferences.edit().putString("visitorId", it).apply() }
   }
 
   private fun request(url: String, body: JSONObject, token: String?): JSONObject {

@@ -26,7 +26,7 @@ class LessonService : Service() {
     super.onCreate()
     val manager = getSystemService(NotificationManager::class.java)
     manager.createNotificationChannel(
-      NotificationChannel(CHANNEL_ID, "Active lesson", NotificationManager.IMPORTANCE_LOW)
+      NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel_active_lesson), NotificationManager.IMPORTANCE_LOW)
     )
   }
 
@@ -39,10 +39,10 @@ class LessonService : Service() {
 
     val notification = NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_screen_share)
-      .setContentTitle("Lesson in progress")
-      .setContentText("Tap to return. Streaming continues while screen is off.")
+      .setContentTitle(getString(R.string.notification_lesson_title))
+      .setContentText(getString(R.string.notification_lesson_text))
       .setOngoing(true)
-      .addAction(0, "End lesson", pendingStop)
+      .addAction(0, getString(R.string.notification_end_lesson), pendingStop)
       .setContentIntent(PendingIntent.getActivity(this, 1,
         Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))

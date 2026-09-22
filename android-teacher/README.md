@@ -1,13 +1,15 @@
 # Classroom Teacher for Android
 
-This private companion lets a teacher share JNotes to the Classroom website without uploading the source PDF. The app sends only the Android screen and microphone through the active LiveKit lesson.
+This private, Arabic-only companion lets a teacher share JNotes to the Classroom website without uploading the source PDF. The app sends only the Android screen and microphone through the active LiveKit lesson. Its release APK is limited to ARM64 devices, including the OPPO Reno7, so it does not bundle unused emulator and 32-bit native libraries.
 
 ## Build a private APK
 
 1. Open `android-teacher` in a current Android Studio installation and let it sync the Gradle project.
 2. Create a release keystore outside this repository. Do not commit it, its password, or a `keystore.properties` file.
-3. Build a signed release APK from Android Studio and install it directly on the teacher's Android 14+ device.
-4. Set the deployed classroom URL, class code, and teacher name in the app. Start the lesson and choose JNotes in Android's system capture picker.
+3. Increase `versionCode` for every release, build a signed release APK from Android Studio, and install it directly on the teacher's Android 14+ device. Keep using the same signing key so Android can update the installed app without uninstalling it.
+4. Set the deployed classroom URL, class code, and teacher name in the app. These values are saved on the device. Start the lesson, choose the single-app sharing option in Android's system capture picker, and then choose JNotes.
+
+From this directory, the signed ARM64 release can also be built with `./gradlew assembleRelease`. The APK is written to `app/build/outputs/apk/release/app-release.apk`.
 
 ## Required server configuration
 

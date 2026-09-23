@@ -257,6 +257,43 @@ test('a connecting client learns who is online and whether a lesson is running',
   await ended;
 });
 
+test('raised hands are kept by the server, shown to late joiners, and only the teacher lowers others', async () => {
+  const conversationId = 'classroom';
+  const teacher = await joinTeacher('Hands teacher');
+  const student = await join('Hand raiser');
+  const classmate = await join('Hands classmate');
+  const [teacherSocket, studentSocket, classmateSocket] = await Promise.all([teacher, student, classmate].map(member => connect(member.token)));
+  await emitWithAck(teacherSocket, 'wb_start', { conversationId });
+
+  const raised = nextEvent(teacherSocket, 'lesson_hands');
+  studentSocket.emit('raise_hand', { conversationId, raised: true });
+  assert.deepEqual((await raised).hands, [{ userId: student.user.id, displayName: 'Hand raiser' }]);
+
+  // Someone joining later sees the hand that is already up.
+  const late = io(baseUrl, { auth: { token: classmate.token }, transports: ['websocket'] });
+  sockets.push(late);
+  assert.deepEqual((await nextEvent(late, 'lesson_state')).lesson.hands.map(hand => hand.userId), [student.user.id]);
+
+  // A classmate cannot lower it; the teacher can.
+  const untouched = quietFor(teacherSocket, 'lesson_hands');
+  classmateSocket.emit('lower_hand', { conversationId, userId: student.user.id });
+  assert.equal(await untouched, true);
+  const lowered = nextEvent(studentSocket, 'lesson_hands');
+  teacherSocket.emit('lower_hand', { conversationId, userId: student.user.id });
+  assert.deepEqual((await lowered).hands, []);
+
+  // A student who leaves the class takes their raised hand with them.
+  const raisedAgain = nextEvent(teacherSocket, 'lesson_hands');
+  studentSocket.emit('raise_hand', { conversationId, raised: true });
+  await raisedAgain;
+  const gone = nextEvent(teacherSocket, 'lesson_hands');
+  studentSocket.disconnect();
+  assert.deepEqual((await gone).hands, []);
+  const ended = nextEvent(classmateSocket, 'wb_ended');
+  teacherSocket.emit('wb_end', { conversationId });
+  await ended;
+});
+
 test('a burst of events is refused with an error instead of disconnecting the student', async () => {
   const conversationId = 'classroom';
   const student = await join('Fast typist');

@@ -10,7 +10,7 @@ import { useI18n } from '../i18n';
 import Avatar from './Avatar.vue';
 
 type Sheet = 'participants' | 'chat' | 'more' | 'info' | 'leave';
-type LessonMessage = { type: 'reaction'; emoji: string } | { type: 'hand'; raised: boolean } | { type: 'lower-hand'; identity: string };
+type LessonMessage = { type: 'reaction'; emoji: string };
 type LessonParticipant = { identity: string; name: string; local: boolean; teacher: boolean; micOn: boolean; speaking: boolean };
 
 const REACTIONS = ['👍', '❤️', '😂', '👏', '🎉', '😮'];
@@ -18,7 +18,10 @@ const AVATAR_COLORS = ['#7c5cc4', '#3a6ea5', '#2f8f6b', '#c0703a', '#b24a6c', '#
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-const props = defineProps<{ conversationId: string; userId: string; isTeacher: boolean; presenter: boolean; presenterId: string }>();
+const props = defineProps<{
+  conversationId: string; userId: string; isTeacher: boolean; presenter: boolean; presenterId: string;
+  hands: { userId: string; displayName: string }[];
+}>();
 const emit = defineEmits<{ leave: []; end: [] }>();
 const { t } = useI18n();
 const overlay = ref<HTMLElement>();
@@ -31,7 +34,9 @@ const audioBlocked = ref(false);
 const soundOn = ref(true);
 const sheet = ref<Sheet | null>(null);
 const participants = ref<LessonParticipant[]>([]);
-const raisedHands = ref(new Set<string>());
+// Raised hands come from the server, which knows who raised them even before LiveKit has told
+// this app about a student who just joined.
+const raisedHands = computed(() => new Set(props.hands.map(hand => hand.userId)));
 const reactions = ref<{ id: number; emoji: string; name: string; drift: number }[]>([]);
 const toast = ref('');
 const unreadChat = ref(0);
@@ -111,9 +116,11 @@ function refreshParticipants() {
     micOn: participant.isMicrophoneEnabled,
     speaking: participant.isSpeaking,
   });
+  // The teacher comes first, then raised hands in the order they went up, then everyone else.
+  const handOrder = (identity: string) => { const index = props.hands.findIndex(hand => hand.userId === identity); return index < 0 ? Infinity : index; };
   const others = [...room.remoteParticipants.values()]
     .map(participant => describe(participant, false))
-    .sort((a, b) => Number(b.teacher) - Number(a.teacher) || a.name.localeCompare(b.name));
+    .sort((a, b) => Number(b.teacher) - Number(a.teacher) || handOrder(a.identity) - handOrder(b.identity) || a.name.localeCompare(b.name));
   participants.value = [describe(room.localParticipant, true), ...others];
 }
 
@@ -133,10 +140,10 @@ function attach(track: RemoteTrack) {
   }
 }
 
-async function send(message: LessonMessage, destinationIdentities?: string[]) {
+async function send(message: LessonMessage) {
   try {
-    await room?.localParticipant.publishData(encoder.encode(JSON.stringify(message)), { reliable: true, topic: 'lesson', destinationIdentities });
-  } catch { /* A dropped reaction or hand update is not worth interrupting the lesson for. */ }
+    await room?.localParticipant.publishData(encoder.encode(JSON.stringify(message)), { reliable: true, topic: 'lesson' });
+  } catch { /* A dropped reaction is not worth interrupting the lesson for. */ }
 }
 function addReaction(emoji: string, name: string) {
   reactions.value = [...reactions.value.slice(-11), { id: ++reactionId, emoji, name, drift: Math.round(Math.random() * 40) }];
@@ -151,35 +158,25 @@ function react(emoji: string) {
   void send({ type: 'reaction', emoji });
   sheet.value = null;
 }
-function setHand(identity: string, raised: boolean) {
-  const next = new Set(raisedHands.value);
-  if (raised) next.add(identity); else next.delete(identity);
-  raisedHands.value = next;
-}
 function toggleHand() {
-  if (!room?.state || room.state !== 'connected') return;
-  const raised = !myHandRaised.value;
-  setHand(myIdentity.value, raised);
-  void send({ type: 'hand', raised });
+  getSocket()?.emit('raise_hand', { conversationId: props.conversationId, raised: !myHandRaised.value });
   sheet.value = null;
 }
 function lowerHandOf(identity: string) {
-  setHand(identity, false);
-  void send({ type: 'lower-hand', identity });
+  getSocket()?.emit('lower_hand', { conversationId: props.conversationId, userId: identity });
 }
+watch(() => props.hands, (next, previous) => {
+  const before = new Set(previous.map(hand => hand.userId));
+  const raised = next.find(hand => !before.has(hand.userId) && hand.userId !== myIdentity.value);
+  if (raised) showToast(t('handRaised', { name: raised.displayName }));
+  refreshParticipants();
+});
 function onData(payload: Uint8Array, sender?: RemoteParticipant, _kind?: unknown, topic?: string) {
-  if (disposed || topic !== 'lesson' || !sender) return;
+  if (disposed || topic !== 'lesson') return;
   let message: LessonMessage;
   try { message = JSON.parse(decoder.decode(payload)); } catch { return; }
-  if (!message || typeof message !== 'object') return;
-  const name = sender.name || sender.identity;
-  if (message.type === 'reaction' && REACTIONS.includes(message.emoji)) addReaction(message.emoji, name);
-  else if (message.type === 'hand') {
-    setHand(sender.identity, Boolean(message.raised));
-    if (message.raised) showToast(t('handRaised', { name }));
-  } else if (message.type === 'lower-hand' && isTeacherParticipant(sender) && typeof message.identity === 'string') {
-    setHand(message.identity, false);
-  }
+  // A reaction can arrive before LiveKit has introduced its sender; it is still shown, just unnamed.
+  if (message?.type === 'reaction' && REACTIONS.includes(message.emoji)) addReaction(message.emoji, sender ? sender.name || sender.identity : '');
 }
 
 function applySound() { detachedAudio.forEach(element => { element.muted = !soundOn.value; }); }
@@ -254,11 +251,6 @@ async function connect() {
     room.on(RoomEvent.AudioPlaybackStatusChanged, () => { if (!disposed) audioBlocked.value = !connectingRoom.canPlaybackAudio; });
     room.on(RoomEvent.Disconnected, () => { if (!disposed && !error.value) status.value = t('lessonDisconnected'); });
     room.on(RoomEvent.DataReceived, onData);
-    room.on(RoomEvent.ParticipantConnected, (participant) => {
-      // Late joiners never saw the original hand message, so repeat it to them.
-      if (myHandRaised.value) void send({ type: 'hand', raised: true }, [participant.identity]);
-    });
-    room.on(RoomEvent.ParticipantDisconnected, (participant) => { setHand(participant.identity, false); });
     for (const event of [
       RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected, RoomEvent.ParticipantNameChanged, RoomEvent.ParticipantAttributesChanged,
       RoomEvent.TrackPublished, RoomEvent.TrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
@@ -280,11 +272,13 @@ async function connect() {
 function cleanup() {
   if (disposed) return;
   disposed = true;
+  if (myHandRaised.value) getSocket()?.emit('raise_hand', { conversationId: props.conversationId, raised: false });
   clearTimeout(hideChromeTimer);
   clearTimeout(toastTimer);
   clearInterval(clockTimer);
   getSocket()?.off('new_message', onChatMessage);
   document.removeEventListener('fullscreenchange', onFullscreenChange);
+  document.removeEventListener('keydown', onKeydown);
   if (document.fullscreenElement === overlay.value) void document.exitFullscreen().catch(() => {});
   room?.disconnect(); room = null;
   detachedAudio.splice(0).forEach(element => element.remove());
@@ -295,6 +289,8 @@ function endForEveryone() { sheet.value = null; emit('end'); }
 onMounted(() => {
   getSocket()?.on('new_message', onChatMessage);
   document.addEventListener('fullscreenchange', onFullscreenChange);
+  // Escape closes an open panel wherever keyboard focus happens to be.
+  document.addEventListener('keydown', onKeydown);
   clockTimer = setInterval(() => { now.value = Date.now(); }, 1000);
   void connect();
 });
@@ -309,7 +305,6 @@ onBeforeUnmount(cleanup);
     :aria-label="t('liveLesson')"
     @pointermove="onPointerMove"
     @focusin="showChrome"
-    @keydown="onKeydown"
   >
     <header class="lesson-header">
       <div class="lesson-title">

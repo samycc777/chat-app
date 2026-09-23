@@ -11,7 +11,8 @@ import ChatView from './components/ChatView.vue';
 import ClassroomHeader from './components/ClassroomHeader.vue';
 import LessonView from './components/LessonView.vue';
 
-type Lesson = { conversationId: string; presenterId: string; startedAt?: number };
+type Hand = { userId: string; displayName: string };
+type Lesson = { conversationId: string; presenterId: string; startedAt?: number; hands?: Hand[] };
 
 const { t } = useI18n();
 const token = ref(sessionStorage.getItem('token'));
@@ -72,6 +73,9 @@ function listen(socket: Socket, user: User) {
     showWhiteboard.value = data.presenterId === user.id;
   });
   socket.on('wb_ended', () => { whiteboard.value = null; showWhiteboard.value = false; });
+  socket.on('lesson_hands', ({ hands }: { hands: Hand[] }) => {
+    if (whiteboard.value) whiteboard.value = { ...whiteboard.value, hands };
+  });
 }
 
 function enterRoom(sessionToken: string, user: User) {
@@ -148,7 +152,7 @@ function endSession(notice = '') {
       <WifiOff :size="15" />{{ connection === 'connecting' ? t('connecting') : t('reconnecting') }}
     </div>
     <ChatView :conversation="conversation" :current-user="currentUser" :online-users="onlineUsers" :is-teacher="isTeacher" :lesson-active="Boolean(whiteboard)" @whiteboard="openWhiteboard" />
-    <LessonView v-if="showWhiteboard && whiteboard" :conversation-id="whiteboard.conversationId" :user-id="currentUser.id" :is-teacher="isTeacher" :presenter="whiteboard.presenterId === currentUser.id" :presenter-id="whiteboard.presenterId" @leave="leaveLesson" @end="endLesson">
+    <LessonView v-if="showWhiteboard && whiteboard" :conversation-id="whiteboard.conversationId" :user-id="currentUser.id" :is-teacher="isTeacher" :presenter="whiteboard.presenterId === currentUser.id" :presenter-id="whiteboard.presenterId" :hands="whiteboard.hands ?? []" @leave="leaveLesson" @end="endLesson">
       <template #chat><ChatView :conversation="conversation" :current-user="currentUser" :online-users="onlineUsers" :is-teacher="isTeacher" /></template>
     </LessonView>
   </main>

@@ -20,13 +20,21 @@ const HARD_EVENT_LIMIT = 600;
 // How long a presenter may be away before a lesson counts as abandoned.
 const abandonGraceMs = () => Number(process.env.LESSON_ABANDON_GRACE_MS) || 90_000;
 
-function lessonPayload(session: LessonSession) {
-  return { conversationId: session.conversationId, presenterId: session.presenterId, startedAt: session.startedAt };
-}
-
 const profileQuery = db.prepare('SELECT id, display_name AS displayName, avatar_color AS avatarColor, role FROM users WHERE id = ?');
 function profile(userId: string) {
   return profileQuery.get(userId) as { id: string; displayName: string; avatarColor: string; role: string } | undefined;
+}
+
+// Raised hands are kept here rather than sent between lesson apps over LiveKit: the server knows
+// who raised a hand, remembers it for anyone who joins later, and its names arrive with the hand,
+// whereas LiveKit drops a message whose sender a receiving app has not been told about yet.
+function handsOf(session: LessonSession) {
+  return [...session.hands.entries()].sort((a, b) => a[1] - b[1])
+    .map(([userId]) => ({ userId, displayName: profile(userId)?.displayName ?? '' }));
+}
+
+function lessonPayload(session: LessonSession) {
+  return { conversationId: session.conversationId, presenterId: session.presenterId, startedAt: session.startedAt, hands: handsOf(session) };
 }
 
 function replySummary(replyTo: string) {
@@ -61,6 +69,10 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     socket.data.role = session.role;
     next();
   });
+
+  function broadcastHands(session: LessonSession) {
+    io.to(`conv:${session.conversationId}`).emit('lesson_hands', { conversationId: session.conversationId, hands: handsOf(session) });
+  }
 
   function endLesson(conversationId: string) {
     const session = endLessonSession(conversationId);
@@ -216,6 +228,22 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       reply({ presenterId: userId });
     });
 
+    socket.on('raise_hand', (data: { conversationId: string; raised: boolean }) => {
+      if (!data || !isMember(data.conversationId) || typeof data.raised !== 'boolean') return;
+      const session = getLessonSession(data.conversationId);
+      if (!session || data.raised === session.hands.has(userId)) return;
+      if (data.raised) session.hands.set(userId, Date.now());
+      else session.hands.delete(userId);
+      broadcastHands(session);
+    });
+
+    // Only the teacher can lower someone else's hand.
+    socket.on('lower_hand', (data: { conversationId: string; userId: string }) => {
+      if (!data || !isTeacher || !isMember(data.conversationId) || typeof data.userId !== 'string') return;
+      const session = getLessonSession(data.conversationId);
+      if (session?.hands.delete(data.userId)) broadcastHands(session);
+    });
+
     socket.on('wb_end', (data: { conversationId: string }) => {
       if (!data || !isMember(data.conversationId)) return;
       const session = getLessonSession(data.conversationId);
@@ -232,6 +260,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
       io.to(`conv:${CLASSROOM_ID}`).emit('presence', { userId, online: false, lastSeen: Date.now() });
       const session = getLessonSession(CLASSROOM_ID);
+      if (session?.hands.delete(userId)) broadcastHands(session);
       if (session?.presenterId === userId) watchPresenter(session);
     });
   });

@@ -8,6 +8,10 @@
   <string name="notification_lesson_title">الدرس جارٍ الآن</string>
   <string name="notification_lesson_text">اضغط للعودة. يستمر البث عند إطفاء الشاشة.</string>
   <string name="notification_end_lesson">إنهاء الدرس</string>
+  <string name="notification_channel_alerts">تنبيهات الطلاب</string>
+  <string name="notification_hand_title">✋ يد مرفوعة: %1$s</string>
+  <string name="notification_hand_text">اضغط للعودة إلى الدرس.</string>
+  <string name="notification_chat_title">رسائل جديدة في الفصل</string>
 
   <string name="setup_title">الفصل الدراسي</string>
   <string name="setup_subtitle">المعلّم</string>
@@ -31,6 +35,17 @@
   <string name="participant_student">طالب</string>
   <string name="participant_host_badge">المعلّم</string>
   <string name="participant_unknown">غير معروف</string>
+  <string name="participants_count">المشاركون (%1$d)</string>
+  <string name="participants_hands"> · ✋ %1$d</string>
+  <string name="action_lower_hand">خفض اليد</string>
+  <string name="hand_raised_toast">✋ يد مرفوعة: %1$s</string>
+  <string name="chat_image">📷 صورة</string>
+  <string name="chat_file">📄 %1$s</string>
+  <string name="chat_delete_prompt">حذف هذه الرسالة للجميع؟</string>
+  <string name="chat_delete">حذف</string>
+  <string name="chat_send_failed">تعذّر إرسال الرسالة.</string>
+  <string name="chat_teacher_badge">المعلّم</string>
+  <string name="cancel">إلغاء</string>
 
   <string name="screen_share_picker_instruction">اختر «مشاركة تطبيق واحد» ثم اختر JNotes.</string>
   <string name="status_screen_share_cancelled">تم إلغاء مشاركة الشاشة.</string>
@@ -46,4 +61,8 @@
   <string name="status_wrong_code">رمز المعلّم غير صحيح.</string>
   <string name="status_not_teacher_code">هذا رمز الطلاب. أدخل رمز المعلّم لبدء الدرس.</string>
   <string name="status_too_many_attempts">محاولات خاطئة كثيرة. انتظر دقيقة ثم حاول مرة أخرى.</string>
+  <string name="status_lesson_ended_elsewhere">انتهى الدرس من جهاز آخر.</string>
+  <string name="status_lesson_interrupted">انقطع الدرس على الخادم. ابدأه من جديد.</string>
+  <string name="status_lesson_disconnected">انقطع اتصال البث. ابدأ الدرس من جديد.</string>
+  <string name="status_reconnecting">جارٍ إعادة الاتصال…</string>
 </resources>

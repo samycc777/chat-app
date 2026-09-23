@@ -6,6 +6,8 @@ export interface LessonSession {
   roomName: string;
   encryptionKey: string;
   startedAt: number;
+  /** Raised hands, by user ID, with the time each was raised. */
+  hands: Map<string, number>;
 }
 
 // Lesson credentials are deliberately process-local. They are never persisted to
@@ -19,6 +21,7 @@ export function startLessonSession(conversationId: string, presenterId: string):
     roomName: `lesson-${randomUUID()}`,
     encryptionKey: randomBytes(32).toString('base64url'),
     startedAt: Date.now(),
+    hands: new Map(),
   };
   sessions.set(conversationId, session);
   return session;

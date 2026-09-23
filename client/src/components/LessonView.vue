@@ -4,7 +4,7 @@ import {
   Ellipsis, Hand, Info, Maximize, MessageSquare, Mic, MicOff, Minimize, Radio, RotateCcw, ScreenShare, ScreenShareOff,
   Users, Volume2, VolumeX, X,
 } from 'lucide-vue-next';
-import { Room, RoomEvent, Track, type Participant, type RemoteParticipant, type RemoteTrack, type TrackPublication } from 'livekit-client';
+import { DisconnectReason, Room, RoomEvent, Track, type Participant, type RemoteParticipant, type RemoteTrack, type TrackPublication } from 'livekit-client';
 import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
@@ -67,6 +67,8 @@ let clockTimer: ReturnType<typeof setInterval> | undefined;
 let reactionId = 0;
 let lastReactionAt = 0;
 let disposed = false;
+let rejoinWhenVisible = false;
+let lastAutoRejoinAt = 0;
 const detachedAudio: HTMLMediaElement[] = [];
 
 const myIdentity = computed(() => props.userId);
@@ -153,6 +155,7 @@ function attach(track: RemoteTrack) {
     const element = track.attach() as HTMLAudioElement;
     element.autoplay = true;
     element.muted = !soundOn.value;
+    element.addEventListener('pause', resumeSound);
     document.body.appendChild(element);
     detachedAudio.push(element);
   }
@@ -198,10 +201,24 @@ function onData(payload: Uint8Array, sender?: RemoteParticipant, _kind?: unknown
 }
 
 function applySound() { detachedAudio.forEach(element => { element.muted = !soundOn.value; }); }
+// A phone pauses the lesson's sound when another app takes the speaker or the browser is put away,
+// and nothing starts it again by itself, so it is restarted whenever the student is back on the page.
+function resumeSound() {
+  if (disposed || document.visibilityState !== 'visible') return;
+  for (const element of detachedAudio) {
+    if (!element.paused) continue;
+    element.play().catch((cause: unknown) => {
+      // Only a browser that wants a tap first is worth the "tap to turn on sound" button.
+      if (!disposed && cause instanceof DOMException && cause.name === 'NotAllowedError') audioBlocked.value = true;
+    });
+  }
+}
 async function toggleSound() {
   if (audioBlocked.value) { await enableAudio(); return; }
   soundOn.value = !soundOn.value;
   applySound();
+  // Tapping the speaker always brings the sound back, even if the phone had paused it.
+  if (soundOn.value) resumeSound();
 }
 async function enableAudio() {
   try { await room?.startAudio(); audioBlocked.value = false; soundOn.value = true; applySound(); } catch { showToast(t('voicePlaybackBlocked')); }
@@ -251,7 +268,11 @@ async function keepScreenOn() {
   if (disposed || document.visibilityState !== 'visible' || !('wakeLock' in navigator)) return;
   try { wakeLock = await navigator.wakeLock.request('screen'); } catch { /* Battery saver, or not supported. */ }
 }
-function onVisibilityChange() { if (document.visibilityState === 'visible') void keepScreenOn(); }
+function onVisibilityChange() {
+  if (disposed || document.visibilityState !== 'visible') return;
+  void keepScreenOn();
+  if (rejoinWhenVisible) { rejoinWhenVisible = false; void rejoin(); } else resumeSound();
+}
 
 function onChatMessage(message: { conversationId: string; senderId: string }) {
   if (message.conversationId === props.conversationId && message.senderId !== myIdentity.value && sheet.value !== 'chat') unreadChat.value++;
@@ -285,7 +306,19 @@ async function connect() {
       status.value = screenShown ? 'live' : 'waiting';
       refreshParticipants();
     });
-    connectingRoom.on(RoomEvent.Disconnected, () => { if (current() && !error.value) status.value = 'disconnected'; });
+    connectingRoom.on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
+      if (!current() || error.value) return;
+      status.value = 'disconnected';
+      // An ended lesson, a teacher removing this student, or the lesson opened on another device
+      // stays closed. Anything else, such as the browser putting the page to sleep while the student
+      // was in another app, is rejoined as soon as the student is looking at the page. A lesson that
+      // keeps dropping straight after a rejoin is left for the student to rejoin by hand.
+      if (reason === DisconnectReason.ROOM_DELETED || reason === DisconnectReason.PARTICIPANT_REMOVED || reason === DisconnectReason.DUPLICATE_IDENTITY) return;
+      if (Date.now() - lastAutoRejoinAt < 15_000) return;
+      lastAutoRejoinAt = Date.now();
+      if (document.visibilityState === 'visible') void rejoin();
+      else rejoinWhenVisible = true;
+    });
     connectingRoom.on(RoomEvent.DataReceived, onData);
     connectingRoom.on(RoomEvent.TrackMuted, (publication: TrackPublication, participant: Participant) => {
       if (current() && participant === connectingRoom.localParticipant && publication.source === Track.Source.Microphone && !mutingMyself) {
@@ -312,6 +345,7 @@ async function connect() {
   }
 }
 async function rejoin() {
+  rejoinWhenVisible = false;
   const previous = room;
   room = null;
   previous?.disconnect();
@@ -332,6 +366,7 @@ function cleanup() {
   document.removeEventListener('fullscreenchange', onFullscreenChange);
   document.removeEventListener('keydown', onKeydown);
   document.removeEventListener('visibilitychange', onVisibilityChange);
+  window.removeEventListener('pageshow', onVisibilityChange);
   void wakeLock?.release().catch(() => {});
   if (document.fullscreenElement === overlay.value) void document.exitFullscreen().catch(() => {});
   room?.disconnect(); room = null;
@@ -346,6 +381,8 @@ onMounted(() => {
   // Escape closes an open panel wherever keyboard focus happens to be.
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('visibilitychange', onVisibilityChange);
+  // A page brought back from the browser's back-forward cache may not report a visibility change.
+  window.addEventListener('pageshow', onVisibilityChange);
   clockTimer = setInterval(() => { now.value = Date.now(); }, 1000);
   void keepScreenOn();
   void connect();

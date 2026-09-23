@@ -8,6 +8,7 @@ import { DisconnectReason, Room, RoomEvent, Track, type Participant, type Remote
 import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
+import { warmVoice } from '../warmVoice';
 import Avatar from './Avatar.vue';
 
 type Sheet = 'participants' | 'chat' | 'more' | 'info' | 'leave';
@@ -250,7 +251,15 @@ async function toggleSound() {
   if (soundOn.value) resumeSound();
 }
 async function enableAudio() {
-  try { await room?.startAudio(); audioBlocked.value = false; soundOn.value = true; applySound(); } catch { showToast(t('voicePlaybackBlocked')); }
+  try { await room?.startAudio(); audioBlocked.value = false; soundOn.value = true; applySound(); } catch { showToast(t('voicePlaybackBlocked')); return; }
+  // The page's audio is running again, so a microphone that was sent as recorded can be warmed again.
+  await warmMicrophone();
+}
+// Every voice sent from the website gets the warmer tone; if that is not possible, it goes out as recorded.
+async function warmMicrophone() {
+  const microphone = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack;
+  if (!microphone || microphone.getProcessor()) return;
+  try { await microphone.setProcessor(warmVoice()); } catch { /* The class still hears the voice, just not warmed. */ }
 }
 // Students join listening, with their microphone off, so a class of open microphones never
 // drowns out the teacher; each student unmutes to speak.
@@ -260,6 +269,7 @@ async function setMicrophone(enabled: boolean) {
     if (enabled && audioBlocked.value) await enableAudio();
     mutingMyself = !enabled;
     await room.localParticipant.setMicrophoneEnabled(enabled);
+    if (enabled) await warmMicrophone();
   } catch {
     showToast(t('micBlocked'));
   } finally {

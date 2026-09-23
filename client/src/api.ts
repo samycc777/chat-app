@@ -5,6 +5,15 @@ export type LiveKitCredentials = { url: string; token: string; roomName: string;
 let cachedUploadLimit: number | null = null;
 let pendingUploadLimit: Promise<number> | null = null;
 
+// Carries the HTTP status so callers can tell an ended session (401) from a network problem.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 function getToken(): string | null {
   return sessionStorage.getItem('token');
 }
@@ -22,7 +31,7 @@ async function request(path: string, options: RequestInit = {}) {
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || `Request failed: ${res.status}`);
+    throw new ApiError(data.error || `Request failed: ${res.status}`, res.status);
   }
   return res.json();
 }

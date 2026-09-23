@@ -5,11 +5,28 @@ import db, { CLASSROOM_ID } from './database';
 import { verifyToken } from './auth';
 import { removeAttachmentIfUnused } from './attachments';
 import { endLessonSession, getLessonSession, LessonSession, startLessonSession } from './lesson';
+import { roomService } from './livekit';
 
 const onlineUsers = new Map<string, Set<string>>();
+const abandonTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+// Typing is throttled by the client, so normal use stays far below the soft limit. Events over it
+// are dropped with an error reply instead of silently cutting a student off; only a client far
+// beyond it is disconnected.
+const EVENT_WINDOW_MS = 60_000;
+const SOFT_EVENT_LIMIT = 120;
+const HARD_EVENT_LIMIT = 600;
+
+// How long a presenter may be away before a lesson counts as abandoned.
+const abandonGraceMs = () => Number(process.env.LESSON_ABANDON_GRACE_MS) || 90_000;
 
 function lessonPayload(session: LessonSession) {
   return { conversationId: session.conversationId, presenterId: session.presenterId, startedAt: session.startedAt };
+}
+
+const profileQuery = db.prepare('SELECT id, display_name AS displayName, avatar_color AS avatarColor, role FROM users WHERE id = ?');
+function profile(userId: string) {
+  return profileQuery.get(userId) as { id: string; displayName: string; avatarColor: string; role: string } | undefined;
 }
 
 function replySummary(replyTo: string) {
@@ -46,42 +63,69 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
   });
 
   function endLesson(conversationId: string) {
-    if (!endLessonSession(conversationId)) return;
+    const session = endLessonSession(conversationId);
+    if (!session) return;
+    clearTimeout(abandonTimers.get(conversationId));
+    abandonTimers.delete(conversationId);
     io.to(`conv:${conversationId}`).emit('wb_ended', { conversationId });
+    // Closing the room disconnects anyone still in it, so nobody stays on the call of an ended lesson.
+    roomService()?.deleteRoom(session.roomName).catch(() => { /* The room may never have been opened. */ });
+  }
+
+  // A presenter who closed the app or lost their connection must not leave a lesson that students
+  // keep waiting in. A teacher's phone can drop the chat connection while its stream carries on,
+  // so LiveKit is asked whether the presenter is still in the room before the lesson is ended.
+  function watchPresenter(session: LessonSession, failedChecks = 0) {
+    clearTimeout(abandonTimers.get(session.conversationId));
+    abandonTimers.set(session.conversationId, setTimeout(async () => {
+      abandonTimers.delete(session.conversationId);
+      const stillCurrent = () => getLessonSession(session.conversationId) === session && !onlineUsers.has(session.presenterId);
+      if (!stillCurrent()) return;
+      let presenting = false;
+      try {
+        const participants = await roomService()?.listParticipants(session.roomName) ?? [];
+        presenting = participants.some(participant => participant.identity === session.presenterId);
+      } catch {
+        if (failedChecks < 5) { watchPresenter(session, failedChecks + 1); return; }
+      }
+      if (!stillCurrent()) return;
+      if (presenting) watchPresenter(session);
+      else endLesson(session.conversationId);
+    }, abandonGraceMs()).unref());
   }
 
   io.on('connection', (socket) => {
     const userId = socket.data.userId as string;
     const isTeacher = socket.data.role === 'teacher';
-    const socketEventTimes: number[] = [];
-    socket.onAny(() => {
+    const me = profile(userId);
+    const eventTimes: number[] = [];
+    socket.use((packet, next) => {
       const now = Date.now();
-      while (socketEventTimes.length && socketEventTimes[0] < now - 60_000) socketEventTimes.shift();
-      socketEventTimes.push(now);
-      if (socketEventTimes.length > 300) socket.disconnect(true);
+      while (eventTimes.length && eventTimes[0] <= now - EVENT_WINDOW_MS) eventTimes.shift();
+      eventTimes.push(now);
+      if (eventTimes.length > HARD_EVENT_LIMIT) { socket.disconnect(true); return; }
+      if (eventTimes.length > SOFT_EVENT_LIMIT) {
+        const ack = packet[packet.length - 1];
+        if (typeof ack === 'function') ack({ error: 'Too many requests' });
+        return;
+      }
+      next();
     });
-    const isMember = (conversationId: unknown) => typeof conversationId === 'string' && Boolean(db.prepare(
+    const isMember = (conversationId: unknown) => conversationId === CLASSROOM_ID && Boolean(db.prepare(
       'SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
-    ).get(conversationId, userId)) && conversationId === CLASSROOM_ID;
+    ).get(conversationId, userId));
 
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId)!.add(socket.id);
-
     db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
+    socket.join(`conv:${CLASSROOM_ID}`);
 
-    const conversations = db.prepare(
-      'SELECT conversation_id FROM conversation_members WHERE user_id = ? AND conversation_id = ?'
-    ).all(userId, CLASSROOM_ID) as any[];
-    for (const c of conversations) {
-      socket.join(`conv:${c.conversation_id}`);
-    }
-
-    broadcastPresence(io, userId, true);
-
-    for (const c of conversations) {
-      const session = getLessonSession(c.conversation_id);
-      if (session) socket.emit('wb_started', lessonPayload(session));
-    }
+    // Everything a client needs to draw the room is sent on every (re)connection, so state missed
+    // while offline, or lost when the server restarted, is replaced rather than left stale.
+    socket.emit('presence_state', { users: [...onlineUsers.keys()].map(profile).filter(Boolean) });
+    const lesson = getLessonSession(CLASSROOM_ID);
+    socket.emit('lesson_state', { lesson: lesson ? lessonPayload(lesson) : null });
+    socket.to(`conv:${CLASSROOM_ID}`).emit('presence', { userId, online: true, user: me });
 
     socket.on('send_message', (data, callback) => {
       if (!data || !isMember(data.conversationId)) return callback?.({ error: 'Not a member' });
@@ -149,34 +193,13 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     socket.on('typing', (data) => {
       if (!data || !isMember(data.conversationId)) return;
       const { conversationId } = data;
-      socket.to(`conv:${conversationId}`).emit('user_typing', { conversationId, userId });
+      socket.to(`conv:${conversationId}`).emit('user_typing', { conversationId, userId, displayName: me?.displayName });
     });
 
     socket.on('stop_typing', (data) => {
       if (!data || !isMember(data.conversationId)) return;
       const { conversationId } = data;
       socket.to(`conv:${conversationId}`).emit('user_stop_typing', { conversationId, userId });
-    });
-
-    socket.on('mark_read', (data) => {
-      if (!data || !isMember(data.conversationId)) return;
-      const { conversationId } = data;
-      const messages = db.prepare(
-        `SELECT id FROM messages WHERE conversation_id = ? AND sender_id != ?
-         AND NOT EXISTS (SELECT 1 FROM message_reads WHERE message_id = messages.id AND user_id = ?)`
-      ).all(conversationId, userId, userId) as any[];
-
-      const insert = db.prepare('INSERT OR IGNORE INTO message_reads (message_id, user_id) VALUES (?, ?)');
-      const markAll = db.transaction(() => {
-        for (const m of messages) insert.run(m.id, userId);
-      });
-      markAll();
-
-      io.to(`conv:${conversationId}`).emit('messages_read', { conversationId, userId });
-    });
-
-    socket.on('join_conversation', (data) => {
-      if (data && isMember(data.conversationId)) socket.join(`conv:${data.conversationId}`);
     });
 
     // Lessons keep their original event names so installed teacher apps stay compatible.
@@ -202,25 +225,16 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
 
     socket.on('disconnect', () => {
       const sockets = onlineUsers.get(userId);
-      if (sockets) {
-        sockets.delete(socket.id);
-        if (sockets.size === 0) {
-          onlineUsers.delete(userId);
-          db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
-          broadcastPresence(io, userId, false);
-        }
-      }
+      if (!sockets) return;
+      sockets.delete(socket.id);
+      if (sockets.size) return;
+      onlineUsers.delete(userId);
+      db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
+      io.to(`conv:${CLASSROOM_ID}`).emit('presence', { userId, online: false, lastSeen: Date.now() });
+      const session = getLessonSession(CLASSROOM_ID);
+      if (session?.presenterId === userId) watchPresenter(session);
     });
   });
-
-  function broadcastPresence(io: Server, userId: string, online: boolean) {
-    const conversations = db.prepare(
-      'SELECT conversation_id FROM conversation_members WHERE user_id = ?'
-    ).all(userId) as any[];
-    for (const c of conversations) {
-      io.to(`conv:${c.conversation_id}`).emit('presence', { userId, online, lastSeen: Date.now() });
-    }
-  }
 
   return io;
 }

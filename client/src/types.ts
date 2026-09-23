@@ -10,6 +10,13 @@ export interface User {
   lastSeen?: number;
 }
 
+export interface OnlineUser {
+  id: string;
+  displayName: string;
+  avatarColor: string;
+  role: Role;
+}
+
 export interface Message {
   id: string;
   conversationId: string;

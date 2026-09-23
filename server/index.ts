@@ -7,7 +7,7 @@ import authRouter from './auth';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
 import { className, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, production, UPLOADS_DIR } from './config';
-import { createLimiter } from './rateLimit';
+import { rateLimit } from './rateLimit';
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -17,19 +17,6 @@ if (production && allowedOrigins.length === 0) throw new Error('ALLOWED_ORIGINS 
 
 const app = express();
 const server = http.createServer(app);
-
-function rateLimit(limit: number, windowMs: number) {
-  const limiter = createLimiter(limit, windowMs);
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const { allowed, retryAfterSeconds } = limiter.hit(req.ip || 'unknown');
-    if (!allowed) {
-      res.setHeader('Retry-After', retryAfterSeconds);
-      res.status(429).json({ error: 'Too many requests' });
-      return;
-    }
-    next();
-  };
-}
 
 app.set('trust proxy', production ? 1 : false);
 app.use(cors({ origin: (origin, callback) => {
@@ -48,9 +35,10 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 // The class name is shown on the join screen, before anyone has entered a code.
 app.get('/api/class', (_req, res) => res.json({ name: className() || null }));
 
-app.use('/api/auth', rateLimit(100, 15 * 60_000), authRouter);
-app.use('/api/upload', rateLimit(10, 60_000));
-app.use('/api', rateLimit(180, 60_000), apiRouter);
+// A whole class may share one school network address, so these per-address limits are generous;
+// signed-in requests are also limited per student in the API router.
+app.use('/api/auth', rateLimit(300, 15 * 60_000), authRouter);
+app.use('/api', rateLimit(1200, 60_000), apiRouter);
 app.use('/uploads', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (res.headersSent) return next(err);

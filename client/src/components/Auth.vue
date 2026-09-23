@@ -4,7 +4,7 @@ import { BookOpenText } from 'lucide-vue-next';
 import { api } from '../api';
 import { useI18n } from '../i18n';
 const emit = defineEmits<{ auth: [result: { token: string; user: any; conversationId: string }]; 'toggle-theme': [] }>();
-defineProps<{ theme: 'light' | 'dark'; className: string }>();
+defineProps<{ theme: 'light' | 'dark'; className: string; notice?: string }>();
 const { t, lang, setLang, translateError } = useI18n();
 
 // iOS Safari before 15.4 has no randomUUID, so build the same version 4 format from random bytes.
@@ -40,6 +40,7 @@ function changeName() { savedName.value = ''; displayName.value = ''; localStora
     <div class="auth-topline"><span class="auth-mark" aria-hidden="true"><BookOpenText :size="22" /></span><div class="auth-utilities"><button class="auth-utility" type="button" :aria-label="t('toggleTheme')" @click="emit('toggle-theme')">{{ theme === 'light' ? '☾' : '☼' }}</button><button class="auth-language-trigger" type="button" @click="setLang(lang === 'en' ? 'ar' : 'en')">{{ lang === 'en' ? 'العربية' : 'English' }}</button></div></div>
     <div class="auth-eyebrow"><bdi>{{ className || t('classroom') }}</bdi></div><h1>{{ t('welcomeClassroom') }}</h1><p>{{ t('enterClassCode') }}</p>
     <div v-if="error" class="auth-error" role="alert">{{ error }}</div>
+    <div v-else-if="notice" class="auth-notice" role="status">{{ notice }}</div>
     <div class="input-group"><label for="class-code">{{ t('classCode') }}</label><input id="class-code" v-model="code" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="64" required autofocus :placeholder="t('classCodePlaceholder')"></div>
     <div v-if="needsName" class="input-group"><label for="display-name">{{ t('displayName') }}</label><input id="display-name" v-model="displayName" :placeholder="t('yourName')" autocomplete="name" maxlength="60" required></div>
     <div v-else class="saved-name">{{ t('joiningAs', { name: savedName }) }} <button type="button" @click="changeName">{{ t('changeName') }}</button></div>

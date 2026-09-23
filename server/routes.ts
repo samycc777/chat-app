@@ -10,9 +10,12 @@ import { MAX_UPLOAD_BYTES, UPLOADS_DIR } from './config';
 import { detectMime } from './attachments';
 import { AccessToken, TrackSource } from 'livekit-server-sdk';
 import { getLessonSession } from './lesson';
+import { liveKitConfig } from './livekit';
+import { rateLimit } from './rateLimit';
 
 const router = Router();
 router.use(authMiddleware);
+router.use(rateLimit<AuthRequest>(300, 60_000, req => req.userId!));
 
 const uploadsDir = UPLOADS_DIR;
 
@@ -37,16 +40,12 @@ router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
   const session = getLessonSession(conversationId);
   if (!session) { res.status(409).json({ error: 'No lesson is active' }); return; }
 
-  const url = process.env.LIVEKIT_URL?.trim();
-  const apiKey = process.env.LIVEKIT_API_KEY?.trim();
-  const apiSecret = process.env.LIVEKIT_API_SECRET;
-  if (!url || !apiKey || !apiSecret) {
-    res.status(503).json({ error: 'Lesson streaming is not configured' }); return;
-  }
+  const config = liveKitConfig();
+  if (!config) { res.status(503).json({ error: 'Lesson streaming is not configured' }); return; }
 
   const isPresenter = session.presenterId === req.userId;
   const user = db.prepare('SELECT display_name FROM users WHERE id = ?').get(req.userId!) as { display_name?: string } | undefined;
-  const token = new AccessToken(apiKey, apiSecret, {
+  const token = new AccessToken(config.apiKey, config.apiSecret, {
     identity: req.userId!,
     name: user?.display_name || 'Classroom member',
     ttl: '1h',
@@ -65,7 +64,7 @@ router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
       : [TrackSource.MICROPHONE],
   });
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ url, token: await token.toJwt(), roomName: session.roomName, encryptionKey: session.encryptionKey, startedAt: session.startedAt });
+  res.json({ url: config.url, token: await token.toJwt(), roomName: session.roomName, encryptionKey: session.encryptionKey, startedAt: session.startedAt });
 });
 
 function memberOf(conversationId: string, userId: string) {
@@ -190,7 +189,7 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   res.json(result);
 });
 
-router.post('/upload', upload.single('file'), (req: AuthRequest, res: Response) => {
+router.post('/upload', rateLimit<AuthRequest>(20, 60_000, req => req.userId!), upload.single('file'), (req: AuthRequest, res: Response) => {
   if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
   const conversationId = req.body.conversationId;
   const storedPath = path.join(uploadsDir, req.file.filename);

@@ -2,6 +2,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +16,39 @@ let appServer;
 let baseUrl;
 let db;
 const sockets = [];
+
+// Stands in for LiveKit's server API: records every call and reports configured room participants.
+const liveKit = { server: null, calls: [], participants: new Map() };
+function startFakeLiveKit() {
+  liveKit.server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      const method = req.url.split('/').pop();
+      const data = body ? JSON.parse(body) : {};
+      liveKit.calls.push({ method, data });
+      res.setHeader('Content-Type', 'application/json');
+      if (method === 'ListParticipants') res.end(JSON.stringify({ participants: liveKit.participants.get(data.room) ?? [] }));
+      else if (method === 'MutePublishedTrack') res.end(JSON.stringify({ track: { sid: data.trackSid, muted: data.muted } }));
+      else res.end('{}');
+    });
+  });
+  return new Promise(resolve => liveKit.server.listen(0, '127.0.0.1', resolve));
+}
+const liveKitCalls = method => liveKit.calls.filter(call => call.method === method);
+async function withoutLiveKit(run) {
+  const saved = Object.fromEntries(['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'].map(key => [key, process.env[key]]));
+  for (const key of Object.keys(saved)) delete process.env[key];
+  try { return await run(); } finally { Object.assign(process.env, saved); }
+}
+async function eventually(check, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await check())) {
+    if (Date.now() > deadline) return false;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  return true;
+}
 
 let visitorSequence = 1;
 function nextVisitorId() {
@@ -54,6 +88,11 @@ before(async () => {
   process.env.NODE_ENV = 'test';
   process.env.DATA_DIR = tempDir;
   process.env.JWT_SECRET = 'test-only-signing-secret-that-is-long-enough';
+  process.env.LESSON_ABANDON_GRACE_MS = '150';
+  await startFakeLiveKit();
+  Object.assign(process.env, {
+    LIVEKIT_URL: `ws://127.0.0.1:${liveKit.server.address().port}`, LIVEKIT_API_KEY: 'test-key', LIVEKIT_API_SECRET: 'test-secret',
+  });
   const serverModule = await import('../server/index.ts');
   appServer = serverModule.server;
   await new Promise(resolve => appServer.listen(0, resolve));
@@ -64,6 +103,7 @@ before(async () => {
 after(async () => {
   for (const socket of sockets) socket.disconnect();
   if (appServer?.listening) await new Promise(resolve => appServer.close(resolve));
+  if (liveKit.server?.listening) await new Promise(resolve => liveKit.server.close(resolve));
   db?.close();
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
 });
@@ -110,15 +150,11 @@ test('classroom members can fetch attachments and unadmitted users cannot', asyn
   assert.equal(bobSession.presenterId, alice.user.id);
   assert.deepEqual(await emitWithAck(bobSocket, 'wb_start', { conversationId }), { error: 'Only the teacher can start a lesson' });
 
-  const previousLiveKit = Object.fromEntries(['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'].map(key => [key, process.env[key]]));
   assert.equal((await fetch(`${baseUrl}/api/livekit/token`)).status, 401);
-  const unavailableMedia = await fetch(`${baseUrl}/api/livekit/token`, {
+  const unavailableMedia = await withoutLiveKit(() => fetch(`${baseUrl}/api/livekit/token`, {
     method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
-  });
+  }));
   assert.equal(unavailableMedia.status, 503);
-  process.env.LIVEKIT_URL = 'wss://test.livekit.cloud';
-  process.env.LIVEKIT_API_KEY = 'test-key';
-  process.env.LIVEKIT_API_SECRET = 'test-secret';
   const presenterMedia = await fetch(`${baseUrl}/api/livekit/token`, {
     method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
   });
@@ -140,7 +176,6 @@ test('classroom members can fetch attachments and unadmitted users cannot', asyn
   const studentClaims = jwt.decode((await studentMedia.json()).token);
   assert.equal(studentClaims.attributes.role, 'student');
   assert.deepEqual(studentClaims.video.canPublishSources, ['microphone']);
-  for (const [key, value] of Object.entries(previousLiveKit)) value === undefined ? delete process.env[key] : process.env[key] = value;
 
   const unauthorizedEnd = quietFor(aliceSocket, 'wb_ended');
   bobSocket.emit('wb_end', { conversationId });
@@ -152,6 +187,7 @@ test('classroom members can fetch attachments and unadmitted users cannot', asyn
     method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
   });
   assert.equal(endedMedia.status, 409);
+  assert.ok(await eventually(() => liveKitCalls('DeleteRoom').some(call => call.data.room === presenterCredentials.roomName)));
 });
 
 test('only the teacher starts lessons, and a second teacher device takes the lesson over', async () => {
@@ -163,9 +199,7 @@ test('only the teacher starts lessons, and a second teacher device takes the les
   const credentials = async token => (await fetch(`${baseUrl}/api/livekit/token`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
   })).json();
-  const previousLiveKit = Object.fromEntries(['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'].map(key => [key, process.env[key]]));
-  Object.assign(process.env, { LIVEKIT_URL: 'wss://test.livekit.cloud', LIVEKIT_API_KEY: 'test-key', LIVEKIT_API_SECRET: 'test-secret' });
-  try {
+  {
     assert.deepEqual(await emitWithAck(studentSocket, 'wb_start', { conversationId }), { error: 'Only the teacher can start a lesson' });
     const studentSawLesson = nextEvent(studentSocket, 'wb_started');
     assert.deepEqual(await emitWithAck(phoneSocket, 'wb_start', { conversationId }), { presenterId: teacherPhone.user.id });
@@ -180,6 +214,7 @@ test('only the teacher starts lessons, and a second teacher device takes the les
     assert.equal((await restarted).presenterId, teacherLaptop.user.id);
     const laptopCredentials = await credentials(teacherLaptop.token);
     assert.notEqual(laptopCredentials.roomName, firstRoom);
+    assert.ok(await eventually(() => liveKitCalls('DeleteRoom').some(call => call.data.room === firstRoom)));
     assert.ok(jwt.decode(laptopCredentials.token).video.canPublishSources.includes('screen_share'));
     assert.deepEqual(jwt.decode((await credentials(teacherPhone.token)).token).video.canPublishSources, ['microphone']);
 
@@ -189,9 +224,86 @@ test('only the teacher starts lessons, and a second teacher device takes the les
     const endedByOtherTeacher = nextEvent(studentSocket, 'wb_ended');
     phoneSocket.emit('wb_end', { conversationId });
     await endedByOtherTeacher;
-  } finally {
-    for (const [key, value] of Object.entries(previousLiveKit)) value === undefined ? delete process.env[key] : process.env[key] = value;
   }
+});
+
+test('a connecting client learns who is online and whether a lesson is running', async () => {
+  const conversationId = 'classroom';
+  const teacher = await joinTeacher('Presence teacher');
+  const student = await join('Presence student');
+  const teacherSocket = io(baseUrl, { auth: { token: teacher.token }, transports: ['websocket'] });
+  sockets.push(teacherSocket);
+  const [teacherPresence, teacherLesson] = await Promise.all([nextEvent(teacherSocket, 'presence_state'), nextEvent(teacherSocket, 'lesson_state')]);
+  assert.ok(teacherPresence.users.some(user => user.id === teacher.user.id && user.role === 'teacher' && user.displayName === 'Presence teacher'));
+  assert.equal(teacherLesson.lesson, null);
+
+  const announced = new Promise(resolve => teacherSocket.on('presence', event => { if (event.userId === student.user.id && event.online) resolve(event); }));
+  const studentSocket = io(baseUrl, { auth: { token: student.token }, transports: ['websocket'] });
+  sockets.push(studentSocket);
+  const studentPresence = await nextEvent(studentSocket, 'presence_state');
+  assert.ok(studentPresence.users.some(user => user.id === teacher.user.id));
+  assert.deepEqual((await announced).user, { id: student.user.id, displayName: 'Presence student', avatarColor: student.user.avatarColor, role: 'student' });
+
+  const typing = nextEvent(teacherSocket, 'user_typing');
+  studentSocket.emit('typing', { conversationId });
+  assert.equal((await typing).displayName, 'Presence student');
+
+  await emitWithAck(teacherSocket, 'wb_start', { conversationId });
+  const lateSocket = io(baseUrl, { auth: { token: student.token }, transports: ['websocket'] });
+  sockets.push(lateSocket);
+  assert.equal((await nextEvent(lateSocket, 'lesson_state')).lesson.presenterId, teacher.user.id);
+  const ended = nextEvent(studentSocket, 'wb_ended');
+  teacherSocket.emit('wb_end', { conversationId });
+  await ended;
+});
+
+test('a burst of events is refused with an error instead of disconnecting the student', async () => {
+  const conversationId = 'classroom';
+  const student = await join('Fast typist');
+  const socket = await connect(student.token);
+  for (let key = 0; key < 130; key++) socket.emit('typing', { conversationId });
+  const refused = await emitWithAck(socket, 'send_message', { conversationId, content: 'still here?', type: 'text' });
+  assert.deepEqual(refused, { error: 'Too many requests' });
+  assert.equal(socket.connected, true);
+});
+
+test('a lesson whose presenter disappears ends, but not while LiveKit still has them', async () => {
+  const conversationId = 'classroom';
+  const teacher = await joinTeacher('Vanishing teacher');
+  const student = await join('Waiting student');
+  const [teacherSocket, studentSocket] = await Promise.all([connect(teacher.token), connect(student.token)]);
+  await emitWithAck(teacherSocket, 'wb_start', { conversationId });
+  const { roomName } = await (await fetch(`${baseUrl}/api/livekit/token`, {
+    method: 'POST', headers: { Authorization: `Bearer ${teacher.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
+  })).json();
+
+  // The teacher's chat connection drops but their stream is still in the LiveKit room.
+  liveKit.participants.set(roomName, [{ identity: teacher.user.id }]);
+  let ended = false;
+  studentSocket.once('wb_ended', () => { ended = true; });
+  teacherSocket.disconnect();
+  assert.ok(await eventually(() => liveKitCalls('ListParticipants').filter(call => call.data.room === roomName).length >= 2));
+  assert.equal(ended, false);
+
+  // Once the stream is gone too, the lesson is ended for everyone and its room is closed.
+  liveKit.participants.delete(roomName);
+  assert.ok(await eventually(() => ended));
+  assert.ok(await eventually(() => liveKitCalls('DeleteRoom').some(call => call.data.room === roomName)));
+});
+
+test('a presenter who reconnects within the grace period keeps the lesson', async () => {
+  const conversationId = 'classroom';
+  const teacher = await joinTeacher('Flaky teacher');
+  const student = await join('Patient student');
+  const [teacherSocket, studentSocket] = await Promise.all([connect(teacher.token), connect(student.token)]);
+  await emitWithAck(teacherSocket, 'wb_start', { conversationId });
+  const stayed = quietFor(studentSocket, 'wb_ended', 500);
+  teacherSocket.disconnect();
+  const back = await connect(teacher.token);
+  assert.equal(await stayed, true);
+  const ended = nextEvent(studentSocket, 'wb_ended');
+  back.emit('wb_end', { conversationId });
+  await ended;
 });
 
 test('the teacher can delete any message, students only their own, and deleted text stays hidden', async () => {

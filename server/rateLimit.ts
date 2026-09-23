@@ -1,3 +1,5 @@
+import type { NextFunction, Request, Response } from 'express';
+
 export interface Limiter {
   /** Counts one request for the key and reports whether it is still within the limit. */
   hit(key: string): { allowed: boolean; retryAfterSeconds: number };
@@ -36,5 +38,15 @@ export function createLimiter(limit: number, windowMs: number): Limiter {
         ? { exhausted: true, retryAfterSeconds: Math.ceil((bucket.resetAt - now) / 1000) }
         : { exhausted: false, retryAfterSeconds: 0 };
     },
+  };
+}
+
+export function rateLimit<R extends Request>(limit: number, windowMs: number, keyOf: (req: R) => string = req => req.ip || 'unknown') {
+  const limiter = createLimiter(limit, windowMs);
+  return (req: R, res: Response, next: NextFunction) => {
+    const { allowed, retryAfterSeconds } = limiter.hit(keyOf(req));
+    if (allowed) return next();
+    res.setHeader('Retry-After', retryAfterSeconds);
+    res.status(429).json({ error: 'Too many requests' });
   };
 }

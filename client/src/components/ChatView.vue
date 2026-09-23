@@ -18,7 +18,7 @@ import {
   Trash2,
   X,
 } from 'lucide-vue-next';
-import type { Conversation, Message, User } from '../types';
+import type { Conversation, Message, OnlineUser, User } from '../types';
 import { api } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
@@ -28,7 +28,7 @@ import Avatar from './Avatar.vue';
 const props = defineProps<{
   conversation: Conversation;
   currentUser: User;
-  onlineUsers: Set<string>;
+  onlineUsers: Map<string, OnlineUser>;
   isTeacher?: boolean;
   lessonActive?: boolean;
 }>();
@@ -40,7 +40,7 @@ const messages = ref<Message[]>([]);
 const input = ref('');
 const replyTo = ref<Message | null>(null);
 const editingMsg = ref<Message | null>(null);
-const typingUsers = ref(new Set<string>());
+const typingUsers = ref(new Map<string, string>());
 const loadingMessages = ref(true);
 const loadError = ref('');
 const feedback = ref<{
@@ -56,27 +56,17 @@ const contextMenu = ref<{ x: number; y: number; message: Message } | null>(null)
 
 let typingTimer: ReturnType<typeof setTimeout> | undefined;
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+let lastTypingSent = 0;
+const typingExpiry = new Map<string, ReturnType<typeof setTimeout>>();
 let atBottom = true;
 
-const typingNames = computed(() =>
-  [...typingUsers.value]
-    .map(
-      (id) =>
-        props.conversation.members.find((member) => member.id === id)
-          ?.displayName,
-    )
-    .filter((name): name is string => Boolean(name)),
-);
+const typingNames = computed(() => [...typingUsers.value.values()].filter(Boolean));
 
 function scrollBottom() {
   if (!atBottom) return;
   nextTick(() =>
     container.value?.lastElementChild?.scrollIntoView({ behavior: 'smooth' }),
   );
-}
-
-function markRead() {
-  getSocket()?.emit('mark_read', { conversationId: props.conversation.id });
 }
 
 async function loadMessages(id: string) {
@@ -87,7 +77,6 @@ async function loadMessages(id: string) {
     messages.value = await api.getMessages(id);
     await nextTick();
     container.value?.lastElementChild?.scrollIntoView();
-    markRead();
   } catch {
     loadError.value = t('messagesLoadFailed');
   } finally {
@@ -95,11 +84,26 @@ async function loadMessages(id: string) {
   }
 }
 
+// Messages sent while this device was offline are fetched once it reconnects.
+async function catchUp() {
+  if (loadingMessages.value) return;
+  if (loadError.value) { void loadMessages(props.conversation.id); return; }
+  try {
+    const latest: Message[] = await api.getMessages(props.conversation.id);
+    const merged = new Map(messages.value.map((message) => [message.id, message]));
+    for (const message of latest) merged.set(message.id, message);
+    messages.value = [...merged.values()].sort((a, b) => a.createdAt - b.createdAt);
+    scrollBottom();
+  } catch {
+    // The next reconnection tries again.
+  }
+}
+
 function onNewMessage(message: Message) {
   if (message.conversationId !== props.conversation.id) return;
+  if (messages.value.some((existing) => existing.id === message.id)) return;
   messages.value.push(message);
   scrollBottom();
-  markRead();
 }
 
 function onEdited(data: { messageId: string; content: string; editedAt: number }) {
@@ -118,19 +122,20 @@ function onDeleted(data: { messageId: string }) {
   );
 }
 
-function onTyping(data: { conversationId: string; userId: string }) {
-  if (
-    data.conversationId === props.conversation.id &&
-    data.userId !== props.currentUser.id
-  ) {
-    typingUsers.value.add(data.userId);
-  }
+// Typing notices repeat every few seconds while someone types, so one that stops arriving
+// (for example because the typist went offline) expires on its own.
+function onTyping(data: { conversationId: string; userId: string; displayName?: string }) {
+  if (data.conversationId !== props.conversation.id || data.userId === props.currentUser.id) return;
+  typingUsers.value.set(data.userId, data.displayName || '');
+  clearTimeout(typingExpiry.get(data.userId));
+  typingExpiry.set(data.userId, setTimeout(() => onStopTyping(data), 6000));
 }
 
 function onStopTyping(data: { conversationId: string; userId: string }) {
-  if (data.conversationId === props.conversation.id) {
-    typingUsers.value.delete(data.userId);
-  }
+  if (data.conversationId !== props.conversation.id) return;
+  clearTimeout(typingExpiry.get(data.userId));
+  typingExpiry.delete(data.userId);
+  typingUsers.value.delete(data.userId);
 }
 
 watch(
@@ -147,6 +152,7 @@ onMounted(() => {
   socket.on('message_deleted', onDeleted);
   socket.on('user_typing', onTyping);
   socket.on('user_stop_typing', onStopTyping);
+  socket.on('connect', catchUp);
 });
 
 onBeforeUnmount(() => {
@@ -156,8 +162,10 @@ onBeforeUnmount(() => {
   socket?.off('message_deleted', onDeleted);
   socket?.off('user_typing', onTyping);
   socket?.off('user_stop_typing', onStopTyping);
-  clearTimeout(typingTimer);
+  socket?.off('connect', catchUp);
+  stopTyping();
   clearTimeout(feedbackTimer);
+  typingExpiry.forEach((timer) => clearTimeout(timer));
 });
 
 function onScroll() {
@@ -169,21 +177,33 @@ function onScroll() {
     100;
 }
 
+function stopTyping() {
+  clearTimeout(typingTimer);
+  if (!lastTypingSent) return;
+  lastTypingSent = 0;
+  getSocket()?.emit('stop_typing', { conversationId: props.conversation.id });
+}
+
+// Classmates hear about typing at most every two seconds, which keeps fast typists far inside
+// the server's event limit.
 function updateInput(value: string) {
   input.value = value;
   const socket = getSocket();
-  socket?.emit('typing', { conversationId: props.conversation.id });
+  if (!socket) return;
+  if (!value.trim()) { stopTyping(); return; }
+  if (Date.now() - lastTypingSent > 2000) {
+    lastTypingSent = Date.now();
+    socket.emit('typing', { conversationId: props.conversation.id });
+  }
   clearTimeout(typingTimer);
-  typingTimer = setTimeout(
-    () => socket?.emit('stop_typing', { conversationId: props.conversation.id }),
-    2000,
-  );
+  typingTimer = setTimeout(stopTyping, 3000);
 }
 
 function send() {
   const content = input.value.trim();
   const socket = getSocket();
-  if ((!content && !editingMsg.value) || !socket) return;
+  if (!content || !socket) return;
+  stopTyping();
 
   if (editingMsg.value) {
     socket.emit('edit_message', { messageId: editingMsg.value.id, content });
@@ -197,15 +217,19 @@ function send() {
     content,
     type: 'text',
     replyTo: replyTo.value?.id || null,
+  }, (response?: { error?: string }) => {
+    if (!response?.error) return;
+    // Give the text back so a refused message does not have to be typed again.
+    if (!input.value) input.value = content;
+    setFeedback({ kind: 'error', message: translateError(response.error) });
   });
-  socket.emit('stop_typing', { conversationId: props.conversation.id });
   input.value = '';
   replyTo.value = null;
   atBottom = true;
 }
 
 function keydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey) {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     send();
   }
@@ -534,6 +558,7 @@ function endsGroup(index: number) {
             :placeholder="t('typeAMessage')"
             :aria-label="t('typeAMessage')"
             rows="1"
+            maxlength="8000"
             dir="auto"
             @input="
               updateInput(($event.target as HTMLTextAreaElement).value);
@@ -549,7 +574,7 @@ function endsGroup(index: number) {
           type="button"
           :title="t('sendMessage')"
           :aria-label="t('sendMessage')"
-          :disabled="!input.trim() && !editingMsg"
+          :disabled="!input.trim()"
           @click="send"
         >
           <Send :size="20" />

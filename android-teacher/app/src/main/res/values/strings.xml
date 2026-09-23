@@ -19,7 +19,7 @@
   <string name="field_teacher_code">رمز المعلّم</string>
   <string name="field_teacher_name">اسمك</string>
   <string name="action_start_lesson">بدء الدرس</string>
-  <string name="setup_instruction">بعد بدء الدرس، اختر «مشاركة تطبيق واحد» ثم اختر JNotes.</string>
+  <string name="setup_instruction">بعد بدء الدرس، وافق على طلب مشاركة الشاشة ثم افتح تطبيق الشرح. سيرى الطلاب شاشة الجهاز كاملة، فأغلق قبل الدرس ما لا تريدهم أن يروه.</string>
 
   <string name="lesson_title">الدرس مباشر</string>
   <string name="action_share">مشاركة الشاشة</string>
@@ -50,9 +50,9 @@
   <string name="chat_teacher_badge">المعلّم</string>
   <string name="cancel">إلغاء</string>
 
-  <string name="screen_share_picker_instruction">اختر «مشاركة تطبيق واحد» ثم اختر JNotes.</string>
+  <string name="screen_share_picker_instruction">وافق على طلب مشاركة الشاشة، ثم افتح تطبيق الشرح.</string>
   <string name="status_screen_share_cancelled">تم إلغاء مشاركة الشاشة.</string>
-  <string name="status_sharing">تتم مشاركة الشاشة الآن. انتقل إلى JNotes وابدأ الشرح.</string>
+  <string name="status_sharing">تتم مشاركة الشاشة الآن. افتح تطبيق الشرح وابدأ الدرس.</string>
   <string name="status_screen_share_failed">تعذّر بدء مشاركة الشاشة.</string>
   <string name="status_lesson_stopped">تم إنهاء الدرس.</string>
   <string name="status_screen_share_stopped">توقفت مشاركة الشاشة، لكن الصوت ما زال مباشرًا.</string>

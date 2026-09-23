@@ -1,6 +1,8 @@
 # Classroom Teacher for Android
 
-This private, Arabic-only companion lets the teacher present a lesson from an Android phone: it shares JNotes (or any one app) and the phone's microphone with the class through the website's LiveKit lesson, while the lesson PDF stays on the phone. Its release APK is limited to ARM64 devices, including the OPPO Reno7, so it does not bundle unused emulator and 32-bit native libraries.
+This private, Arabic-only companion lets the teacher present a lesson from an Android phone or tablet: it shares JNotes (or another app) and the device's microphone with the class through the website's LiveKit lesson, while the lesson PDF stays on the device. The APK runs on Android 8.0 and newer on ARM devices, 64-bit and 32-bit, such as the OPPO Reno7 phone or a Galaxy Tab A (2016) tablet; it leaves out emulator libraries.
+
+On Android 14 and newer the teacher can share a single app, so only JNotes is shown. Older Android versions always share the whole screen: close anything private before the lesson, since students see everything on the screen, including notifications.
 
 ## What the app does during a lesson
 
@@ -15,10 +17,10 @@ This private, Arabic-only companion lets the teacher present a lesson from an An
 
 1. Open `android-teacher` in a current Android Studio installation and let it sync the Gradle project.
 2. Create a release keystore outside this repository. Do not commit it, its password, or a `keystore.properties` file.
-3. Increase `versionCode` for every release, build a signed release APK from Android Studio, and install it directly on the teacher's Android 14+ device. Keep using the same signing key so Android can update the installed app without uninstalling it.
-4. In the app, set the classroom URL, the teacher code, and the teacher name. These are saved on the device. Start the lesson, choose the single-app sharing option in Android's system prompt, and then choose JNotes.
+3. Increase `versionCode` for every release, build a signed release APK from Android Studio, and install it directly on the teacher's Android 8.0+ device. Keep using the same signing key so Android can update the installed app without uninstalling it.
+4. In the app, set the classroom URL, the teacher code, and the teacher name. These are saved on the device. Start the lesson and approve Android's screen-sharing prompt; on Android 14 and newer, choose the single-app option and then JNotes.
 
-From this directory, the signed ARM64 release can also be built with `./gradlew assembleRelease`. The APK is written to `app/build/outputs/apk/release/app-release.apk`.
+From this directory, the signed release can also be built with `./gradlew assembleRelease`. The APK is written to `app/build/outputs/apk/release/app-release.apk`.
 
 ## Required server configuration
 

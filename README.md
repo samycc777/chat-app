@@ -16,7 +16,7 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
 ## Teacher quick start
 
 1. Open the class link and enter the **teacher code** with your name. You get a Teacher badge and a **Start lesson** button.
-2. To teach from your Android phone, open the Classroom Teacher app, enter the class link, the teacher code, and your name, and tap **Start lesson**. Choose "A single app" in Android's screen-sharing prompt, then JNotes, and teach as usual. Raised hands and new questions pop up over JNotes without a sound, so nothing reaches the class through your microphone.
+2. To teach from your Android phone or tablet, open the Classroom Teacher app, enter the teacher code and your name, and tap **Start lesson**. On Android 14 and newer, choose "A single app" in the screen-sharing prompt, then JNotes; older devices share the whole screen, so close anything private first. Then teach as usual. Raised hands and new questions pop up over JNotes without a sound, so nothing reaches the class through your microphone.
 3. To teach from a laptop, start the lesson on the website and use **Share screen** in the lesson controls.
 4. End the lesson with **End lesson** (in the app) or **End → End lesson for everyone** (on the website). If your phone loses its connection, the lesson keeps going for a while; if you do not come back, it ends by itself.
 

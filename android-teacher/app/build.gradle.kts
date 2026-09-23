@@ -18,12 +18,14 @@ android {
 
   defaultConfig {
     applicationId = "org.classroom.teacher"
-    minSdk = 29
+    // Android 8.0 and newer, including older tablets such as the Galaxy Tab A (2016).
+    minSdk = 26
     targetSdk = 35
-    versionCode = 3
-    versionName = "1.2.0"
+    versionCode = 4
+    versionName = "1.2.1"
     ndk {
-      abiFilters += "arm64-v8a"
+      // Some older 64-bit devices, including Samsung's Exynos 7870 tablets, run 32-bit Android.
+      abiFilters += setOf("arm64-v8a", "armeabi-v7a")
     }
   }
 

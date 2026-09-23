@@ -9,14 +9,21 @@ const props = withDefaults(
   }>(),
   { size: "normal", online: false },
 );
-const initials = computed(() =>
-  props.name
-    .split(" ")
-    .map((word) => word[0])
+const ARABIC = /\p{Script=Arabic}/u;
+// Arabic names take one initial, skipping the article "ال" that starts so many of them; other
+// names take the first letter of their first two words. Array.from keeps emoji whole.
+const initials = computed(() => {
+  const words = props.name.trim().split(/\s+/).filter(Boolean);
+  if (ARABIC.test(props.name)) {
+    const word = words.find((part) => part.replace(/^ال/, "").length > 0) ?? "";
+    return Array.from(word.length > 3 ? word.replace(/^ال/, "") : word)[0] ?? "";
+  }
+  return words
+    .slice(0, 2)
+    .map((word) => Array.from(word)[0])
     .join("")
-    .toUpperCase()
-    .slice(0, 2),
-);
+    .toUpperCase();
+});
 </script>
 <template>
   <div class="avatar" :class="size" :style="{ backgroundColor: color }">

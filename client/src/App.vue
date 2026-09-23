@@ -29,6 +29,11 @@ const className = ref('');
 const isTeacher = computed(() => currentUser.value?.role === 'teacher');
 const theme = ref<'light' | 'dark'>(localStorage.getItem('classroom-theme') === 'dark' ? 'dark' : 'light');
 watch(theme, value => { localStorage.setItem('classroom-theme', value); });
+// Message text sizes in pixels; Arabic is set a little larger still, for its vowel marks.
+const TEXT_SIZES = [14, 16, 18, 21];
+const storedTextSize = localStorage.getItem('classroom-text-size');
+const textSize = ref(storedTextSize !== null && TEXT_SIZES[Number(storedTextSize)] ? Number(storedTextSize) : 1);
+watch(textSize, value => { localStorage.setItem('classroom-text-size', String(value)); });
 watchEffect(() => { document.title = className.value || t('classroom'); });
 function toggleTheme() { theme.value = theme.value === 'light' ? 'dark' : 'light'; }
 
@@ -127,7 +132,7 @@ function endSession(notice = '') {
 }
 </script>
 <template>
-  <div class="app-shell" :class="{ 'classroom-open': Boolean(token && currentUser) }" :data-theme="theme">
+  <div class="app-shell" :class="{ 'classroom-open': Boolean(token && currentUser) }" :data-theme="theme" :style="{ '--message-text-size': `${TEXT_SIZES[textSize]}px` }">
   <div v-if="token && !currentUser && (restoring || restoreFailed)" class="boot-state" role="status">
     <template v-if="restoreFailed">
       <span class="boot-icon"><WifiOff :size="24" /></span>
@@ -142,10 +147,12 @@ function endSession(notice = '') {
       :current-user="currentUser"
       :class-name="className"
       :theme="theme"
+      :text-size="textSize"
       :is-teacher="isTeacher"
       :lesson-active="Boolean(whiteboard)"
       @lesson="openWhiteboard"
-      @toggle-theme="toggleTheme"
+      @set-theme="theme = $event"
+      @set-text-size="textSize = $event"
       @leave="endSession()"
     />
     <div v-if="connection !== 'connected'" class="connection-banner" role="status">

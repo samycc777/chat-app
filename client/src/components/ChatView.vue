@@ -22,6 +22,7 @@ import type { Conversation, Message, OnlineUser, User } from '../types';
 import { api } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
+import ArabicKeyboard from './ArabicKeyboard.vue';
 import Attachment from './Attachment.vue';
 import Avatar from './Avatar.vue';
 
@@ -34,7 +35,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ whiteboard: [] }>();
-const { t, dateLocale, translateError } = useI18n();
+const { t, lang, dateLocale, translateError } = useI18n();
 
 const messages = ref<Message[]>([]);
 const input = ref('');
@@ -53,6 +54,18 @@ const container = ref<HTMLElement | null>(null);
 const textarea = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const contextMenu = ref<{ x: number; y: number; message: Message } | null>(null);
+const arabicKeyboard = ref(localStorage.getItem('classroom-arabic-keyboard') === '1');
+watch(arabicKeyboard, (open) => localStorage.setItem('classroom-arabic-keyboard', open ? '1' : '0'));
+
+// Mostly-Arabic messages are set larger, with room between lines for vowel marks; a Latin message
+// quoting a few Arabic words keeps its size and only gets the taller lines.
+const ARABIC_LETTERS = /\p{Script=Arabic}/gu;
+const LATIN_LETTERS = /\p{Script=Latin}/gu;
+function scriptClass(text: string | null | undefined) {
+  const arabic = text?.match(ARABIC_LETTERS)?.length ?? 0;
+  if (!arabic) return '';
+  return arabic >= (text?.match(LATIN_LETTERS)?.length ?? 0) ? 'arabic' : 'mixed';
+}
 
 let typingTimer: ReturnType<typeof setTimeout> | undefined;
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
@@ -177,6 +190,55 @@ function onScroll() {
     100;
 }
 
+function autosize() {
+  const element = textarea.value;
+  if (!element) return;
+  element.style.height = 'auto';
+  element.style.height = `${Math.min(element.scrollHeight, 150)}px`;
+}
+
+// While the on-screen keyboard is open the phone's own keyboard stays closed (inputmode none), and
+// the message box keeps focus so its caret shows where letters will go.
+function toggleKeyboard() {
+  arabicKeyboard.value = !arabicKeyboard.value;
+  nextTick(() => textarea.value?.focus());
+}
+
+function caret() {
+  const element = textarea.value;
+  const focused = element !== null && document.activeElement === element;
+  return {
+    start: focused ? element.selectionStart : input.value.length,
+    end: focused ? element.selectionEnd : input.value.length,
+  };
+}
+
+function placeCaret(position: number) {
+  nextTick(() => {
+    textarea.value?.focus({ preventScroll: true });
+    textarea.value?.setSelectionRange(position, position);
+    autosize();
+  });
+}
+
+function insertText(text: string) {
+  const { start, end } = caret();
+  updateInput(input.value.slice(0, start) + text + input.value.slice(end));
+  placeCaret(start + text.length);
+}
+
+// Removes one character, so a vowel mark can be taken off without deleting its letter.
+function deleteBackward() {
+  let { start, end } = caret();
+  if (start === end) {
+    const previous = Array.from(input.value.slice(0, start)).pop();
+    if (!previous) return;
+    start -= previous.length;
+  }
+  updateInput(input.value.slice(0, start) + input.value.slice(end));
+  placeCaret(start);
+}
+
 function stopTyping() {
   clearTimeout(typingTimer);
   if (!lastTypingSent) return;
@@ -209,6 +271,7 @@ function send() {
     socket.emit('edit_message', { messageId: editingMsg.value.id, content });
     editingMsg.value = null;
     input.value = '';
+    nextTick(autosize);
     return;
   }
 
@@ -226,6 +289,7 @@ function send() {
   input.value = '';
   replyTo.value = null;
   atBottom = true;
+  nextTick(autosize);
 }
 
 function keydown(event: KeyboardEvent) {
@@ -300,6 +364,7 @@ function startEdit(message: Message) {
   replyTo.value = null;
   contextMenu.value = null;
   textarea.value?.focus();
+  nextTick(autosize);
 }
 
 function deleteMessage(message: Message) {
@@ -311,6 +376,7 @@ function cancelComposition() {
   replyTo.value = null;
   editingMsg.value = null;
   input.value = '';
+  nextTick(autosize);
 }
 
 function canEdit(message: Message) {
@@ -340,7 +406,7 @@ function dateLabel(timestamp: number) {
     ? t('today')
     : isYesterday(date)
       ? t('yesterday')
-      : format(date, 'EEEE, MMMM d, yyyy', { locale: dateLocale.value });
+      : format(date, lang.value === 'ar' ? 'EEEE d MMMM yyyy' : 'EEEE, MMMM d, yyyy', { locale: dateLocale.value });
 }
 
 function beginsGroup(index: number) {
@@ -447,7 +513,7 @@ function endsGroup(index: number) {
               <div class="reply-sender">
                 <bdi>{{ message.replyTo.senderDisplayName }}</bdi>
               </div>
-              <div class="reply-text" :class="{ deleted: message.replyTo.deleted }" dir="auto">
+              <div class="reply-text" :class="[scriptClass(message.replyTo.content), { deleted: message.replyTo.deleted }]" dir="auto">
                 {{
                   message.replyTo.deleted
                     ? t('messageDeleted')
@@ -472,7 +538,7 @@ function endsGroup(index: number) {
               :attachment-id="message.attachmentId"
               :name="message.fileName || t('file')"
             />
-            <div v-else class="message-content" dir="auto">{{ message.content }}</div>
+            <div v-else class="message-content" :class="scriptClass(message.content)" dir="auto">{{ message.content }}</div>
 
             <div class="message-meta">
               <span v-if="message.editedAt" class="message-edited">{{ t('edited') }}</span>
@@ -544,6 +610,17 @@ function endsGroup(index: number) {
         >
           <Paperclip :size="20" />
         </button>
+        <button
+          class="icon-btn keyboard-btn"
+          :class="{ active: arabicKeyboard }"
+          type="button"
+          :title="t('arabicKeyboard')"
+          :aria-label="t('arabicKeyboard')"
+          :aria-pressed="arabicKeyboard"
+          @click="toggleKeyboard"
+        >
+          <span aria-hidden="true">ع</span>
+        </button>
         <input
           ref="fileInput"
           type="file"
@@ -560,12 +637,8 @@ function endsGroup(index: number) {
             rows="1"
             maxlength="8000"
             dir="auto"
-            @input="
-              updateInput(($event.target as HTMLTextAreaElement).value);
-              ($event.target as HTMLTextAreaElement).style.height = 'auto';
-              ($event.target as HTMLTextAreaElement).style.height =
-                Math.min(($event.target as HTMLTextAreaElement).scrollHeight, 150) + 'px';
-            "
+            :inputmode="arabicKeyboard ? 'none' : undefined"
+            @input="updateInput(($event.target as HTMLTextAreaElement).value); autosize()"
             @keydown="keydown"
           />
         </div>
@@ -580,6 +653,7 @@ function endsGroup(index: number) {
           <Send :size="20" />
         </button>
       </div>
+      <ArabicKeyboard v-if="arabicKeyboard" @insert="insertText" @backspace="deleteBackward" />
     </div>
 
     <template v-if="contextMenu">

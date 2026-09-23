@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { BookOpenText, Languages, LogOut, MonitorUp, Moon, Radio, Sun } from 'lucide-vue-next';
+import { onBeforeUnmount, ref, watch } from 'vue';
+import { ALargeSmall, BookOpenText, Languages, LogOut, MonitorUp, Moon, Radio, Sun } from 'lucide-vue-next';
 import type { User } from '../types';
 import { useI18n } from '../i18n';
 
@@ -7,17 +8,27 @@ defineProps<{
   currentUser: User;
   className: string;
   theme: 'light' | 'dark';
+  textSize: number;
   isTeacher: boolean;
   lessonActive: boolean;
 }>();
 
 const emit = defineEmits<{
-  'toggle-theme': [];
+  'set-theme': [theme: 'light' | 'dark'];
+  'set-text-size': [size: number];
   leave: [];
   lesson: [];
 }>();
 
 const { t, lang, setLang } = useI18n();
+const SIZE_LABELS = ['textSizeSmall', 'textSizeMedium', 'textSizeLarge', 'textSizeHuge'] as const;
+const displayOpen = ref(false);
+function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') displayOpen.value = false; }
+watch(displayOpen, open => {
+  if (open) document.addEventListener('keydown', closeOnEscape);
+  else document.removeEventListener('keydown', closeOnEscape);
+});
+onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape));
 </script>
 
 <template>
@@ -64,16 +75,50 @@ const { t, lang, setLang } = useI18n();
         <span class="header-action-label">{{ lang === 'en' ? 'العربية' : 'English' }}</span>
       </button>
 
-      <button
-        class="header-action compact-action"
-        type="button"
-        :title="t('toggleTheme')"
-        :aria-label="t('toggleTheme')"
-        @click="emit('toggle-theme')"
-      >
-        <Sun v-if="theme === 'dark'" :size="18" />
-        <Moon v-else :size="18" />
-      </button>
+      <div class="display-menu">
+        <button
+          class="header-action compact-action"
+          :class="{ open: displayOpen }"
+          type="button"
+          :title="t('display')"
+          :aria-label="t('display')"
+          :aria-expanded="displayOpen"
+          @click="displayOpen = !displayOpen"
+        >
+          <ALargeSmall :size="18" />
+        </button>
+        <template v-if="displayOpen">
+          <div class="popover-backdrop" @click="displayOpen = false" />
+          <div class="display-popover" role="dialog" :aria-label="t('display')">
+            <p class="display-label">{{ t('textSize') }}</p>
+            <div class="segmented" role="radiogroup" :aria-label="t('textSize')">
+              <button
+                v-for="(label, index) in SIZE_LABELS"
+                :key="label"
+                type="button"
+                role="radio"
+                :aria-checked="textSize === index"
+                :aria-label="t(label)"
+                :title="t(label)"
+                :class="{ selected: textSize === index }"
+                @click="emit('set-text-size', index)"
+              >
+                <span :style="{ fontSize: `${12 + index * 3}px` }" aria-hidden="true">A</span>
+              </button>
+            </div>
+            <p class="display-preview message-content arabic" lang="ar" dir="rtl">السَّلَامُ عَلَيْكُمْ</p>
+            <p class="display-label">{{ t('theme') }}</p>
+            <div class="segmented" role="radiogroup" :aria-label="t('theme')">
+              <button type="button" role="radio" :aria-checked="theme === 'light'" :class="{ selected: theme === 'light' }" @click="emit('set-theme', 'light')">
+                <Sun :size="15" />{{ t('themeLight') }}
+              </button>
+              <button type="button" role="radio" :aria-checked="theme === 'dark'" :class="{ selected: theme === 'dark' }" @click="emit('set-theme', 'dark')">
+                <Moon :size="15" />{{ t('themeDark') }}
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
 
       <button
         class="header-action compact-action leave-action"

@@ -51,10 +51,11 @@ export function className(): string {
   return (process.env.CLASS_NAME || '').trim().slice(0, 80);
 }
 
+// Four digits are enough for a class that types codes on phones; repeated wrong codes are locked out.
 if (production) {
   const student = classCode('student');
   const teacher = classCode('teacher');
-  if (student.length < 6) throw new Error('CLASS_CODE must be at least 6 characters in production');
-  if (teacher.length < 8) throw new Error('TEACHER_CODE must be at least 8 characters in production');
+  if (student.length < 4) throw new Error('CLASS_CODE must be at least 4 characters in production');
+  if (teacher.length < 4) throw new Error('TEACHER_CODE must be at least 4 characters in production');
   if (student === teacher) throw new Error('CLASS_CODE and TEACHER_CODE must be different');
 }

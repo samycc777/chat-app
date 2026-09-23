@@ -39,8 +39,8 @@ Please do not redeploy the server during a lesson: a restart ends the running le
 | `JWT_SECRET` | production | Random secret of at least 32 characters that signs sessions. |
 | `DATA_DIR` | production | Persistent directory for the SQLite database and uploads (a Railway Volume). |
 | `ALLOWED_ORIGINS` | production | Comma-separated exact origins allowed to use the site, such as `https://your-app.up.railway.app`. |
-| `CLASS_CODE` | production | The students' code, at least 6 characters. |
-| `TEACHER_CODE` | production | The teacher's private code, at least 8 characters, different from the class code. |
+| `CLASS_CODE` | production | The students' code, at least 4 characters. |
+| `TEACHER_CODE` | production | The teacher's private code, at least 4 characters, different from the class code. Anyone who enters it gets the teacher's controls. |
 | `CLASS_NAME` | no | Name shown on the join screen, in the header, in the browser tab, and under the home-screen icon, for example `العربية — المستوى الأول`. |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | for lessons | Credentials of a LiveKit Cloud project. Without them the chat works but lessons cannot start. |
 | `MAX_UPLOAD_BYTES` | no | Largest upload in bytes; 100 MB by default. |

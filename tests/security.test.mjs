@@ -1,5 +1,6 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -537,6 +538,17 @@ test('changing the class code signs out students who have not entered the new co
   } finally {
     previous === undefined ? delete process.env.CLASS_CODE : process.env.CLASS_CODE = previous;
   }
+});
+
+test('production starts with four-digit codes and refuses missing, shorter, or identical ones', () => {
+  const loadConfig = codes => spawnSync(process.execPath, ['--import', 'tsx', '--eval', "require('./server/config.ts')"], {
+    cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'production', DATA_DIR: tempDir, ...codes },
+  });
+  assert.equal(loadConfig({ CLASS_CODE: '0000', TEACHER_CODE: '1111' }).status, 0);
+  assert.match(loadConfig({ CLASS_CODE: '', TEACHER_CODE: '1111' }).stderr, /CLASS_CODE is required in production/);
+  assert.match(loadConfig({ CLASS_CODE: '000', TEACHER_CODE: '1111' }).stderr, /CLASS_CODE must be at least 4 characters/);
+  assert.match(loadConfig({ CLASS_CODE: '0000', TEACHER_CODE: '111' }).stderr, /TEACHER_CODE must be at least 4 characters/);
+  assert.match(loadConfig({ CLASS_CODE: '0000', TEACHER_CODE: ' 0000' }).stderr, /must be different/);
 });
 
 test('class code is required and the display name is restored from browser identity', async () => {

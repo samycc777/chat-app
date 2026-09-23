@@ -2132,9 +2132,15 @@ button.lesson-person-mute:hover {
   box-shadow: 0 0 0 2px #1d2421, 0 0 0 4px #59cda0;
 }
 
-.lesson-person-name {
+.lesson-person-main {
   min-width: 0;
   flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.lesson-person-name {
+  min-width: 0;
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -2151,6 +2157,25 @@ button.lesson-person-mute:hover {
 .lesson-person-name small {
   color: rgba(237, 243, 239, 0.6);
   font-size: 13px;
+}
+
+.lesson-person-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lesson-person-volume svg {
+  flex: none;
+  color: #a9b6af;
+}
+
+.lesson-person-volume input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  margin: 0;
+  accent-color: #59cda0;
 }
 
 .lesson-person-hand {

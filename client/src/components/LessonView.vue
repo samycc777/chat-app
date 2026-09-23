@@ -4,7 +4,9 @@ import {
   Ellipsis, Hand, Info, Maximize, MessageSquare, Mic, MicOff, Minimize, Radio, RotateCcw, ScreenShare, ScreenShareOff,
   Users, Volume1, Volume2, VolumeX, X,
 } from 'lucide-vue-next';
-import { DisconnectReason, Room, RoomEvent, Track, type Participant, type RemoteParticipant, type RemoteTrack, type TrackPublication } from 'livekit-client';
+import {
+  DisconnectReason, Room, RoomEvent, Track, type Participant, type RemoteAudioTrack, type RemoteParticipant, type RemoteTrack, type TrackPublication,
+} from 'livekit-client';
 import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
@@ -18,13 +20,18 @@ type LessonParticipant = { identity: string; name: string; local: boolean; teach
 
 const REACTIONS = ['👍', '❤️', '😂', '👏', '🎉', '😮'];
 const VOLUME_KEY = 'lessonVolume';
-// The slider stops short of silence, so a lesson never starts inaudible because of last week's
+const PERSON_VOLUMES_KEY = 'lessonVolumes';
+// The sliders stop short of silence, so a lesson never starts inaudible because of last week's
 // setting; the speaker button is there for turning the sound off.
 const MIN_VOLUME = 0.1;
-// iPhones and iPads ignore a page's volume, so there the phone's own buttons are the only control.
 const volumeAdjustable = (() => {
   try { const probe = new Audio(); probe.volume = 0.5; return probe.volume === 0.5; } catch { return false; }
 })();
+// iPhones and iPads ignore a page's volume, so there the voices are played through the browser's
+// audio mixer instead. Everywhere else they stay in plain audio elements: Chrome's echo cancellation
+// does not hear the mixer, and a student on speaker would send the teacher's voice back to the class.
+const webAudioVolume = !volumeAdjustable && typeof AudioContext === 'function';
+const canAdjustVolume = volumeAdjustable || webAudioVolume;
 const AVATAR_COLORS = ['#7c5cc4', '#3a6ea5', '#2f8f6b', '#c0703a', '#b24a6c', '#5a7d2a'];
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -44,6 +51,7 @@ const sharingScreen = ref(false);
 const audioBlocked = ref(false);
 const soundOn = ref(true);
 const volume = ref(savedVolume());
+const personVolumes = ref(savedPersonVolumes());
 const sheet = ref<Sheet | null>(null);
 const participants = ref<LessonParticipant[]>([]);
 // Raised hands come from the server, which knows who raised them even before LiveKit has told
@@ -69,6 +77,9 @@ const statusText = computed(() => ({
   disconnected: t('lessonDisconnected'),
 })[status.value]);
 let room: Room | null = null;
+// Only on iPhones and iPads. The lesson keeps it across rejoins and resumes it itself, because
+// LiveKit only resumes a suspended mixer and an iPhone back from another app can leave it interrupted.
+let audioContext: AudioContext | undefined;
 let wakeLock: WakeLockSentinel | null = null;
 let mutingMyself = false;
 let hideChromeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -154,7 +165,7 @@ function refreshParticipants() {
   if (props.presenter && (status.value === 'waiting' || status.value === 'sharing')) status.value = sharingScreen.value ? 'sharing' : 'waiting';
 }
 
-function attach(track: RemoteTrack) {
+function attach(track: RemoteTrack, participant: RemoteParticipant) {
   if (disposed) return;
   if (track.kind === Track.Kind.Video && track.source === Track.Source.ScreenShare && video.value) {
     track.attach(video.value);
@@ -167,11 +178,10 @@ function attach(track: RemoteTrack) {
     if (track.attachedElements.length) return;
     const element = track.attach() as HTMLAudioElement;
     element.autoplay = true;
-    element.muted = !soundOn.value;
-    if (volumeAdjustable) element.volume = volume.value;
     element.addEventListener('pause', resumeSound);
     document.body.appendChild(element);
     detachedAudio.push(element);
+    applyVoice(track as RemoteAudioTrack, participant.identity);
   }
 }
 
@@ -214,27 +224,70 @@ function onData(payload: Uint8Array, sender?: RemoteParticipant, _kind?: unknown
   if (message?.type === 'reaction' && REACTIONS.includes(message.emoji)) addReaction(message.emoji, sender ? sender.name || sender.identity : '');
 }
 
-function applySound() {
-  detachedAudio.forEach(element => {
-    element.muted = !soundOn.value;
-    if (volumeAdjustable) element.volume = volume.value;
-  });
+// Each voice plays at the lesson's volume times the volume chosen for that person.
+function applyVoice(track: RemoteAudioTrack, identity: string) {
+  const level = volume.value * levelOf(identity);
+  // The mixer plays the voice while LiveKit keeps its element muted; unmuting it would play it twice.
+  if (webAudioVolume) { track.setVolume(soundOn.value ? level : 0); return; }
+  track.attachedElements.forEach(element => { element.muted = !soundOn.value; });
+  track.setVolume(level);
 }
+function applySound() {
+  for (const participant of room?.remoteParticipants.values() ?? []) {
+    for (const publication of participant.audioTrackPublications.values()) {
+      if (publication.audioTrack) applyVoice(publication.audioTrack as RemoteAudioTrack, participant.identity);
+    }
+  }
+}
+const clampVolume = (level: number) => Math.min(1, Math.max(MIN_VOLUME, level));
 // Remembered on this device only, so each student keeps the level that suits their speaker.
 function savedVolume() {
   try {
     const saved = Number(localStorage.getItem(VOLUME_KEY) ?? NaN);
-    return Number.isFinite(saved) ? Math.min(1, Math.max(MIN_VOLUME, saved)) : 1;
+    return Number.isFinite(saved) ? clampVolume(saved) : 1;
   } catch { return 1; }
 }
 watch(volume, level => {
   applySound();
   try { localStorage.setItem(VOLUME_KEY, String(level)); } catch { /* Private browsing: the level lasts for this lesson. */ }
 });
+// Each person's level is remembered the same way, so a teacher turned down stays down next lesson.
+function savedPersonVolumes() {
+  const levels: Record<string, number> = {};
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(PERSON_VOLUMES_KEY) ?? '{}');
+    if (saved && typeof saved === 'object') {
+      for (const [identity, level] of Object.entries(saved)) if (Number.isFinite(level)) levels[identity] = clampVolume(level);
+    }
+  } catch { /* Nothing saved yet, or private browsing: everyone starts at full volume. */ }
+  return levels;
+}
+function levelOf(identity: string) { return personVolumes.value[identity] ?? 1; }
+function setPersonVolume(identity: string, level: number) {
+  personVolumes.value = { ...personVolumes.value, [identity]: clampVolume(level) };
+  applySound();
+  try { localStorage.setItem(PERSON_VOLUMES_KEY, JSON.stringify(personVolumes.value)); } catch { /* Lasts for this lesson. */ }
+}
+// On an iPhone the mixer is the sound, so the "tap to turn on sound" button follows whether it is running.
+function onMixerStateChange() {
+  if (!disposed && audioContext) audioBlocked.value = audioContext.state !== 'running';
+}
+// Made as the lesson opens, still within the student's tap on "Join lesson", which is when an
+// iPhone is most likely to let it start without asking for another tap.
+function createMixer() {
+  if (!webAudioVolume) return;
+  try { audioContext = new AudioContext({ latencyHint: 'interactive' }); } catch { return; }
+  audioContext.addEventListener('statechange', onMixerStateChange);
+  resumeMixer();
+}
+function resumeMixer() {
+  if (audioContext && audioContext.state !== 'running' && audioContext.state !== 'closed') void audioContext.resume().catch(() => {});
+}
 // A phone pauses the lesson's sound when another app takes the speaker or the browser is put away,
 // and nothing starts it again by itself, so it is restarted whenever the student is back on the page.
 function resumeSound() {
   if (disposed || document.visibilityState !== 'visible') return;
+  resumeMixer();
   for (const element of detachedAudio) {
     if (!element.paused) continue;
     element.play().catch((cause: unknown) => {
@@ -251,6 +304,8 @@ async function toggleSound() {
   if (soundOn.value) resumeSound();
 }
 async function enableAudio() {
+  // An iPhone only lets the mixer start from within the tap itself.
+  resumeMixer();
   try { await room?.startAudio(); audioBlocked.value = false; soundOn.value = true; applySound(); } catch { showToast(t('voicePlaybackBlocked')); return; }
   // The page's audio is running again, so a microphone that was sent as recorded can be warmed again.
   await warmMicrophone();
@@ -322,11 +377,11 @@ async function connect() {
     const credentials = await api.getLiveKitToken(props.conversationId);
     if (disposed) return;
     startedAt.value = credentials.startedAt;
-    const connectingRoom = new Room();
+    const connectingRoom = new Room(audioContext ? { webAudioMix: { audioContext } } : undefined);
     room = connectingRoom;
     // Events from a room that a rejoin has replaced are ignored.
     const current = () => !disposed && room === connectingRoom;
-    connectingRoom.on(RoomEvent.TrackSubscribed, (track) => { if (current()) attach(track as RemoteTrack); });
+    connectingRoom.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => { if (current()) attach(track, participant); });
     connectingRoom.on(RoomEvent.TrackUnsubscribed, (track) => {
       const elements = track.detach();
       for (const element of elements) {
@@ -373,7 +428,7 @@ async function connect() {
     if (!current()) { connectingRoom.disconnect(); return; }
     status.value = 'waiting';
     for (const participant of connectingRoom.remoteParticipants.values()) {
-      for (const publication of participant.trackPublications.values()) if (publication.track) attach(publication.track);
+      for (const publication of participant.trackPublications.values()) if (publication.track) attach(publication.track, participant);
     }
     refreshParticipants();
     // The teacher is heard as soon as the lesson opens; students start muted.
@@ -410,6 +465,9 @@ function cleanup() {
   if (document.fullscreenElement === overlay.value) void document.exitFullscreen().catch(() => {});
   room?.disconnect(); room = null;
   detachedAudio.splice(0).forEach(element => element.remove());
+  audioContext?.removeEventListener('statechange', onMixerStateChange);
+  void audioContext?.close().catch(() => {});
+  audioContext = undefined;
 }
 function leave() { cleanup(); emit('leave'); }
 function finish() { if (props.presenter) sheet.value = 'leave'; else leave(); }
@@ -424,6 +482,7 @@ onMounted(() => {
   window.addEventListener('pageshow', onVisibilityChange);
   clockTimer = setInterval(() => { now.value = Date.now(); }, 1000);
   void keepScreenOn();
+  createMixer();
   void connect();
 });
 onBeforeUnmount(cleanup);
@@ -560,11 +619,26 @@ onBeforeUnmount(cleanup);
         <ul class="lesson-people">
           <li v-for="person in participants" :key="person.identity" :class="{ speaking: person.speaking }">
             <Avatar :name="person.name" :color="avatarColor(person.identity)" />
-            <span class="lesson-person-name">
-              <bdi>{{ person.name }}</bdi>
-              <small v-if="person.local">{{ t('youLabel') }}</small>
-              <small v-else-if="person.teacher">{{ t('hostLabel') }}</small>
-            </span>
+            <div class="lesson-person-main">
+              <span class="lesson-person-name">
+                <bdi>{{ person.name }}</bdi>
+                <small v-if="person.local">{{ t('youLabel') }}</small>
+                <small v-else-if="person.teacher">{{ t('hostLabel') }}</small>
+              </span>
+              <!-- Only on this device: turning someone down here changes nothing for the rest of the class. -->
+              <label v-if="canAdjustVolume && !person.local" class="lesson-person-volume">
+                <Volume1 :size="16" aria-hidden="true" />
+                <input
+                  type="range"
+                  :min="MIN_VOLUME"
+                  max="1"
+                  step="0.05"
+                  :value="levelOf(person.identity)"
+                  :aria-label="t('personVolume', { name: person.name })"
+                  @input="setPersonVolume(person.identity, ($event.target as HTMLInputElement).valueAsNumber)"
+                >
+              </label>
+            </div>
             <button
               v-if="raisedHands.has(person.identity) && (isTeacher || person.local)"
               class="lesson-person-hand"
@@ -606,7 +680,7 @@ onBeforeUnmount(cleanup);
           </button>
           <button v-for="emoji in REACTIONS" :key="emoji" class="lesson-emoji-btn" type="button" :aria-label="`${t('reactions')} ${emoji}`" @click="react(emoji)">{{ emoji }}</button>
         </div>
-        <label v-if="volumeAdjustable" class="lesson-volume">
+        <label v-if="canAdjustVolume" class="lesson-volume">
           <Volume1 :size="20" aria-hidden="true" />
           <span>{{ t('lessonVolume') }}</span>
           <input v-model.number="volume" type="range" :min="MIN_VOLUME" max="1" step="0.05">

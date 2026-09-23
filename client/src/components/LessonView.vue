@@ -152,6 +152,9 @@ function attach(track: RemoteTrack) {
     return;
   }
   if (track.kind === Track.Kind.Audio) {
+    // connect() attaches the voices that were already there, which LiveKit may have handed over
+    // through TrackSubscribed as well; a second element would play the same voice twice, distorted.
+    if (track.attachedElements.length) return;
     const element = track.attach() as HTMLAudioElement;
     element.autoplay = true;
     element.muted = !soundOn.value;

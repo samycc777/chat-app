@@ -9,6 +9,7 @@ On Android 14 and newer the teacher can share a single app, so only JNotes is sh
 - Signs in with the **teacher code** (not the students' class code) and starts the lesson; a student's code is refused with an explanation.
 - Shares the screen of the app chosen in Android's prompt, and the microphone, which can be muted from the app.
 - Shows the participants, with raised hands first. Tap ✋ to lower a hand, tap a student's 🎤 to mute them, or use "Mute everyone".
+- Makes a quiet student louder: tap the 🔈 عادي button in their row once for louder (🔉 أعلى) and again for loudest (🔊 أعلى جدًا); a third tap goes back to normal. The app remembers the choice for that student in later lessons.
 - Shows the class chat, including recent history, and lets the teacher reply. A long press deletes a message for everyone.
 - While the teacher is in JNotes, a raised hand or a new chat message appears as a silent pop-up notification, so no sound reaches the class through the microphone.
 - Keeps running with the screen locked, survives rotation, and stops cleanly if the lesson is ended from the website or lost in a server restart.
@@ -31,6 +32,7 @@ The website deployment must have `TEACHER_CODE` set, and `LIVEKIT_URL`, `LIVEKIT
 - Start a lesson with the teacher code; confirm that a student's code is refused.
 - Verify JNotes is selectable and renders normally in the shared stream, and that students hear the teacher.
 - From a student's phone, raise a hand and send a chat message while the teacher is in JNotes: both should pop up silently. Lower the hand and mute the student from the app.
+- Have a student talk quietly and tap their 🔈 button through all three levels: each should be clearly louder, with no crackle at the loudest. Start a new lesson and check that the level was remembered.
 - Allow notifications when Android asks; without them the pop-ups cannot appear.
 - Confirm the persistent Android sharing notification is visible and stops capture correctly.
 - Test microphone mute, rotation, Wi-Fi/mobile-network changes, screen lock, and an iPhone Safari viewer.

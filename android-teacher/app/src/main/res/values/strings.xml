@@ -41,6 +41,10 @@
   <string name="action_mute_all">كتم الجميع</string>
   <string name="action_mute_student">كتم %1$s</string>
   <string name="mute_failed">تعذّر الكتم. حاول مرة أخرى.</string>
+  <string name="volume_normal">🔈 عادي</string>
+  <string name="volume_louder">🔉 أعلى</string>
+  <string name="volume_loudest">🔊 أعلى جدًا</string>
+  <string name="action_volume_student">تغيير مستوى صوت %1$s</string>
   <string name="hand_raised_toast">✋ يد مرفوعة: %1$s</string>
   <string name="chat_image">📷 صورة</string>
   <string name="chat_file">📄 %1$s</string>

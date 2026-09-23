@@ -29,6 +29,8 @@ import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
+import io.livekit.android.room.participant.RemoteParticipant
+import io.livekit.android.room.track.RemoteAudioTrack
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
 import io.socket.client.Ack
 import io.socket.client.IO
@@ -61,12 +63,16 @@ class MainActivity : AppCompatActivity() {
     private const val PREF_SERVER_URL = "serverUrl"
     private const val PREF_CLASS_CODE = "classCode"
     private const val PREF_DISPLAY_NAME = "displayName"
+    private const val PREF_VOLUME_PREFIX = "volume:"
+    // Normal, louder and loudest. WebRTC plays a remote voice at up to ten times its volume, so a
+    // quiet student can be made louder than the tablet's own volume allows.
+    private val VOLUME_GAINS = doubleArrayOf(1.0, 2.5, 5.0)
     private const val ALERTS_CHANNEL_ID = "lesson_alerts"
     private const val HAND_NOTIFICATION_ID = 301
     private const val CHAT_NOTIFICATION_ID = 302
   }
 
-  private data class ParticipantRow(val identity: String?, val name: String, val micOn: Boolean, val teacher: Boolean, val handRaised: Boolean)
+  private data class ParticipantRow(val identity: String?, val name: String, val micOn: Boolean, val teacher: Boolean, val handRaised: Boolean, val volumeLevel: Int)
 
   private lateinit var setupLayout: LinearLayout
   private lateinit var serverUrl: EditText
@@ -533,9 +539,10 @@ class MainActivity : AppCompatActivity() {
         participant.isMicrophoneEnabled,
         participant.attributes["role"] == "teacher",
         identity != null && identity in raisedHands,
+        identity?.let(::volumeLevel) ?: 0,
       )
     }.sortedWith(compareBy<ParticipantRow>({ row -> handOrder.indexOf(row.identity).let { if (it < 0) Int.MAX_VALUE else it } }, { it.name }))
-    val rows = listOf(ParticipantRow(null, getString(R.string.participant_teacher), room?.localParticipant?.isMicrophoneEnabled == true, true, false)) + students
+    val rows = listOf(ParticipantRow(null, getString(R.string.participant_teacher), room?.localParticipant?.isMicrophoneEnabled == true, true, false, 0)) + students
     val shown = rows.joinToString("|")
     if (!force && shown == participantsShown) return
     participantsShown = shown
@@ -586,6 +593,26 @@ class MainActivity : AppCompatActivity() {
       })
     }
 
+    // The teacher taps a quiet student's speaker to make them louder; a third tap goes back to normal.
+    if (!participant.teacher && participant.identity != null) {
+      val volume = TextView(this).apply {
+        text = getString(when (participant.volumeLevel) {
+          1 -> R.string.volume_louder
+          2 -> R.string.volume_loudest
+          else -> R.string.volume_normal
+        })
+        setTextColor(Color.parseColor(if (participant.volumeLevel == 0) "#8b949e" else "#e6edf3"))
+        textSize = 12f
+        background = roundRect(if (participant.volumeLevel == 0) "#1d3a26" else "#2d5a3a", 8)
+        setPadding(dp(8), dp(3), dp(8), dp(3))
+        contentDescription = getString(R.string.action_volume_student, participant.name)
+        setOnClickListener { cycleVolume(participant.identity) }
+      }
+      row.addView(volume, LinearLayout.LayoutParams(-2, -2).apply {
+        marginStart = dp(8); marginEnd = dp(8)
+      })
+    }
+
     val micIcon = TextView(this).apply {
       text = if (participant.micOn) "🎤" else "🔇"
       textSize = 14f
@@ -617,6 +644,20 @@ class MainActivity : AppCompatActivity() {
     participantList.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
       bottomMargin = dp(6)
     })
+  }
+
+  private fun volumeLevel(identity: String): Int = preferences.getInt(PREF_VOLUME_PREFIX + identity, 0).coerceIn(VOLUME_GAINS.indices)
+
+  // Remembered on this device, so a student the teacher turned up stays louder in later lessons.
+  private fun cycleVolume(identity: String) {
+    preferences.edit().putInt(PREF_VOLUME_PREFIX + identity, (volumeLevel(identity) + 1) % VOLUME_GAINS.size).apply()
+    room?.remoteParticipants?.values?.firstOrNull { it.identity?.value == identity }?.let(::applyVolume)
+    updateParticipants()
+  }
+
+  private fun applyVolume(participant: RemoteParticipant) {
+    val gain = VOLUME_GAINS[participant.identity?.value?.let(::volumeLevel) ?: 0]
+    participant.audioTrackPublications.forEach { (_, track) -> (track as? RemoteAudioTrack)?.setVolume(gain) }
   }
 
   private fun createAlertsChannel() {
@@ -709,6 +750,8 @@ class MainActivity : AppCompatActivity() {
       activeRoom.events.collect { event ->
         when (event) {
           is RoomEvent.DataReceived -> Unit
+          // A student's voice arrives anew whenever they or the teacher rejoin, and keeps its boost.
+          is RoomEvent.TrackSubscribed -> { applyVolume(event.participant); updateParticipants() }
           is RoomEvent.Reconnecting -> statusText.text = getString(R.string.status_reconnecting)
           is RoomEvent.Reconnected -> statusText.text = getString(if (sharing) R.string.status_sharing else R.string.status_screen_share_stopped)
           // LiveKit gives up only after its own reconnection attempts fail, or when the lesson's room is closed.

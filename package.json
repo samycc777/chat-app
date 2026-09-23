@@ -1,8 +1,8 @@
 {
   "name": "chat-app",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Online room for one class: chat, shared worksheets, and live lessons.",
+  "main": "dist/index.js",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "server": "nodemon --watch server --exec tsx server/index.ts",
@@ -17,8 +17,8 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "bcryptjs": "^3.0.3",
     "better-sqlite3": "^13.0.3",
+    "compression": "^1.8.2",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
@@ -28,8 +28,8 @@
     "uuid": "^14.0.2"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^9.6.0",
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",

@@ -4,6 +4,8 @@ import { defineConfig } from 'vite'
 
 export default defineConfig({
   plugins: [vue(), basicSsl()],
+  // The lesson screen, which carries LiveKit, is its own chunk loaded only when a lesson starts.
+  build: { chunkSizeWarningLimit: 600 },
   server: {
     port: 5173,
     host: true,

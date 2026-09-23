@@ -1,5 +1,6 @@
 import express from 'express';
 import http from 'http';
+import compression from 'compression';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
@@ -27,9 +28,12 @@ app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self)');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self), screen-wake-lock=(self)');
+  if (production) res.setHeader('Strict-Transport-Security', 'max-age=15552000');
   next();
 });
+// Students often join on mobile data; compressing the app's code and data cuts what they download.
+app.use(compression());
 app.use(express.json({ limit: '64kb' }));
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 // The class name is shown on the join screen, before anyone has entered a code.
@@ -53,8 +57,27 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 });
 
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
+// Named after the class, so a student who adds the app to their home screen sees the class's name.
+app.get('/manifest.webmanifest', (_req, res) => {
+  const name = className() || 'Classroom';
+  res.setHeader('Content-Type', 'application/manifest+json');
+  res.json({
+    name, short_name: name, start_url: '/', scope: '/', display: 'standalone',
+    background_color: '#eee8de', theme_color: '#187b5b',
+    icons: [
+      { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' },
+    ],
+  });
+});
+// Built files carry a hash of their content in their names, so browsers may keep them for a year;
+// the page itself is revalidated on every visit, so a new deploy reaches students straight away.
+app.use('/assets', express.static(path.join(clientDist, 'assets'), { immutable: true, maxAge: '1y', fallthrough: false }));
 app.use(express.static(clientDist));
 app.get('/{*path}', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(clientDist, 'index.html'));
 });
 

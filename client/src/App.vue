@@ -11,8 +11,17 @@ import ChatView from './components/ChatView.vue';
 import ClassroomHeader from './components/ClassroomHeader.vue';
 
 // LiveKit makes up most of the app's code, so the lesson screen loads only when there is a lesson;
-// it is fetched as soon as one starts, before anyone taps to join it.
-const loadLessonView = () => import('./components/LessonView.vue');
+// it is fetched as soon as one starts, before anyone taps to join it. A page left open across a
+// deploy asks for files the new version no longer has, so it reloads once to pick up the new one.
+const loadLessonView = () => import('./components/LessonView.vue')
+  .then(module => { sessionStorage.removeItem('reloaded-for-update'); return module; })
+  .catch(error => {
+    if (!sessionStorage.getItem('reloaded-for-update')) {
+      sessionStorage.setItem('reloaded-for-update', '1');
+      window.location.reload();
+    }
+    throw error;
+  });
 const LessonView = defineAsyncComponent(loadLessonView);
 
 type Hand = { userId: string; displayName: string };

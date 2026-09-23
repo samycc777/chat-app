@@ -2,12 +2,10 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuid } from 'uuid';
+import { DATA_DIR, UPLOADS_DIR } from './config';
 
-const production = process.env.NODE_ENV === 'production';
-if (production && !process.env.DATA_DIR) throw new Error('DATA_DIR must point to persistent storage in production');
-const dataDir = process.env.DATA_DIR || path.join(__dirname, '..');
-fs.mkdirSync(dataDir, { recursive: true });
-const db = new Database(path.join(dataDir, 'chat.db'));
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const db = new Database(path.join(DATA_DIR, 'chat.db'));
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -82,6 +80,9 @@ if (!userColumns.some(column => column.name === 'visitor_id')) {
   db.exec('ALTER TABLE users ADD COLUMN visitor_id TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_visitor_id ON users(visitor_id)');
 }
+if (!userColumns.some(column => column.name === 'role')) {
+  db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'student' CHECK(role IN ('student', 'teacher'))");
+}
 
 export const CLASSROOM_ID = 'classroom';
 const classroomExists = db.prepare('SELECT 1 FROM conversations WHERE id = ?').get(CLASSROOM_ID);
@@ -96,7 +97,7 @@ if (!messageColumns.some(column => column.name === 'attachment_id')) {
 }
 
 // Safely adopt old locally stored chat uploads into the private attachment table.
-const uploadsDir = path.join(dataDir, 'uploads');
+const uploadsDir = UPLOADS_DIR;
 if (fs.existsSync(uploadsDir)) {
   const legacyMessages = db.prepare("SELECT id, conversation_id, sender_id, file_url, file_name FROM messages WHERE attachment_id IS NULL AND file_url LIKE '/uploads/%'").all() as any[];
   const addAttachment = db.prepare('INSERT INTO attachments (id, conversation_id, uploader_id, disk_name, original_name, mime_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');

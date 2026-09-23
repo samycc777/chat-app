@@ -29,6 +29,7 @@ const props = defineProps<{
   conversation: Conversation;
   currentUser: User;
   onlineUsers: Set<string>;
+  isTeacher?: boolean;
   lessonActive?: boolean;
 }>();
 
@@ -288,10 +289,20 @@ function cancelComposition() {
   input.value = '';
 }
 
+function canEdit(message: Message) {
+  return !message.deleted && message.type === 'text' && message.senderId === props.currentUser.id;
+}
+
+// The teacher can remove any message; everyone else only their own.
+function canDelete(message: Message) {
+  return !message.deleted && (message.senderId === props.currentUser.id || Boolean(props.isTeacher));
+}
+
 function openContext(event: MouseEvent, message: Message) {
   event.preventDefault();
+  if (message.deleted) return;
   const width = 200;
-  const height = message.senderId === props.currentUser.id ? 148 : 54;
+  const height = 14 + 42 * (1 + Number(canEdit(message)) + Number(canDelete(message)));
   contextMenu.value = {
     x: Math.max(12, Math.min(event.clientX, window.innerWidth - width - 12)),
     y: Math.max(12, Math.min(event.clientY, window.innerHeight - height - 12)),
@@ -405,17 +416,20 @@ function endsGroup(index: number) {
               class="message-sender"
             >
               <bdi>{{ message.sender.displayName }}</bdi>
+              <span v-if="message.sender.role === 'teacher'" class="role-badge">{{ t('teacherBadge') }}</span>
             </div>
 
             <div v-if="message.replyTo" class="message-reply">
               <div class="reply-sender">
                 <bdi>{{ message.replyTo.senderDisplayName }}</bdi>
               </div>
-              <div class="reply-text" dir="auto">
+              <div class="reply-text" :class="{ deleted: message.replyTo.deleted }" dir="auto">
                 {{
-                  message.replyTo.type === 'image'
-                    ? `📷 ${t('photo')}`
-                    : message.replyTo.content
+                  message.replyTo.deleted
+                    ? t('messageDeleted')
+                    : message.replyTo.type === 'image'
+                      ? `📷 ${t('photo')}`
+                      : message.replyTo.content
                 }}
               </div>
             </div>
@@ -441,9 +455,8 @@ function endsGroup(index: number) {
               <span class="message-time"><bdi>{{ format(new Date(message.createdAt), 'HH:mm') }}</bdi></span>
             </div>
 
-            <div class="message-actions">
+            <div v-if="!message.deleted" class="message-actions">
               <button
-                v-if="!message.deleted"
                 type="button"
                 :title="t('reply')"
                 :aria-label="t('reply')"
@@ -451,14 +464,12 @@ function endsGroup(index: number) {
               >
                 <Reply :size="14" />
               </button>
-              <template v-if="message.senderId === currentUser.id && !message.deleted">
-                <button type="button" :title="t('edit')" :aria-label="t('edit')" @click="startEdit(message)">
-                  <Pencil :size="14" />
-                </button>
-                <button type="button" :title="t('delete')" :aria-label="t('delete')" @click="deleteMessage(message)">
-                  <Trash2 :size="14" />
-                </button>
-              </template>
+              <button v-if="canEdit(message)" type="button" :title="t('edit')" :aria-label="t('edit')" @click="startEdit(message)">
+                <Pencil :size="14" />
+              </button>
+              <button v-if="canDelete(message)" type="button" :title="t('delete')" :aria-label="t('delete')" @click="deleteMessage(message)">
+                <Trash2 :size="14" />
+              </button>
             </div>
           </div>
         </div>
@@ -555,14 +566,12 @@ function endsGroup(index: number) {
         <button type="button" @click="startReply(contextMenu.message)">
           <Reply :size="16" />{{ t('reply') }}
         </button>
-        <template v-if="contextMenu.message.senderId === currentUser.id && !contextMenu.message.deleted">
-          <button type="button" @click="startEdit(contextMenu.message)">
-            <Pencil :size="16" />{{ t('edit') }}
-          </button>
-          <button class="danger" type="button" @click="deleteMessage(contextMenu.message)">
-            <Trash2 :size="16" />{{ t('delete') }}
-          </button>
-        </template>
+        <button v-if="canEdit(contextMenu.message)" type="button" @click="startEdit(contextMenu.message)">
+          <Pencil :size="16" />{{ t('edit') }}
+        </button>
+        <button v-if="canDelete(contextMenu.message)" class="danger" type="button" @click="deleteMessage(contextMenu.message)">
+          <Trash2 :size="16" />{{ t('delete') }}
+        </button>
       </div>
     </template>
   </div>

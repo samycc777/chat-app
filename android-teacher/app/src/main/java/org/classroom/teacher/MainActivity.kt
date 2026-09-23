@@ -38,7 +38,6 @@ class MainActivity : AppCompatActivity() {
   companion object {
     const val STOP_LESSON_ACTION = "org.classroom.teacher.STOP_LESSON"
     private const val DEFAULT_SERVER_URL = "https://nurturing-dedication-production-9379.up.railway.app"
-    private const val DEFAULT_CLASS_CODE = "0000"
     private const val PREF_SERVER_URL = "serverUrl"
     private const val PREF_CLASS_CODE = "classCode"
     private const val PREF_DISPLAY_NAME = "displayName"
@@ -181,9 +180,13 @@ class MainActivity : AppCompatActivity() {
     }
     classCode = styledField(
       card,
-      getString(R.string.field_class_code),
-      preferences.getString(PREF_CLASS_CODE, DEFAULT_CLASS_CODE) ?: DEFAULT_CLASS_CODE
-    )
+      getString(R.string.field_teacher_code),
+      preferences.getString(PREF_CLASS_CODE, "") ?: ""
+    ).apply {
+      inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+      layoutDirection = View.LAYOUT_DIRECTION_LTR
+      textDirection = View.TEXT_DIRECTION_LTR
+    }
     displayName = styledField(
       card,
       getString(R.string.field_teacher_name),
@@ -595,6 +598,9 @@ class MainActivity : AppCompatActivity() {
     try {
       statusText.text = getString(R.string.status_signing_in)
       val identity = joinClass()
+      if (identity.getJSONObject("user").optString("role") != "teacher") {
+        stopLesson(getString(R.string.status_not_teacher_code)); return
+      }
       authToken = identity.getString("token")
       userId = identity.getJSONObject("user").getString("id")
       connectSocket(authToken!!)
@@ -609,14 +615,22 @@ class MainActivity : AppCompatActivity() {
       // Only the first connection asks for the lesson, so a reconnect never starts one unprompted.
       socket?.once(Socket.EVENT_CONNECT) {
         socket?.emit("wb_start", JSONObject().put("conversationId", "classroom"), Ack { result ->
-          val presenterId = (result.firstOrNull() as? JSONObject)?.optString("presenterId")
-          if (presenterId != userId) runOnUiThread { stopLesson(getString(R.string.status_another_teacher)) }
+          val reply = result.firstOrNull() as? JSONObject
+          if (reply?.optString("presenterId") != userId) runOnUiThread {
+            stopLesson(getString(if (reply?.has("error") == true) R.string.status_not_teacher_code else R.string.status_another_teacher))
+          }
         })
       }
       socket?.on(Socket.EVENT_CONNECT_ERROR) { _ ->
         runOnUiThread { stopLesson(getString(R.string.status_connection_error)) }
       }
       socket?.connect()
+    } catch (error: ServerException) {
+      stopLesson(getString(when (error.status) {
+        401 -> R.string.status_wrong_code
+        429 -> R.string.status_too_many_attempts
+        else -> R.string.status_connection_failed
+      }))
     } catch (error: Exception) { stopLesson(getString(R.string.status_connection_failed)) }
   }
 
@@ -718,16 +732,21 @@ class MainActivity : AppCompatActivity() {
       ?: UUID.randomUUID().toString().also { preferences.edit().putString("visitorId", it).apply() }
   }
 
+  private class ServerException(val status: Int, message: String) : Exception(message)
+
   private fun request(url: String, body: JSONObject, token: String?): JSONObject {
     val connection = URL(url).openConnection() as HttpURLConnection
+    // Without timeouts a stalled network would leave the teacher on "signing in" indefinitely.
+    connection.connectTimeout = 15_000
+    connection.readTimeout = 20_000
     connection.requestMethod = "POST"
     connection.setRequestProperty("Content-Type", "application/json")
     if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
     connection.doOutput = true
     connection.outputStream.use { it.write(body.toString().toByteArray()) }
     val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
-    val response = stream.bufferedReader().use { it.readText() }
-    if (connection.responseCode !in 200..299) throw IllegalStateException(response)
+    val response = stream?.bufferedReader()?.use { it.readText() } ?: ""
+    if (connection.responseCode !in 200..299) throw ServerException(connection.responseCode, response)
     return JSONObject(response)
   }
 

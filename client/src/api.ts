@@ -28,6 +28,7 @@ async function request(path: string, options: RequestInit = {}) {
 }
 
 export const api = {
+  getClassInfo: (): Promise<{ name: string | null }> => request('/api/class'),
   getLiveKitToken: (conversationId: string): Promise<LiveKitCredentials> =>
     request('/api/livekit/token', { method: 'POST', body: JSON.stringify({ conversationId }) }),
   getUploadLimit: (): Promise<number> => {

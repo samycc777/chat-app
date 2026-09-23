@@ -6,13 +6,10 @@ import fs from 'fs';
 import authRouter from './auth';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
-import { DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES } from './config';
+import { className, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, production, UPLOADS_DIR } from './config';
+import { createLimiter } from './rateLimit';
 
-const production = process.env.NODE_ENV === 'production';
-if (production && !process.env.DATA_DIR) throw new Error('DATA_DIR must point to a persistent Railway Volume');
-const dataDir = process.env.DATA_DIR || path.join(__dirname, '..');
-const uploadsDir = path.join(dataDir, 'uploads');
-fs.mkdirSync(uploadsDir, { recursive: true });
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || (production ? '' : 'http://localhost:5173,https://localhost:5173'))
   .split(',').map(origin => origin.trim()).filter(Boolean);
@@ -20,21 +17,13 @@ if (production && allowedOrigins.length === 0) throw new Error('ALLOWED_ORIGINS 
 
 const app = express();
 const server = http.createServer(app);
-const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
-function rateLimit(scope: string, limit: number, windowMs: number) {
+function rateLimit(limit: number, windowMs: number) {
+  const limiter = createLimiter(limit, windowMs);
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const now = Date.now();
-    for (const [bucketKey, bucket] of rateBuckets) if (bucket.resetAt <= now) rateBuckets.delete(bucketKey);
-    const key = `${scope}:${req.ip}`;
-    let bucket = rateBuckets.get(key);
-    if (!bucket || bucket.resetAt <= now) {
-      bucket = { count: 0, resetAt: now + windowMs };
-      rateBuckets.set(key, bucket);
-    }
-    bucket.count++;
-    if (bucket.count > limit) {
-      res.setHeader('Retry-After', Math.ceil((bucket.resetAt - now) / 1000));
+    const { allowed, retryAfterSeconds } = limiter.hit(req.ip || 'unknown');
+    if (!allowed) {
+      res.setHeader('Retry-After', retryAfterSeconds);
       res.status(429).json({ error: 'Too many requests' });
       return;
     }
@@ -56,10 +45,12 @@ app.use((_req, res, next) => {
 });
 app.use(express.json({ limit: '64kb' }));
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+// The class name is shown on the join screen, before anyone has entered a code.
+app.get('/api/class', (_req, res) => res.json({ name: className() || null }));
 
-app.use('/api/auth', rateLimit('auth', 100, 15 * 60_000), authRouter);
-app.use('/api/upload', rateLimit('upload', 10, 60_000));
-app.use('/api', rateLimit('api', 180, 60_000), apiRouter);
+app.use('/api/auth', rateLimit(100, 15 * 60_000), authRouter);
+app.use('/api/upload', rateLimit(10, 60_000));
+app.use('/api', rateLimit(180, 60_000), apiRouter);
 app.use('/uploads', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (res.headersSent) return next(err);

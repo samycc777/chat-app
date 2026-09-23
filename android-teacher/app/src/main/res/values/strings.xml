@@ -12,7 +12,7 @@
   <string name="setup_title">الفصل الدراسي</string>
   <string name="setup_subtitle">المعلّم</string>
   <string name="field_server_url">رابط الخادم</string>
-  <string name="field_class_code">رمز الفصل</string>
+  <string name="field_teacher_code">رمز المعلّم</string>
   <string name="field_teacher_name">اسمك</string>
   <string name="action_start_lesson">بدء الدرس</string>
   <string name="setup_instruction">بعد بدء الدرس، اختر «مشاركة تطبيق واحد» ثم اختر JNotes.</string>
@@ -43,4 +43,7 @@
   <string name="status_another_teacher">يوجد معلّم آخر يدير درسًا مباشرًا الآن.</string>
   <string name="status_connection_error">تعذّر الاتصال بالخادم.</string>
   <string name="status_connection_failed">تعذّر الاتصال. تحقّق من رابط الخادم وإعدادات الدرس.</string>
+  <string name="status_wrong_code">رمز المعلّم غير صحيح.</string>
+  <string name="status_not_teacher_code">هذا رمز الطلاب. أدخل رمز المعلّم لبدء الدرس.</string>
+  <string name="status_too_many_attempts">محاولات خاطئة كثيرة. انتظر دقيقة ثم حاول مرة أخرى.</string>
 </resources>

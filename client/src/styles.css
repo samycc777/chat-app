@@ -734,6 +734,21 @@ textarea:focus-visible,
   font-weight: 700;
 }
 
+/* Marks the real teacher, so a student cannot pass as the teacher by choosing their name. */
+.role-badge {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: var(--text-accent);
+  background: var(--accent-soft);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.7;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
 .message-content {
   min-width: 0;
   max-width: 100%;
@@ -766,6 +781,10 @@ textarea:focus-visible,
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.reply-text.deleted {
+  font-style: italic;
 }
 
 .deleted-message {

@@ -18,7 +18,7 @@ const AVATAR_COLORS = ['#7c5cc4', '#3a6ea5', '#2f8f6b', '#c0703a', '#b24a6c', '#
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-const props = defineProps<{ conversationId: string; userId: string; presenter: boolean; presenterId: string }>();
+const props = defineProps<{ conversationId: string; userId: string; isTeacher: boolean; presenter: boolean; presenterId: string }>();
 const emit = defineEmits<{ leave: []; end: [] }>();
 const { t } = useI18n();
 const overlay = ref<HTMLElement>();
@@ -69,6 +69,10 @@ function avatarColor(identity: string) {
 function nameOf(identity: string) {
   return participants.value.find(participant => participant.identity === identity)?.name ?? '';
 }
+// The server marks the teacher's lesson token, which also covers a teacher who is not presenting.
+function isTeacherParticipant(participant: Participant) {
+  return participant.attributes?.role === 'teacher' || participant.identity === props.presenterId;
+}
 
 // Like a video call, the header and controls float over the teacher's screen and fade out while it is live.
 function showChrome() {
@@ -103,7 +107,7 @@ function refreshParticipants() {
     identity: participant.identity,
     name: participant.name || participant.identity,
     local,
-    teacher: participant.identity === props.presenterId,
+    teacher: isTeacherParticipant(participant),
     micOn: participant.isMicrophoneEnabled,
     speaking: participant.isSpeaking,
   });
@@ -173,7 +177,7 @@ function onData(payload: Uint8Array, sender?: RemoteParticipant, _kind?: unknown
   else if (message.type === 'hand') {
     setHand(sender.identity, Boolean(message.raised));
     if (message.raised) showToast(t('handRaised', { name }));
-  } else if (message.type === 'lower-hand' && sender.identity === props.presenterId && typeof message.identity === 'string') {
+  } else if (message.type === 'lower-hand' && isTeacherParticipant(sender) && typeof message.identity === 'string') {
     setHand(message.identity, false);
   }
 }
@@ -256,7 +260,7 @@ async function connect() {
     });
     room.on(RoomEvent.ParticipantDisconnected, (participant) => { setHand(participant.identity, false); });
     for (const event of [
-      RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected, RoomEvent.ParticipantNameChanged,
+      RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected, RoomEvent.ParticipantNameChanged, RoomEvent.ParticipantAttributesChanged,
       RoomEvent.TrackPublished, RoomEvent.TrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
       RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished, RoomEvent.ActiveSpeakersChanged,
     ] as const) room.on(event, refreshParticipants);
@@ -419,7 +423,7 @@ onBeforeUnmount(cleanup);
               <small v-else-if="person.teacher">{{ t('hostLabel') }}</small>
             </span>
             <button
-              v-if="raisedHands.has(person.identity) && (presenter || person.local)"
+              v-if="raisedHands.has(person.identity) && (isTeacher || person.local)"
               class="lesson-person-hand"
               type="button"
               :title="t('lowerHand')"

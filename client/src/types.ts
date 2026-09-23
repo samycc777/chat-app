@@ -1,9 +1,12 @@
+export type Role = 'student' | 'teacher';
+
 export interface User {
   id: string;
   username: string;
   displayName: string;
   avatarColor: string;
   status: string;
+  role: Role;
   lastSeen?: number;
 }
 
@@ -18,8 +21,9 @@ export interface Message {
   fileName?: string;
   replyTo?: {
     id: string;
-    content: string;
+    content: string | null;
     type: string;
+    deleted?: boolean;
     senderId: string;
     senderDisplayName: string;
   } | null;
@@ -30,6 +34,7 @@ export interface Message {
     username: string;
     displayName: string;
     avatarColor: string;
+    role?: Role;
   };
 }
 

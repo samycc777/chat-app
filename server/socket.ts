@@ -3,27 +3,25 @@ import { Server as HttpServer } from 'http';
 import { v4 as uuid } from 'uuid';
 import db, { CLASSROOM_ID } from './database';
 import { verifyToken } from './auth';
-import { endLessonSession, startLessonSession } from './lesson';
+import { removeAttachmentIfUnused } from './attachments';
+import { endLessonSession, getLessonSession, LessonSession, startLessonSession } from './lesson';
 
 const onlineUsers = new Map<string, Set<string>>();
 
-interface WbStroke {
-  id: string;
-  page: number;
-  points: { x: number; y: number }[];
-  color: string;
-  width: number;
-  tool: string;
+function lessonPayload(session: LessonSession) {
+  return { conversationId: session.conversationId, presenterId: session.presenterId, startedAt: session.startedAt };
 }
 
-interface WhiteboardSession {
-  pdfUrl: string | null;
-  presenterId: string;
-  currentPage: number;
-  strokes: { [page: number]: WbStroke[] };
+function replySummary(replyTo: string) {
+  const replied = db.prepare(
+    `SELECT m.id, m.content, m.type, m.deleted, m.sender_id, u.display_name as sender_display_name
+     FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`
+  ).get(replyTo) as any;
+  return replied ? {
+    id: replied.id, content: replied.deleted ? null : replied.content, type: replied.type, deleted: !!replied.deleted,
+    senderId: replied.sender_id, senderDisplayName: replied.sender_display_name,
+  } : null;
 }
-
-const whiteboardSessions = new Map<string, WhiteboardSession>();
 
 export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = []) {
   const io = new Server(httpServer, {
@@ -40,23 +38,27 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
   io.use((socket, next) => {
     const token = socket.handshake.auth.token;
     if (!token) return next(new Error('No token'));
-    const userId = verifyToken(token);
-    if (!userId || !db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(CLASSROOM_ID, userId)) return next(new Error('Invalid classroom session'));
-    socket.data.userId = userId;
+    const session = typeof token === 'string' ? verifyToken(token) : null;
+    if (!session) return next(new Error('Invalid classroom session'));
+    socket.data.userId = session.userId;
+    socket.data.role = session.role;
     next();
   });
 
+  function endLesson(conversationId: string) {
+    if (!endLessonSession(conversationId)) return;
+    io.to(`conv:${conversationId}`).emit('wb_ended', { conversationId });
+  }
+
   io.on('connection', (socket) => {
     const userId = socket.data.userId as string;
+    const isTeacher = socket.data.role === 'teacher';
     const socketEventTimes: number[] = [];
-    const drawEventTimes: number[] = [];
-    socket.onAny((eventName) => {
+    socket.onAny(() => {
       const now = Date.now();
-      const isDraw = eventName === 'wb_draw';
-      const times = isDraw ? drawEventTimes : socketEventTimes;
-      while (times.length && times[0] < now - 60_000) times.shift();
-      times.push(now);
-      if (times.length > (isDraw ? 1800 : 300)) socket.disconnect(true);
+      while (socketEventTimes.length && socketEventTimes[0] < now - 60_000) socketEventTimes.shift();
+      socketEventTimes.push(now);
+      if (socketEventTimes.length > 300) socket.disconnect(true);
     });
     const isMember = (conversationId: unknown) => typeof conversationId === 'string' && Boolean(db.prepare(
       'SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
@@ -77,15 +79,8 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     broadcastPresence(io, userId, true);
 
     for (const c of conversations) {
-      const session = whiteboardSessions.get(c.conversation_id);
-      if (session) {
-        socket.emit('wb_started', {
-          conversationId: c.conversation_id,
-          presenterId: session.presenterId,
-          pdfUrl: session.pdfUrl,
-          currentPage: session.currentPage,
-        });
-      }
+      const session = getLessonSession(c.conversation_id);
+      if (session) socket.emit('wb_started', lessonPayload(session));
     }
 
     socket.on('send_message', (data, callback) => {
@@ -113,29 +108,15 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       `).run(id, conversationId, userId, safeType === 'text' ? content : (safeType === 'file' ? attachment.original_name : null), safeType, attachment?.original_name || null, replyTo || null, createdAt, attachment?.id || null);
 
       const sender = db.prepare(
-        'SELECT username, display_name, avatar_color FROM users WHERE id = ?'
+        'SELECT username, display_name, avatar_color, role FROM users WHERE id = ?'
       ).get(userId) as any;
-
-      let replyToData = null;
-      if (replyTo) {
-        const replied = db.prepare(
-          `SELECT m.id, m.content, m.type, m.sender_id, u.display_name as sender_display_name
-           FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`
-        ).get(replyTo) as any;
-        if (replied) {
-          replyToData = {
-            id: replied.id, content: replied.content, type: replied.type,
-            senderId: replied.sender_id, senderDisplayName: replied.sender_display_name,
-          };
-        }
-      }
 
       const message = {
         id, conversationId, senderId: userId,
         content: safeType === 'text' ? content : (safeType === 'file' ? attachment.original_name : null), type: safeType,
         fileUrl: null, attachmentId: attachment?.id || null, fileName: attachment?.original_name || null,
-        replyTo: replyToData, editedAt: null, deleted: false, createdAt,
-        sender: { username: sender.username, displayName: sender.display_name, avatarColor: sender.avatar_color },
+        replyTo: replyTo ? replySummary(replyTo) : null, editedAt: null, deleted: false, createdAt,
+        sender: { username: sender.username, displayName: sender.display_name, avatarColor: sender.avatar_color, role: sender.role },
       };
 
       io.to(`conv:${conversationId}`).emit('new_message', message);
@@ -143,9 +124,9 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     });
 
     socket.on('edit_message', (data) => {
-      if (!data || typeof data.messageId !== 'string' || typeof data.content !== 'string' || data.content.length > 8000) return;
+      if (!data || typeof data.messageId !== 'string' || typeof data.content !== 'string' || !data.content.trim() || data.content.length > 8000) return;
       const { messageId, content } = data;
-      const msg = db.prepare("SELECT sender_id, conversation_id FROM messages WHERE id = ? AND type = 'text'").get(messageId) as any;
+      const msg = db.prepare("SELECT sender_id, conversation_id FROM messages WHERE id = ? AND type = 'text' AND deleted = 0").get(messageId) as any;
       if (!msg || msg.sender_id !== userId) return;
 
       const editedAt = Date.now();
@@ -153,13 +134,15 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       io.to(`conv:${msg.conversation_id}`).emit('message_edited', { messageId, content, editedAt });
     });
 
+    // Students can delete their own messages; the teacher can remove any message from the class.
     socket.on('delete_message', (data) => {
       if (!data || typeof data.messageId !== 'string') return;
       const { messageId } = data;
-      const msg = db.prepare('SELECT sender_id, conversation_id FROM messages WHERE id = ?').get(messageId) as any;
-      if (!msg || msg.sender_id !== userId) return;
+      const msg = db.prepare('SELECT sender_id, conversation_id, attachment_id FROM messages WHERE id = ? AND deleted = 0').get(messageId) as any;
+      if (!msg || (msg.sender_id !== userId && !isTeacher) || !isMember(msg.conversation_id)) return;
 
-      db.prepare('UPDATE messages SET deleted = 1 WHERE id = ?').run(messageId);
+      db.prepare('UPDATE messages SET deleted = 1, content = NULL, file_name = NULL, attachment_id = NULL WHERE id = ?').run(messageId);
+      if (msg.attachment_id) removeAttachmentIfUnused(msg.attachment_id);
       io.to(`conv:${msg.conversation_id}`).emit('message_deleted', { messageId });
     });
 
@@ -196,133 +179,25 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       if (data && isMember(data.conversationId)) socket.join(`conv:${data.conversationId}`);
     });
 
-    // Whiteboard events
-    socket.on('wb_start', (data: { conversationId: string; attachmentId?: string }, callback?: unknown) => {
-      if (!data || !isMember(data.conversationId)) return;
-      const reply = (presenterId: string) => { if (typeof callback === 'function') callback({ presenterId }); };
-      const existing = whiteboardSessions.get(data.conversationId);
-      // A presenter who disconnected without ending the lesson (app killed, tab closed) must not lock the classroom.
-      if (existing && (existing.presenterId === userId || onlineUsers.has(existing.presenterId))) return reply(existing.presenterId);
-      let initialPdfId: string | null = null;
-      if (data.attachmentId) {
-        const attachment = db.prepare("SELECT id FROM attachments WHERE id = ? AND conversation_id = ? AND mime_type = 'application/pdf'").get(data.attachmentId, data.conversationId) as { id: string } | undefined;
-        if (!attachment) return;
-        initialPdfId = attachment.id;
-      }
-      if (existing) {
-        whiteboardSessions.delete(data.conversationId);
-        endLessonSession(data.conversationId, existing.presenterId);
-        io.to(`conv:${data.conversationId}`).emit('wb_ended', { conversationId: data.conversationId });
-      }
-
-      const session: WhiteboardSession = {
-        pdfUrl: initialPdfId,
-        presenterId: userId,
-        currentPage: 1,
-        strokes: {},
-      };
-      whiteboardSessions.set(data.conversationId, session);
-      startLessonSession(data.conversationId, userId);
-      io.to(`conv:${data.conversationId}`).emit('wb_started', {
-        conversationId: data.conversationId,
-        presenterId: userId,
-        pdfUrl: session.pdfUrl,
-        currentPage: 1,
-      });
-      reply(userId);
+    // Lessons keep their original event names so installed teacher apps stay compatible.
+    socket.on('wb_start', (data: { conversationId: string }, callback?: unknown) => {
+      const reply = (payload: { presenterId: string } | { error: string }) => { if (typeof callback === 'function') callback(payload); };
+      if (!data || !isMember(data.conversationId)) return reply({ error: 'Not a member' });
+      if (!isTeacher) return reply({ error: 'Only the teacher can start a lesson' });
+      const existing = getLessonSession(data.conversationId);
+      if (existing?.presenterId === userId) return reply({ presenterId: userId });
+      // Only the teacher presents, so starting from another device takes the lesson over.
+      if (existing) endLesson(data.conversationId);
+      const session = startLessonSession(data.conversationId, userId);
+      io.to(`conv:${data.conversationId}`).emit('wb_started', lessonPayload(session));
+      reply({ presenterId: userId });
     });
 
     socket.on('wb_end', (data: { conversationId: string }) => {
       if (!data || !isMember(data.conversationId)) return;
-      const session = whiteboardSessions.get(data.conversationId);
-      if (!session || session.presenterId !== userId) return;
-      whiteboardSessions.delete(data.conversationId);
-      endLessonSession(data.conversationId, userId);
-      socket.to(`conv:${data.conversationId}`).emit('wb_ended', {
-        conversationId: data.conversationId,
-      });
-    });
-
-    socket.on('wb_pdf', (data: { conversationId: string; attachmentId: string }) => {
-      if (!data || !isMember(data.conversationId)) return;
-      const session = whiteboardSessions.get(data.conversationId);
-      if (!session || session.presenterId !== userId) return;
-      const attachment = db.prepare("SELECT id FROM attachments WHERE id = ? AND conversation_id = ? AND mime_type = 'application/pdf'").get(data.attachmentId, data.conversationId) as { id: string } | undefined;
-      if (!attachment) return;
-      session.pdfUrl = attachment.id;
-      session.currentPage = 1;
-      session.strokes = {};
-      socket.to(`conv:${data.conversationId}`).emit('wb_pdf_loaded', {
-        conversationId: data.conversationId,
-        pdfUrl: attachment.id,
-      });
-    });
-
-    socket.on('wb_page', (data: { conversationId: string; page: number }) => {
-      if (!data || !isMember(data.conversationId) || !Number.isInteger(data.page) || data.page < 1) return;
-      const session = whiteboardSessions.get(data.conversationId);
-      if (!session || session.presenterId !== userId) return;
-      session.currentPage = data.page;
-      socket.to(`conv:${data.conversationId}`).emit('wb_page_changed', {
-        conversationId: data.conversationId,
-        page: data.page,
-      });
-    });
-
-    socket.on('wb_draw', (data: {
-      conversationId: string; strokeId: string; page: number;
-      points: { x: number; y: number }[]; color: string; width: number; tool: string; done: boolean;
-    }) => {
-      if (!data || !isMember(data.conversationId) || typeof data.strokeId !== 'string' || data.strokeId.length > 80 ||
-          !Number.isInteger(data.page) || data.page < 1 || typeof data.done !== 'boolean' ||
-          !Array.isArray(data.points) || data.points.length > 256 ||
-          data.points.some((point: any) => !point || !Number.isFinite(point.x) || !Number.isFinite(point.y) || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) ||
-          !/^#[0-9a-f]{6}$/i.test(data.color) || ![2, 4, 8].includes(data.width) || !['pen', 'eraser'].includes(data.tool)) return;
-      const session = whiteboardSessions.get(data.conversationId);
-      if (!session || session.presenterId !== userId) return;
-
-      if (!session.strokes[data.page]) session.strokes[data.page] = [];
-      const existing = session.strokes[data.page].find(s => s.id === data.strokeId);
-      if (existing) {
-        if (existing.points.length + data.points.length > 10_000) return;
-        existing.points.push(...data.points);
-      } else {
-        if (session.strokes[data.page].length >= 1000) return;
-        session.strokes[data.page].push({
-          id: data.strokeId, page: data.page,
-          points: [...data.points], color: data.color, width: data.width, tool: data.tool,
-        });
-      }
-
-      socket.to(`conv:${data.conversationId}`).emit('wb_draw', {
-        conversationId: data.conversationId,
-        strokeId: data.strokeId, page: data.page,
-        points: data.points, color: data.color, width: data.width, tool: data.tool, done: data.done,
-      });
-    });
-
-    socket.on('wb_clear', (data: { conversationId: string; page: number }) => {
-      if (!data || !isMember(data.conversationId) || !Number.isInteger(data.page) || data.page < 1) return;
-      const session = whiteboardSessions.get(data.conversationId);
-      if (!session || session.presenterId !== userId) return;
-      session.strokes[data.page] = [];
-      socket.to(`conv:${data.conversationId}`).emit('wb_cleared', {
-        conversationId: data.conversationId,
-        page: data.page,
-      });
-    });
-
-    socket.on('wb_get_state', (data: { conversationId: string }) => {
-      if (!data || !isMember(data.conversationId)) return;
-      const session = whiteboardSessions.get(data.conversationId);
-      if (!session) return;
-      socket.emit('wb_state', {
-        conversationId: data.conversationId,
-        presenterId: session.presenterId,
-        pdfUrl: session.pdfUrl,
-        currentPage: session.currentPage,
-        strokes: session.strokes,
-      });
+      const session = getLessonSession(data.conversationId);
+      if (!session || (session.presenterId !== userId && !isTeacher)) return;
+      endLesson(data.conversationId);
     });
 
     socket.on('disconnect', () => {

@@ -6,15 +6,15 @@ import fs from 'fs';
 import db from './database';
 import { AuthRequest, authMiddleware } from './auth';
 import { CLASSROOM_ID } from './database';
-import { MAX_UPLOAD_BYTES } from './config';
+import { MAX_UPLOAD_BYTES, UPLOADS_DIR } from './config';
+import { detectMime } from './attachments';
 import { AccessToken, TrackSource } from 'livekit-server-sdk';
 import { getLessonSession } from './lesson';
 
 const router = Router();
 router.use(authMiddleware);
 
-const dataDir = process.env.DATA_DIR || path.join(__dirname, '..');
-const uploadsDir = path.join(dataDir, 'uploads');
+const uploadsDir = UPLOADS_DIR;
 
 const storage = multer.diskStorage({
   destination: uploadsDir,
@@ -50,6 +50,8 @@ router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
     identity: req.userId!,
     name: user?.display_name || 'Classroom member',
     ttl: '1h',
+    // Lets every lesson client recognise the teacher, even one who is not presenting.
+    attributes: { role: req.role! },
   });
   token.addGrant({
     roomJoin: true,
@@ -70,18 +72,9 @@ function memberOf(conversationId: string, userId: string) {
   return conversationId === CLASSROOM_ID && Boolean(db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(CLASSROOM_ID, userId));
 }
 
-function detectMime(buffer: Buffer): string | null {
-  if (buffer.subarray(0, 5).toString() === '%PDF-') return 'application/pdf';
-  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
-  if (buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
-  if (buffer.subarray(0, 6).toString() === 'GIF87a' || buffer.subarray(0, 6).toString() === 'GIF89a') return 'image/gif';
-  if (buffer.subarray(0, 4).toString() === 'RIFF' && buffer.subarray(8, 12).toString() === 'WEBP') return 'image/webp';
-  return null;
-}
-
 router.get('/me', (req: AuthRequest, res: Response) => {
   const user = db.prepare(
-    'SELECT id, username, display_name, avatar_color, status FROM users WHERE id = ?'
+    'SELECT id, username, display_name, avatar_color, status, role FROM users WHERE id = ?'
   ).get(req.userId!) as any;
   if (!user) { res.status(404).json({ error: 'User not found' }); return; }
   res.json({
@@ -90,6 +83,7 @@ router.get('/me', (req: AuthRequest, res: Response) => {
     displayName: user.display_name,
     avatarColor: user.avatar_color,
     status: user.status,
+    role: user.role,
   });
 });
 
@@ -149,7 +143,8 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   let query = `
     SELECT m.id, m.conversation_id, m.sender_id, m.content, m.type, m.file_url, m.file_name, m.attachment_id,
       m.reply_to, m.edited_at, m.deleted, m.created_at,
-      u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color
+      u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color,
+      u.role as sender_role
     FROM messages m
     JOIN users u ON u.id = m.sender_id
     WHERE m.conversation_id = ?
@@ -170,12 +165,12 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
     let replyTo = null;
     if (m.reply_to) {
       const replied = db.prepare(
-        `SELECT m.id, m.content, m.type, m.sender_id, u.display_name as sender_display_name
+        `SELECT m.id, m.content, m.type, m.deleted, m.sender_id, u.display_name as sender_display_name
          FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`
       ).get(m.reply_to) as any;
       if (replied) {
         replyTo = {
-          id: replied.id, content: replied.content, type: replied.type,
+          id: replied.id, content: replied.deleted ? null : replied.content, type: replied.type, deleted: !!replied.deleted,
           senderId: replied.sender_id, senderDisplayName: replied.sender_display_name,
         };
       }
@@ -187,7 +182,7 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
       replyTo, editedAt: m.edited_at, deleted: !!m.deleted, createdAt: m.created_at,
       sender: {
         username: m.sender_username, displayName: m.sender_display_name,
-        avatarColor: m.sender_avatar_color,
+        avatarColor: m.sender_avatar_color, role: m.sender_role,
       },
     };
   });

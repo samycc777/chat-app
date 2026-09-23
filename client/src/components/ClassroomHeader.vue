@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { Languages, LogOut, MonitorUp, Moon, Radio, Sun } from 'lucide-vue-next';
+import { BookOpenText, Languages, LogOut, MonitorUp, Moon, Radio, Sun } from 'lucide-vue-next';
 import type { User } from '../types';
 import { useI18n } from '../i18n';
 
 defineProps<{
   currentUser: User;
+  className: string;
   theme: 'light' | 'dark';
+  isTeacher: boolean;
   lessonActive: boolean;
 }>();
 
@@ -21,29 +23,34 @@ const { t, lang, setLang } = useI18n();
 <template>
   <header class="classroom-header">
     <div class="classroom-identity">
-      <span class="classroom-mark" aria-hidden="true">C</span>
+      <span class="classroom-mark" aria-hidden="true"><BookOpenText :size="21" /></span>
       <div class="classroom-identity-copy">
         <div class="classroom-title-line">
-          <h1>{{ t('classroom') }}</h1>
+          <h1><bdi>{{ className || t('classroom') }}</bdi></h1>
           <span v-if="lessonActive" class="classroom-live-badge">
             <span class="live-dot" />{{ t('liveNow') }}
           </span>
         </div>
-        <p><bdi>{{ t('signedInAs', { name: currentUser.displayName }) }}</bdi></p>
+        <p>
+          <bdi>{{ t('signedInAs', { name: currentUser.displayName }) }}</bdi>
+          <span v-if="isTeacher" class="role-badge">{{ t('teacherBadge') }}</span>
+        </p>
       </div>
     </div>
 
     <div class="classroom-header-actions">
+      <!-- Students only see this once the teacher has started a lesson. -->
       <button
+        v-if="lessonActive || isTeacher"
         class="header-action lesson-action"
         :class="{ active: lessonActive }"
         type="button"
-        :title="lessonActive ? t('joinLesson') : t('openLesson')"
+        :title="lessonActive ? t('joinLesson') : t('startLesson')"
         @click="emit('lesson')"
       >
         <Radio v-if="lessonActive" :size="18" />
         <MonitorUp v-else :size="18" />
-        <span class="header-action-label">{{ lessonActive ? t('joinLesson') : t('openLesson') }}</span>
+        <span class="header-action-label">{{ lessonActive ? t('joinLesson') : t('startLesson') }}</span>
       </button>
 
       <button

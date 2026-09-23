@@ -13,8 +13,6 @@ export interface LessonSession {
 const sessions = new Map<string, LessonSession>();
 
 export function startLessonSession(conversationId: string, presenterId: string): LessonSession {
-  const existing = sessions.get(conversationId);
-  if (existing) return existing;
   const session: LessonSession = {
     conversationId,
     presenterId,
@@ -30,9 +28,8 @@ export function getLessonSession(conversationId: string): LessonSession | undefi
   return sessions.get(conversationId);
 }
 
-export function endLessonSession(conversationId: string, presenterId?: string): boolean {
+export function endLessonSession(conversationId: string): LessonSession | undefined {
   const session = sessions.get(conversationId);
-  if (!session || (presenterId && session.presenterId !== presenterId)) return false;
   sessions.delete(conversationId);
-  return true;
+  return session;
 }

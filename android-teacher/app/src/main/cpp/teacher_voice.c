@@ -13,11 +13,49 @@
 #define RELEASE_SECONDS 0.1f
 // RNNoise works on 10 ms at 48 kHz.
 #define RNNOISE_FRAME 480
+// Students found the voice too sharp, so it is made warmer before it is made louder: the bass is
+// raised a little and the treble, where a small speaker starts to hurt, is turned down.
+#define BASS_HZ 250.0f
+#define BASS_DB 4.0f
+#define TREBLE_HZ 3000.0f
+#define TREBLE_DB -6.0f
+
+typedef struct {
+  float b0, b1, b2, a1, a2;
+  float z1, z2;
+} Shelf;
 
 typedef struct {
   DenoiseState *denoiser;
   float limiter_gain;
+  int sample_rate;
+  Shelf bass, treble;
 } TeacherVoice;
+
+// A shelving filter from Robert Bristow-Johnson's Audio EQ Cookbook, with its gentlest slope.
+// The high shelf is the low shelf with the signs of a few terms flipped.
+static Shelf shelf_create(int high, float hz, float db, float sample_rate) {
+  float s = high ? -1.0f : 1.0f;
+  float a = powf(10.0f, db / 40.0f);
+  float w = 2.0f * 3.14159265f * hz / sample_rate;
+  float c = cosf(w);
+  float k = sqrtf(2.0f * a) * sinf(w);
+  float a0 = (a + 1.0f) + s * (a - 1.0f) * c + k;
+  return (Shelf) {
+    .b0 = a * ((a + 1.0f) - s * (a - 1.0f) * c + k) / a0,
+    .b1 = 2.0f * s * a * ((a - 1.0f) - s * (a + 1.0f) * c) / a0,
+    .b2 = a * ((a + 1.0f) - s * (a - 1.0f) * c - k) / a0,
+    .a1 = -2.0f * s * ((a - 1.0f) + s * (a + 1.0f) * c) / a0,
+    .a2 = ((a + 1.0f) + s * (a - 1.0f) * c - k) / a0,
+  };
+}
+
+static float shelf_run(Shelf *shelf, float x) {
+  float y = shelf->b0 * x + shelf->z1;
+  shelf->z1 = shelf->b1 * x - shelf->a1 * y + shelf->z2;
+  shelf->z2 = shelf->b2 * x - shelf->a2 * y;
+  return y;
+}
 
 JNIEXPORT jlong JNICALL
 Java_org_classroom_teacher_TeacherVoice_nativeCreate(JNIEnv *env, jobject self) {
@@ -41,10 +79,17 @@ Java_org_classroom_teacher_TeacherVoice_nativeProcess(JNIEnv *env, jobject self,
   if (voice->denoiser && frames == RNNOISE_FRAME) rnnoise_process_frame(voice->denoiser, samples, samples);
 
   // Every buffer is 10 ms long, so the sample rate is its length times 100.
-  float release = 1.0f - expf(-1.0f / (RELEASE_SECONDS * (float) frames * 100.0f));
+  int sample_rate = frames * 100;
+  if (sample_rate != voice->sample_rate) {
+    voice->sample_rate = sample_rate;
+    voice->bass = shelf_create(0, BASS_HZ, BASS_DB, (float) sample_rate);
+    voice->treble = shelf_create(1, TREBLE_HZ, TREBLE_DB, (float) sample_rate);
+  }
+  float release = 1.0f - expf(-1.0f / (RELEASE_SECONDS * (float) sample_rate));
   float gain = voice->limiter_gain;
   for (jint i = 0; i < frames; i++) {
-    float sample = samples[i] * VOICE_GAIN;
+    // The tone is shaped before the voice is made louder, so the limiter still has the last word.
+    float sample = shelf_run(&voice->treble, shelf_run(&voice->bass, samples[i])) * VOICE_GAIN;
     float peak = fabsf(sample);
     float target = peak > LIMIT ? LIMIT / peak : 1.0f;
     // Turns down at once for a peak, never letting it past the limit, and back up gradually.

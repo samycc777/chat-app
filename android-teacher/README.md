@@ -8,7 +8,7 @@ On Android 14 and newer the teacher can share a single app, so only JNotes is sh
 
 - Signs in with the **teacher code** (not the students' class code) and starts the lesson; a student's code is refused with an explanation.
 - Shares the screen of the app chosen in Android's prompt, and the microphone, which can be muted from the app.
-- Cleans up the teacher's voice before the class hears it: an on-device noise filter ([RNNoise](https://github.com/xiph/rnnoise)) removes household noise such as a fan, a TV or dishes, and the voice is then made about twice as loud, with a limiter so loud words don't crackle. It is always on and needs no setting; students can turn the lesson volume down on their side.
+- Cleans up the teacher's voice before the class hears it: an on-device noise filter ([RNNoise](https://github.com/xiph/rnnoise)) removes household noise such as a fan, a TV or dishes, the voice is made warmer (a little more bass, less of the sharp treble that hurts on small speakers), and it is then made about twice as loud, with a limiter so loud words don't crackle. It is always on and needs no setting; students can turn the lesson volume down on their side.
 - Shows the participants, with raised hands first. Tap ✋ to lower a hand, tap a student's 🎤 to mute them, or use "Mute everyone".
 - Makes a quiet student louder: tap the 🔈 عادي button in their row once for louder (🔉 أعلى) and again for loudest (🔊 أعلى جدًا); a third tap goes back to normal. The app remembers the choice for that student in later lessons.
 - Shows the class chat, including recent history, and lets the teacher reply. A long press deletes a message for everyone.

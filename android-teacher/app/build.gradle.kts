@@ -23,8 +23,8 @@ android {
     // Android 8.0 and newer, including older tablets such as the Galaxy Tab A (2016).
     minSdk = 26
     targetSdk = 35
-    versionCode = 5
-    versionName = "1.3.0"
+    versionCode = 6
+    versionName = "1.3.1"
     ndk {
       // Some older 64-bit devices, including Samsung's Exynos 7870 tablets, run 32-bit Android.
       abiFilters += setOf("arm64-v8a", "armeabi-v7a")

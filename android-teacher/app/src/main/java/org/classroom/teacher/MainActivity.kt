@@ -25,7 +25,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.lifecycleScope
+import io.livekit.android.AudioOptions
 import io.livekit.android.LiveKit
+import io.livekit.android.LiveKitOverrides
+import io.livekit.android.audio.AudioProcessorOptions
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
@@ -95,6 +98,7 @@ class MainActivity : AppCompatActivity() {
   private var userId: String? = null
   private var socket: Socket? = null
   private var room: Room? = null
+  private var teacherVoice: TeacherVoice? = null
   private var roomEvents: Job? = null
   private var sharing = false
   private var lessonActive = false
@@ -973,7 +977,10 @@ class MainActivity : AppCompatActivity() {
       PeerConnectionFactory.initialize(
         PeerConnectionFactory.InitializationOptions.builder(applicationContext).createInitializationOptions()
       )
-      val lessonRoom = LiveKit.create(applicationContext)
+      val voice = TeacherVoice().also { teacherVoice = it }
+      val lessonRoom = LiveKit.create(applicationContext, overrides = LiveKitOverrides(
+        audioOptions = AudioOptions(audioProcessorOptions = AudioProcessorOptions(capturePostProcessor = voice)),
+      ))
       room = lessonRoom
       watchRoom(lessonRoom)
       lessonRoom.connect(credentials.getString("url"), credentials.getString("token"))
@@ -1037,6 +1044,7 @@ class MainActivity : AppCompatActivity() {
         am.mode = android.media.AudioManager.MODE_NORMAL
       } catch (_: Exception) { }
       room = null
+      teacherVoice?.release(); teacherVoice = null
       shareBtn.text = getString(R.string.action_share)
       muteBtn.text = getString(R.string.action_mute)
       showSetupUI()

@@ -19,6 +19,8 @@ export interface OnlineUser {
 
 export interface Message {
   id: string;
+  /** Order of arrival on the server, which separates messages sent in the same millisecond. */
+  seq?: number;
   conversationId: string;
   senderId: string;
   content: string | null;

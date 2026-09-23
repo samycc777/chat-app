@@ -158,7 +158,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       const id = uuid();
       const createdAt = Date.now();
 
-      db.prepare(`
+      const { lastInsertRowid } = db.prepare(`
         INSERT INTO messages (id, conversation_id, sender_id, content, type, file_url, file_name, reply_to, created_at, attachment_id)
         VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
       `).run(id, conversationId, userId, safeType === 'text' ? content : (safeType === 'file' ? attachment.original_name : null), safeType, attachment?.original_name || null, replyTo || null, createdAt, attachment?.id || null);
@@ -168,7 +168,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       ).get(userId) as any;
 
       const message = {
-        id, conversationId, senderId: userId,
+        id, seq: Number(lastInsertRowid), conversationId, senderId: userId,
         content: safeType === 'text' ? content : (safeType === 'file' ? attachment.original_name : null), type: safeType,
         fileUrl: null, attachmentId: attachment?.id || null, fileName: attachment?.original_name || null,
         replyTo: replyTo ? replySummary(replyTo) : null, editedAt: null, deleted: false, createdAt,

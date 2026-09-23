@@ -328,6 +328,29 @@ test('the teacher can mute one student or everyone, and students cannot mute any
   assert.equal((await mute(teacher.token, {})).status, 409);
 });
 
+test('paging through history never skips messages sent in the same millisecond', async () => {
+  const reader = await join('History reader');
+  const insert = db.prepare("INSERT INTO messages (id, conversation_id, sender_id, content, type, created_at) VALUES (?, 'classroom', ?, ?, 'text', ?)");
+  // Dated in the past so they stay out of other tests' latest page.
+  const sameMoment = 946_684_800_000;
+  const ids = [];
+  for (let n = 0; n < 75; n++) {
+    const id = `00000000-0000-4000-9000-${String(n).padStart(12, '0')}`;
+    ids.push(id);
+    insert.run(id, reader.user.id, `Same moment ${n}`, sameMoment);
+  }
+  const page = async query => (await fetch(`${baseUrl}/api/conversations/classroom/messages${query}`, { headers: { Authorization: `Bearer ${reader.token}` } })).json();
+  const seen = [];
+  let batch = await page(`?before=${sameMoment + 1}`);
+  while (batch.length) {
+    seen.unshift(...batch.map(message => message.id));
+    batch = await page(`?before=${batch[0].createdAt}&beforeId=${batch[0].id}`);
+  }
+  // All of them, once each, in the order they were written.
+  assert.deepEqual(seen.filter(id => ids.includes(id)), ids);
+  assert.equal((await fetch(`${baseUrl}/api/conversations/classroom/messages?before=1&beforeId=nope`, { headers: { Authorization: `Bearer ${reader.token}` } })).status, 400);
+});
+
 test('a burst of events is refused with an error instead of disconnecting the student', async () => {
   const conversationId = 'classroom';
   const student = await join('Fast typist');

@@ -9,6 +9,8 @@ import {
 } from 'vue';
 import { format, isSameDay, isToday, isYesterday } from 'date-fns';
 import {
+  ArrowDown,
+  Copy,
   MessageCircle,
   Paperclip,
   Pencil,
@@ -72,6 +74,13 @@ let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 let lastTypingSent = 0;
 const typingExpiry = new Map<string, ReturnType<typeof setTimeout>>();
 let atBottom = true;
+let pressTimer: ReturnType<typeof setTimeout> | undefined;
+let pressStart: { x: number; y: number } | null = null;
+const hasEarlier = ref(false);
+const loadingEarlier = ref(false);
+const newBelow = ref(0);
+// The server sends history in pages of this many messages.
+const PAGE_SIZE = 50;
 
 const typingNames = computed(() => [...typingUsers.value.values()].filter(Boolean));
 
@@ -88,6 +97,7 @@ async function loadMessages(id: string) {
   messages.value = [];
   try {
     messages.value = await api.getMessages(id);
+    hasEarlier.value = messages.value.length >= PAGE_SIZE;
     await nextTick();
     container.value?.lastElementChild?.scrollIntoView();
   } catch {
@@ -105,18 +115,72 @@ async function catchUp() {
     const latest: Message[] = await api.getMessages(props.conversation.id);
     const merged = new Map(messages.value.map((message) => [message.id, message]));
     for (const message of latest) merged.set(message.id, message);
-    messages.value = [...merged.values()].sort((a, b) => a.createdAt - b.createdAt);
+    messages.value = [...merged.values()].sort((a, b) => a.createdAt - b.createdAt || (a.seq ?? 0) - (b.seq ?? 0));
     scrollBottom();
   } catch {
     // The next reconnection tries again.
   }
 }
 
+// Older history is loaded a page at a time, keeping the messages on screen where they were.
+async function loadEarlier() {
+  const oldest = messages.value[0];
+  const element = container.value;
+  if (!oldest || !element || loadingEarlier.value) return;
+  loadingEarlier.value = true;
+  const distanceFromBottom = element.scrollHeight - element.scrollTop;
+  try {
+    const earlier: Message[] = await api.getMessages(props.conversation.id, oldest);
+    hasEarlier.value = earlier.length >= PAGE_SIZE;
+    const known = new Set(messages.value.map((message) => message.id));
+    messages.value = [...earlier.filter((message) => !known.has(message.id)), ...messages.value];
+    await nextTick();
+    element.style.scrollBehavior = 'auto';
+    element.scrollTop = element.scrollHeight - distanceFromBottom;
+    element.style.scrollBehavior = '';
+  } catch {
+    setFeedback({ kind: 'error', message: t('messagesLoadFailed') }, 4000);
+  } finally {
+    loadingEarlier.value = false;
+  }
+}
+
+function jumpToLatest() {
+  atBottom = true;
+  newBelow.value = 0;
+  container.value?.lastElementChild?.scrollIntoView({ behavior: 'smooth' });
+}
+
+// An image that finishes loading makes the list taller; stay pinned to the latest message.
+function keepAtBottom() {
+  if (!atBottom || !container.value) return;
+  container.value.style.scrollBehavior = 'auto';
+  container.value.scrollTop = container.value.scrollHeight;
+  container.value.style.scrollBehavior = '';
+}
+
 function onNewMessage(message: Message) {
   if (message.conversationId !== props.conversation.id) return;
   if (messages.value.some((existing) => existing.id === message.id)) return;
   messages.value.push(message);
+  if (!atBottom && message.senderId !== props.currentUser.id) newBelow.value++;
   scrollBottom();
+}
+
+// Turns web addresses in a message into links; trailing punctuation stays outside the link.
+const LINK = /\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+/gi;
+function linkParts(text: string) {
+  const parts: { text: string; href?: string }[] = [];
+  let position = 0;
+  for (const match of text.matchAll(LINK)) {
+    const link = match[0].replace(/[.,:;!?\u060c\u061b\u061f)\]}'"]+$/u, '');
+    const start = match.index ?? 0;
+    if (start > position) parts.push({ text: text.slice(position, start) });
+    parts.push({ text: link, href: link.toLowerCase().startsWith('www.') ? `https://${link}` : link });
+    position = start + link.length;
+  }
+  if (position < text.length) parts.push({ text: text.slice(position) });
+  return parts;
 }
 
 function onEdited(data: { messageId: string; content: string; editedAt: number }) {
@@ -188,6 +252,7 @@ function onScroll() {
       container.value.scrollTop -
       container.value.clientHeight <
     100;
+  if (atBottom) newBelow.value = 0;
 }
 
 function autosize() {
@@ -388,16 +453,54 @@ function canDelete(message: Message) {
   return !message.deleted && (message.senderId === props.currentUser.id || Boolean(props.isTeacher));
 }
 
-function openContext(event: MouseEvent, message: Message) {
-  event.preventDefault();
+function canCopy(message: Message) {
+  return !message.deleted && message.type === 'text' && Boolean(message.content);
+}
+
+function openMenu(x: number, y: number, message: Message) {
   if (message.deleted) return;
   const width = 200;
-  const height = 14 + 42 * (1 + Number(canEdit(message)) + Number(canDelete(message)));
+  const height = 14 + 42 * (1 + Number(canCopy(message)) + Number(canEdit(message)) + Number(canDelete(message)));
   contextMenu.value = {
-    x: Math.max(12, Math.min(event.clientX, window.innerWidth - width - 12)),
-    y: Math.max(12, Math.min(event.clientY, window.innerHeight - height - 12)),
+    x: Math.max(12, Math.min(x, window.innerWidth - width - 12)),
+    y: Math.max(12, Math.min(y, window.innerHeight - height - 12)),
     message,
   };
+}
+
+function openContext(event: MouseEvent, message: Message) {
+  event.preventDefault();
+  openMenu(event.clientX, event.clientY, message);
+}
+
+// iPhones never send a right-click, so a long press opens the same menu on touch screens.
+function pressStartOn(event: PointerEvent, message: Message) {
+  if (event.pointerType !== 'touch') return;
+  clearTimeout(pressTimer);
+  pressStart = { x: event.clientX, y: event.clientY };
+  pressTimer = setTimeout(() => {
+    navigator.vibrate?.(12);
+    openMenu(event.clientX, event.clientY, message);
+  }, 500);
+}
+
+function pressMove(event: PointerEvent) {
+  if (pressStart && Math.hypot(event.clientX - pressStart.x, event.clientY - pressStart.y) > 10) pressEnd();
+}
+
+function pressEnd() {
+  clearTimeout(pressTimer);
+  pressStart = null;
+}
+
+async function copyMessage(message: Message) {
+  contextMenu.value = null;
+  try {
+    await navigator.clipboard.writeText(message.content ?? '');
+    setFeedback({ kind: 'success', message: t('copied') }, 2000);
+  } catch {
+    setFeedback({ kind: 'error', message: t('copyFailed') }, 3000);
+  }
 }
 
 function dateLabel(timestamp: number) {
@@ -465,7 +568,14 @@ function endsGroup(index: number) {
         <p>{{ t('startConversation') }}</p>
       </div>
 
-      <template v-else v-for="(message, index) in messages" :key="message.id">
+      <template v-else>
+      <div v-if="hasEarlier" class="load-earlier">
+        <button type="button" :disabled="loadingEarlier" @click="loadEarlier">
+          <RefreshCw v-if="loadingEarlier" class="spin" :size="14" />{{ t('earlierMessages') }}
+        </button>
+      </div>
+
+      <template v-for="(message, index) in messages" :key="message.id">
         <div
           v-if="
             index === 0 ||
@@ -500,6 +610,10 @@ function endsGroup(index: number) {
             class="message-bubble"
             :class="message.senderId === currentUser.id ? 'out' : 'in'"
             @contextmenu="openContext($event, message)"
+            @pointerdown="pressStartOn($event, message)"
+            @pointermove="pressMove"
+            @pointerup="pressEnd"
+            @pointercancel="pressEnd"
           >
             <div
               v-if="message.senderId !== currentUser.id && beginsGroup(index)"
@@ -532,13 +646,14 @@ function endsGroup(index: number) {
               :attachment-id="message.attachmentId"
               :name="message.fileName || t('sharedImage')"
               image
+              @loaded="keepAtBottom"
             />
             <Attachment
               v-else-if="message.type === 'file' && message.attachmentId"
               :attachment-id="message.attachmentId"
               :name="message.fileName || t('file')"
             />
-            <div v-else class="message-content" :class="scriptClass(message.content)" dir="auto">{{ message.content }}</div>
+            <div v-else class="message-content" :class="scriptClass(message.content)" dir="auto"><template v-for="(part, partIndex) in linkParts(message.content ?? '')" :key="partIndex"><a v-if="part.href" :href="part.href" target="_blank" rel="noopener noreferrer" dir="ltr">{{ part.text }}</a><template v-else>{{ part.text }}</template></template></div>
 
             <div class="message-meta">
               <span v-if="message.editedAt" class="message-edited">{{ t('edited') }}</span>
@@ -564,10 +679,14 @@ function endsGroup(index: number) {
           </div>
         </div>
       </template>
+      </template>
       <div v-if="messages.length" class="messages-end" />
     </div>
 
     <div class="chat-bottom">
+      <button v-if="newBelow" class="new-messages-pill" type="button" @click="jumpToLatest">
+        <ArrowDown :size="15" />{{ t('newMessages') }}
+      </button>
       <div v-if="typingNames.length" class="typing-indicator" aria-live="polite">
         {{
           typingNames.length === 1
@@ -664,6 +783,9 @@ function endsGroup(index: number) {
       >
         <button type="button" @click="startReply(contextMenu.message)">
           <Reply :size="16" />{{ t('reply') }}
+        </button>
+        <button v-if="canCopy(contextMenu.message)" type="button" @click="copyMessage(contextMenu.message)">
+          <Copy :size="16" />{{ t('copy') }}
         </button>
         <button v-if="canEdit(contextMenu.message)" type="button" @click="startEdit(contextMenu.message)">
           <Pencil :size="16" />{{ t('edit') }}

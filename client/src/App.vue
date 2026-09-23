@@ -39,7 +39,13 @@ const TEXT_SIZES = [14, 16, 18, 21];
 const storedTextSize = localStorage.getItem('classroom-text-size');
 const textSize = ref(storedTextSize !== null && TEXT_SIZES[Number(storedTextSize)] ? Number(storedTextSize) : 1);
 watch(textSize, value => { localStorage.setItem('classroom-text-size', String(value)); });
-watchEffect(() => { document.title = className.value || t('classroom'); });
+// A background tab's title counts unseen messages and shows when a lesson is live.
+const unseen = ref(0);
+function onVisibilityChange() { if (!document.hidden) unseen.value = 0; }
+watchEffect(() => {
+  const name = className.value || t('classroom');
+  document.title = `${unseen.value ? `(${unseen.value}) ` : ''}${whiteboard.value ? '🔴 ' : ''}${name}`;
+});
 function toggleTheme() { theme.value = theme.value === 'light' ? 'dark' : 'light'; }
 
 function openRoom(user: User, conversationId: string) {
@@ -83,6 +89,9 @@ function listen(socket: Socket, user: User) {
     showWhiteboard.value = data.presenterId === user.id;
   });
   socket.on('wb_ended', () => { whiteboard.value = null; showWhiteboard.value = false; });
+  socket.on('new_message', (message: { senderId: string }) => {
+    if (document.hidden && message.senderId !== user.id) unseen.value++;
+  });
   socket.on('lesson_hands', ({ hands }: { hands: Hand[] }) => {
     if (whiteboard.value) whiteboard.value = { ...whiteboard.value, hands };
   });
@@ -115,6 +124,7 @@ async function restoreSession() {
 }
 
 onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange);
   api.getClassInfo().then(info => { className.value = info.name || ''; }).catch(() => {});
   void restoreSession();
 });

@@ -63,8 +63,9 @@ export const api = {
 
   getConversations: () => request('/api/conversations'),
 
-  getMessages: (conversationId: string, before?: number) =>
-    request(`/api/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`),
+  // Pages back from the given message; its ID separates messages sent in the same millisecond.
+  getMessages: (conversationId: string, before?: { createdAt: number; id: string }) =>
+    request(`/api/conversations/${conversationId}/messages${before ? `?before=${before.createdAt}&beforeId=${encodeURIComponent(before.id)}` : ''}`),
 
   uploadFile: async (file: File, conversationId: string, onProgress?: (progress: number) => void) => {
     const maxUploadBytes = await api.getUploadLimit();
@@ -95,14 +96,22 @@ export const api = {
       xhr.send(formData);
     });
   },
-  getAttachmentBlob: async (attachmentId: string): Promise<Blob> => {
+  getAttachmentBlob: (attachmentId: string, onProgress?: (percent: number) => void) => new Promise<Blob>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', `${API_URL}/api/attachments/${encodeURIComponent(attachmentId)}`);
+    xhr.responseType = 'blob';
     const token = getToken();
-    const res = await fetch(`${API_URL}/api/attachments/${encodeURIComponent(attachmentId)}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.addEventListener('progress', event => {
+      if (onProgress && event.lengthComputable && event.total > 0) onProgress(Math.round((event.loaded / event.total) * 100));
     });
-    if (!res.ok) throw new Error(`Attachment unavailable (${res.status})`);
-    return res.blob();
-  },
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob);
+      else reject(new ApiError(`Attachment unavailable (${xhr.status})`, xhr.status));
+    });
+    xhr.addEventListener('error', () => reject(new Error('Attachment unavailable')));
+    xhr.send();
+  }),
 };
 
 export { API_URL };

@@ -153,10 +153,14 @@ router.get('/conversations', (req: AuthRequest, res: Response) => {
 router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const before = req.query.before as string | undefined;
+  const beforeId = req.query.beforeId as string | undefined;
   const parsedLimit = req.query.limit === undefined ? 50 : (typeof req.query.limit === 'string' ? Number(req.query.limit) : Number.NaN);
   if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) { res.status(400).json({ error: 'Invalid message limit' }); return; }
   const limit = parsedLimit;
   if (before !== undefined && (typeof before !== 'string' || !/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) {
+    res.status(400).json({ error: 'Invalid message cursor' }); return;
+  }
+  if (beforeId !== undefined && (typeof beforeId !== 'string' || !/^[0-9a-f-]{36}$/i.test(beforeId))) {
     res.status(400).json({ error: 'Invalid message cursor' }); return;
   }
 
@@ -166,7 +170,7 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   if (id !== CLASSROOM_ID || !isMember) { res.status(403).json({ error: 'Not a classroom member' }); return; }
 
   let query = `
-    SELECT m.id, m.conversation_id, m.sender_id, m.content, m.type, m.file_url, m.file_name, m.attachment_id,
+    SELECT m.rowid AS seq, m.id, m.conversation_id, m.sender_id, m.content, m.type, m.file_url, m.file_name, m.attachment_id,
       m.reply_to, m.edited_at, m.deleted, m.created_at,
       u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color,
       u.role as sender_role
@@ -176,12 +180,17 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   `;
   const params: any[] = [id];
 
-  if (before) {
+  // Messages sent in the same millisecond keep the order they arrived in (their row number), so
+  // paging from a given message never skips or repeats one of them.
+  if (before && beforeId) {
+    query += ' AND (m.created_at < ? OR (m.created_at = ? AND m.rowid < (SELECT rowid FROM messages WHERE id = ?)))';
+    params.push(Number(before), Number(before), beforeId);
+  } else if (before) {
     query += ' AND m.created_at < ?';
-    params.push(parseInt(before));
+    params.push(Number(before));
   }
 
-  query += ' ORDER BY m.created_at DESC LIMIT ?';
+  query += ' ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?';
   params.push(limit);
 
   const messages = (db.prepare(query).all(...params) as any[]).reverse();
@@ -201,7 +210,7 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
       }
     }
     return {
-      id: m.id, conversationId: m.conversation_id, senderId: m.sender_id,
+      id: m.id, seq: m.seq, conversationId: m.conversation_id, senderId: m.sender_id,
       content: m.deleted ? null : m.content, type: m.type,
       fileUrl: null, attachmentId: m.deleted ? null : m.attachment_id, fileName: m.deleted ? null : m.file_name,
       replyTo, editedAt: m.edited_at, deleted: !!m.deleted, createdAt: m.created_at,

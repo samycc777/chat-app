@@ -64,6 +64,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     const token = socket.handshake.auth.token;
     if (!token) return next(new Error('No token'));
     const session = typeof token === 'string' ? verifyToken(token) : null;
+    if (session === 'removed') return next(new Error('Removed from class'));
     if (!session) return next(new Error('Invalid classroom session'));
     socket.data.userId = session.userId;
     socket.data.role = session.role;
@@ -131,6 +132,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     onlineUsers.get(userId)!.add(socket.id);
     db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
     socket.join(`conv:${CLASSROOM_ID}`);
+    socket.join(`user:${userId}`);
 
     // Everything a client needs to draw the room is sent on every (re)connection, so state missed
     // while offline, or lost when the server restarted, is replaced rather than left stale.
@@ -242,6 +244,27 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       if (!data || !isTeacher || !isMember(data.conversationId) || typeof data.userId !== 'string') return;
       const session = getLessonSession(data.conversationId);
       if (session?.hands.delete(data.userId)) broadcastHands(session);
+    });
+
+    // The teacher can remove a student from the class: every device of theirs is disconnected at
+    // once, including from a running lesson, and they cannot join again until allowed back.
+    socket.on('remove_member', (data: { userId: string }, callback?: unknown) => {
+      const reply = (payload: { ok: true } | { error: string }) => { if (typeof callback === 'function') callback(payload); };
+      if (!isTeacher || typeof data?.userId !== 'string') return reply({ error: 'Only the teacher can remove students' });
+      const target = db.prepare('SELECT role FROM users WHERE id = ?').get(data.userId) as { role: string } | undefined;
+      if (!target || target.role !== 'student') return reply({ error: 'Only students can be removed' });
+      db.prepare('UPDATE users SET removed_at = ? WHERE id = ?').run(Date.now(), data.userId);
+      io.in(`user:${data.userId}`).disconnectSockets(true);
+      const lesson = getLessonSession(CLASSROOM_ID);
+      if (lesson) roomService()?.removeParticipant(lesson.roomName, data.userId).catch(() => { /* Not in the lesson. */ });
+      reply({ ok: true });
+    });
+
+    socket.on('restore_member', (data: { userId: string }, callback?: unknown) => {
+      const reply = (payload: { ok: true } | { error: string }) => { if (typeof callback === 'function') callback(payload); };
+      if (!isTeacher || typeof data?.userId !== 'string') return reply({ error: 'Only the teacher can remove students' });
+      db.prepare('UPDATE users SET removed_at = NULL WHERE id = ?').run(data.userId);
+      reply({ ok: true });
     });
 
     socket.on('wb_end', (data: { conversationId: string }) => {

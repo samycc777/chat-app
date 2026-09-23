@@ -24,16 +24,18 @@ function codeFingerprint(role: Role) {
   return createHmac('sha256', JWT_SECRET).update(`${role}:${classCode(role)}`).digest('base64url').slice(0, 22);
 }
 
-export function verifyToken(token: string): Session | null {
+// A removed session gets its own answer, so the student is told the teacher removed them.
+export function verifyToken(token: string): Session | 'removed' | null {
   let claims: { userId?: unknown; code?: unknown };
   try { claims = jwt.verify(token, JWT_SECRET) as typeof claims; } catch { return null; }
   if (typeof claims.userId !== 'string' || typeof claims.code !== 'string') return null;
   const user = db.prepare(`
-    SELECT u.id, u.role FROM users u
+    SELECT u.id, u.role, u.removed_at FROM users u
     JOIN conversation_members cm ON cm.user_id = u.id AND cm.conversation_id = ?
     WHERE u.id = ?
-  `).get(CLASSROOM_ID, claims.userId) as { id: string; role: Role } | undefined;
+  `).get(CLASSROOM_ID, claims.userId) as { id: string; role: Role; removed_at: number | null } | undefined;
   if (!user || claims.code !== codeFingerprint(user.role)) return null;
+  if (user.removed_at) return 'removed';
   return { userId: user.id, role: user.role };
 }
 
@@ -41,6 +43,7 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) { res.status(401).json({ error: 'No token provided' }); return; }
   const session = verifyToken(token);
+  if (session === 'removed') { res.status(403).json({ error: 'Removed from class' }); return; }
   if (!session) { res.status(401).json({ error: 'Invalid or expired classroom session' }); return; }
   req.userId = session.userId;
   req.role = session.role;
@@ -75,10 +78,12 @@ router.post('/join', (req: Request, res: Response) => {
   if (!/^[0-9a-f-]{36}$/i.test(visitorId)) { res.status(400).json({ error: 'Invalid visitor identity' }); return; }
   if (displayName.length > 60) { res.status(400).json({ error: 'Display name must be at most 60 characters' }); return; }
 
-  let user = db.prepare('SELECT id, username, display_name, avatar_color, status, role FROM users WHERE visitor_id = ?').get(visitorId) as any;
+  let user = db.prepare('SELECT id, username, display_name, avatar_color, status, role, removed_at FROM users WHERE visitor_id = ?').get(visitorId) as any;
   if (!user && !displayName) { res.status(400).json({ error: 'Display name is required' }); return; }
+  // Someone the teacher removed cannot come back with the class code; the teacher code still works.
+  if (user?.removed_at && role !== 'teacher') { res.status(403).json({ error: 'Removed from class' }); return; }
   if (user) {
-    db.prepare('UPDATE users SET display_name = ?, role = ? WHERE id = ?').run(displayName || user.display_name, role, user.id);
+    db.prepare('UPDATE users SET display_name = ?, role = ?, removed_at = NULL WHERE id = ?').run(displayName || user.display_name, role, user.id);
     user.display_name = displayName || user.display_name;
     user.role = role;
   } else {

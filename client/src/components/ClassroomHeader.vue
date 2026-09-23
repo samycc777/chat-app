@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
 import { ALargeSmall, BookOpenText, Languages, LogOut, MonitorUp, Moon, Radio, Sun } from 'lucide-vue-next';
-import type { User } from '../types';
+import type { OnlineUser, User } from '../types';
 import { useI18n } from '../i18n';
+import PeopleMenu from './PeopleMenu.vue';
 
 defineProps<{
   currentUser: User;
+  people: OnlineUser[];
   className: string;
   theme: 'light' | 'dark';
   textSize: number;
@@ -63,6 +65,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape));
         <MonitorUp v-else :size="18" />
         <span class="header-action-label">{{ lessonActive ? t('joinLesson') : t('startLesson') }}</span>
       </button>
+
+      <PeopleMenu :people="people" :current-user-id="currentUser.id" :is-teacher="isTeacher" />
 
       <button
         class="header-action compact-action"

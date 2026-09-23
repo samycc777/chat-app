@@ -112,6 +112,18 @@ router.get('/me', (req: AuthRequest, res: Response) => {
   });
 });
 
+// Students the teacher has removed, so the teacher can let them back in.
+router.get('/members/removed', (req: AuthRequest, res: Response) => {
+  if (req.role !== 'teacher') { res.status(403).json({ error: 'Only the teacher can see removed students' }); return; }
+  const removed = db.prepare(`
+    SELECT u.id, u.display_name AS displayName, u.avatar_color AS avatarColor, u.removed_at AS removedAt
+    FROM users u JOIN conversation_members cm ON cm.user_id = u.id AND cm.conversation_id = ?
+    WHERE u.removed_at IS NOT NULL ORDER BY u.removed_at DESC LIMIT 100
+  `).all(CLASSROOM_ID);
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(removed);
+});
+
 router.get('/conversations', (req: AuthRequest, res: Response) => {
   const conversations = db.prepare(`
     SELECT c.id, c.type, c.name, c.created_at,

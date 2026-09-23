@@ -83,6 +83,9 @@ if (!userColumns.some(column => column.name === 'visitor_id')) {
 if (!userColumns.some(column => column.name === 'role')) {
   db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'student' CHECK(role IN ('student', 'teacher'))");
 }
+if (!userColumns.some(column => column.name === 'removed_at')) {
+  db.exec('ALTER TABLE users ADD COLUMN removed_at INTEGER');
+}
 
 export const CLASSROOM_ID = 'classroom';
 const classroomExists = db.prepare('SELECT 1 FROM conversations WHERE id = ?').get(CLASSROOM_ID);

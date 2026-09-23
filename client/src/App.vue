@@ -67,7 +67,8 @@ function listen(socket: Socket, user: User) {
     if (reason === 'io server disconnect') setTimeout(() => { if (getSocket() === socket) socket.connect(); }, 2000);
   });
   socket.on('connect_error', error => {
-    if (error.message === 'Invalid classroom session' || error.message === 'No token') endSession(t('errSessionExpired'));
+    if (error.message === 'Removed from class') endSession(t('errRemovedFromClass'));
+    else if (error.message === 'Invalid classroom session' || error.message === 'No token') endSession(t('errSessionExpired'));
     else if (connection.value === 'connected') connection.value = 'reconnecting';
   });
   socket.on('presence_state', ({ users }: { users: OnlineUser[] }) => {
@@ -116,7 +117,8 @@ async function restoreSession() {
   try {
     enterRoom(token.value, await api.getMe());
   } catch (cause) {
-    if (cause instanceof ApiError && cause.status === 401) endSession(t('errSessionExpired'));
+    if (cause instanceof ApiError && cause.status === 403) endSession(t('errRemovedFromClass'));
+    else if (cause instanceof ApiError && cause.status === 401) endSession(t('errSessionExpired'));
     else restoreFailed.value = true;
   } finally {
     restoring.value = false;
@@ -160,6 +162,7 @@ function endSession(notice = '') {
   <main v-else-if="conversation && currentUser" class="classroom-layout">
     <ClassroomHeader
       :current-user="currentUser"
+      :people="[...onlineUsers.values()]"
       :class-name="className"
       :theme="theme"
       :text-size="textSize"

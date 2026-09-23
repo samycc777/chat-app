@@ -351,6 +351,33 @@ test('paging through history never skips messages sent in the same millisecond',
   assert.equal((await fetch(`${baseUrl}/api/conversations/classroom/messages?before=1&beforeId=nope`, { headers: { Authorization: `Bearer ${reader.token}` } })).status, 400);
 });
 
+test('the teacher can remove a student, who is signed out and kept out until allowed back', async () => {
+  const teacher = await joinTeacher('Removing teacher');
+  const visitorId = nextVisitorId();
+  const troll = await (await joinRequest({ classCode: '0000', visitorId, displayName: 'Troll' })).json();
+  const classmate = await join('Kind classmate');
+  const [teacherSocket, trollSocket, classmateSocket] = await Promise.all([teacher, troll, classmate].map(member => connect(member.token)));
+
+  assert.deepEqual(await emitWithAck(classmateSocket, 'remove_member', { userId: troll.user.id }), { error: 'Only the teacher can remove students' });
+  assert.deepEqual(await emitWithAck(teacherSocket, 'remove_member', { userId: teacher.user.id }), { error: 'Only students can be removed' });
+
+  const kicked = nextEvent(trollSocket, 'disconnect');
+  assert.deepEqual(await emitWithAck(teacherSocket, 'remove_member', { userId: troll.user.id }), { ok: true });
+  assert.equal(await kicked, 'io server disconnect');
+  const refused = await fetch(`${baseUrl}/api/me`, { headers: { Authorization: `Bearer ${troll.token}` } });
+  assert.equal(refused.status, 403);
+  assert.equal((await refused.json()).error, 'Removed from class');
+  await assert.rejects(connect(troll.token), /Removed from class/);
+  assert.equal((await joinRequest({ classCode: '0000', visitorId, displayName: 'Troll again' })).status, 403);
+
+  const removed = await (await fetch(`${baseUrl}/api/members/removed`, { headers: { Authorization: `Bearer ${teacher.token}` } })).json();
+  assert.ok(removed.some(user => user.id === troll.user.id && user.displayName === 'Troll'));
+  assert.equal((await fetch(`${baseUrl}/api/members/removed`, { headers: { Authorization: `Bearer ${classmate.token}` } })).status, 403);
+
+  assert.deepEqual(await emitWithAck(teacherSocket, 'restore_member', { userId: troll.user.id }), { ok: true });
+  assert.equal((await joinRequest({ classCode: '0000', visitorId, displayName: 'Reformed' })).status, 200);
+});
+
 test('a burst of events is refused with an error instead of disconnecting the student', async () => {
   const conversationId = 'classroom';
   const student = await join('Fast typist');

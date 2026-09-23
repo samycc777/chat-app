@@ -2186,6 +2186,29 @@ button.lesson-person-hand {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.lesson-volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: #edf3ef;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lesson-volume svg {
+  flex: none;
+  color: #a9b6af;
+}
+
+.lesson-volume input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  accent-color: #59cda0;
+}
+
 .lesson-hand-btn {
   min-height: 44px;
   display: inline-flex;

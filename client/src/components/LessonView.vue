@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   Ellipsis, Hand, Info, Maximize, MessageSquare, Mic, MicOff, Minimize, Radio, RotateCcw, ScreenShare, ScreenShareOff,
-  Users, Volume2, VolumeX, X,
+  Users, Volume1, Volume2, VolumeX, X,
 } from 'lucide-vue-next';
 import { DisconnectReason, Room, RoomEvent, Track, type Participant, type RemoteParticipant, type RemoteTrack, type TrackPublication } from 'livekit-client';
 import { api, ApiError } from '../api';
@@ -16,6 +16,14 @@ type LessonMessage = { type: 'reaction'; emoji: string };
 type LessonParticipant = { identity: string; name: string; local: boolean; teacher: boolean; micOn: boolean; speaking: boolean };
 
 const REACTIONS = ['👍', '❤️', '😂', '👏', '🎉', '😮'];
+const VOLUME_KEY = 'lessonVolume';
+// The slider stops short of silence, so a lesson never starts inaudible because of last week's
+// setting; the speaker button is there for turning the sound off.
+const MIN_VOLUME = 0.1;
+// iPhones and iPads ignore a page's volume, so there the phone's own buttons are the only control.
+const volumeAdjustable = (() => {
+  try { const probe = new Audio(); probe.volume = 0.5; return probe.volume === 0.5; } catch { return false; }
+})();
 const AVATAR_COLORS = ['#7c5cc4', '#3a6ea5', '#2f8f6b', '#c0703a', '#b24a6c', '#5a7d2a'];
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -34,6 +42,7 @@ const micOn = ref(false);
 const sharingScreen = ref(false);
 const audioBlocked = ref(false);
 const soundOn = ref(true);
+const volume = ref(savedVolume());
 const sheet = ref<Sheet | null>(null);
 const participants = ref<LessonParticipant[]>([]);
 // Raised hands come from the server, which knows who raised them even before LiveKit has told
@@ -158,6 +167,7 @@ function attach(track: RemoteTrack) {
     const element = track.attach() as HTMLAudioElement;
     element.autoplay = true;
     element.muted = !soundOn.value;
+    if (volumeAdjustable) element.volume = volume.value;
     element.addEventListener('pause', resumeSound);
     document.body.appendChild(element);
     detachedAudio.push(element);
@@ -203,7 +213,23 @@ function onData(payload: Uint8Array, sender?: RemoteParticipant, _kind?: unknown
   if (message?.type === 'reaction' && REACTIONS.includes(message.emoji)) addReaction(message.emoji, sender ? sender.name || sender.identity : '');
 }
 
-function applySound() { detachedAudio.forEach(element => { element.muted = !soundOn.value; }); }
+function applySound() {
+  detachedAudio.forEach(element => {
+    element.muted = !soundOn.value;
+    if (volumeAdjustable) element.volume = volume.value;
+  });
+}
+// Remembered on this device only, so each student keeps the level that suits their speaker.
+function savedVolume() {
+  try {
+    const saved = Number(localStorage.getItem(VOLUME_KEY) ?? NaN);
+    return Number.isFinite(saved) ? Math.min(1, Math.max(MIN_VOLUME, saved)) : 1;
+  } catch { return 1; }
+}
+watch(volume, level => {
+  applySound();
+  try { localStorage.setItem(VOLUME_KEY, String(level)); } catch { /* Private browsing: the level lasts for this lesson. */ }
+});
 // A phone pauses the lesson's sound when another app takes the speaker or the browser is put away,
 // and nothing starts it again by itself, so it is restarted whenever the student is back on the page.
 function resumeSound() {
@@ -570,6 +596,12 @@ onBeforeUnmount(cleanup);
           </button>
           <button v-for="emoji in REACTIONS" :key="emoji" class="lesson-emoji-btn" type="button" :aria-label="`${t('reactions')} ${emoji}`" @click="react(emoji)">{{ emoji }}</button>
         </div>
+        <label v-if="volumeAdjustable" class="lesson-volume">
+          <Volume1 :size="20" aria-hidden="true" />
+          <span>{{ t('lessonVolume') }}</span>
+          <input v-model.number="volume" type="range" :min="MIN_VOLUME" max="1" step="0.05">
+          <Volume2 :size="20" aria-hidden="true" />
+        </label>
         <div class="lesson-more-grid">
           <button type="button" @click="openSheet('participants')">
             <span class="lesson-control-icon"><Users :size="24" /><span class="lesson-count">{{ participants.length }}</span></span>

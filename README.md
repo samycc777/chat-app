@@ -9,9 +9,9 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
 - **Join with a code.** Students open the class link, enter the class code and their name once, and are in. The teacher enters the teacher code in the same field and gets the teacher's controls. The name and browser identity are remembered; the code is asked for again in each new browser session.
 - **Chat.** Messages, replies, edits, links, images, and PDFs. The teacher's messages carry a Teacher badge. Everyone can delete their own messages; the teacher can delete any message. Earlier history loads a page at a time.
 - **Read and write Arabic.** Arabic messages are shown larger with taller lines, each student can choose from four text sizes, and the ع button opens an on-screen Arabic keyboard with every haraka.
-- **Live lessons.** Only the teacher starts or ends a lesson. Students join listening, with their microphone off, and unmute to speak. They can raise a hand, which the teacher sees immediately even in the Android app, and send reactions. The teacher can mute one student or everyone, and lower hands.
+- **Live lessons.** Only the teacher starts or ends a lesson. Students join listening, with their microphone off, and unmute to speak. They can raise a hand, which the teacher sees immediately even in the Android app, and send reactions. The teacher can mute one student or everyone, lower hands, and make a quiet student louder in the Android app. The Android app also filters the noise of the teacher's room out of their microphone and makes their voice louder; each student can turn the lesson volume down under More (on an iPhone, with the phone's volume buttons).
 - **People.** The People button shows who is online. The teacher can remove a disruptive student, who is signed out at once and cannot rejoin until the teacher allows them back.
-- **Phones.** The site works on phones and can be added to the home screen. Students' screens stay awake during a lesson, and the app reconnects by itself after a network drop, fetching any messages it missed.
+- **Phones.** The site works on phones and can be added to the home screen. Students' screens stay awake during a lesson, and the app reconnects by itself after a network drop, fetching any messages it missed. If a student switches to another app during a lesson, the sound and the lesson come back by themselves when they return; if it ever stays silent, tapping the speaker button at the top brings it back.
 
 ## Teacher quick start
 
@@ -25,9 +25,9 @@ Please do not redeploy the server during a lesson: a restart ends the running le
 ## A message you can send to your class
 
 > **العربية:** السلام عليكم! هذا رابط فصلنا: `<رابط الموقع>`
-> افتحوا الرابط، وأدخلوا رمز الفصل `<الرمز>` واسمكم. لوحة المفاتيح العربية موجودة في زر «ع» بجانب خانة الكتابة، ويمكنكم تكبير النص من زر «Aa». عندما يبدأ الدرس يظهر زر «انضم إلى الدرس». ميكروفونكم مغلق في البداية؛ اضغطوا «إلغاء الكتم» عندما تريدون التحدث، أو ارفعوا أيديكم من «المزيد».
+> افتحوا الرابط، وأدخلوا رمز الفصل `<الرمز>` واسمكم. لوحة المفاتيح العربية موجودة في زر «ع» بجانب خانة الكتابة، ويمكنكم تكبير النص من زر «Aa». عندما يبدأ الدرس يظهر زر «انضم إلى الدرس». ميكروفونكم مغلق في البداية؛ اضغطوا «إلغاء الكتم» عندما تريدون التحدث، أو ارفعوا أيديكم من «المزيد». ويمكنكم خفض صوت الدرس من «المزيد» أيضًا.
 >
-> **English:** Here is our class link: `<link>`. Open it and enter the class code `<code>` and your name. The ع button next to the message box opens an Arabic keyboard, and the Aa button makes the text larger. When the lesson starts, a Join lesson button appears. Your microphone starts muted: tap Unmute to speak, or raise your hand from More.
+> **English:** Here is our class link: `<link>`. Open it and enter the class code `<code>` and your name. The ع button next to the message box opens an Arabic keyboard, and the Aa button makes the text larger. When the lesson starts, a Join lesson button appears. Your microphone starts muted: tap Unmute to speak, or raise your hand from More. You can also turn the lesson volume down from More.
 
 ## Setting up the server
 

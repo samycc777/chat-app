@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch, watchEffect } from 'vue';
+import { computed, defineAsyncComponent, onMounted, ref, watch, watchEffect } from 'vue';
 import { LoaderCircle, WifiOff } from 'lucide-vue-next';
 import type { Socket } from 'socket.io-client';
 import type { Conversation, OnlineUser, User } from './types';
@@ -9,7 +9,11 @@ import { useI18n } from './i18n';
 import Auth from './components/Auth.vue';
 import ChatView from './components/ChatView.vue';
 import ClassroomHeader from './components/ClassroomHeader.vue';
-import LessonView from './components/LessonView.vue';
+
+// LiveKit makes up most of the app's code, so the lesson screen loads only when there is a lesson;
+// it is fetched as soon as one starts, before anyone taps to join it.
+const loadLessonView = () => import('./components/LessonView.vue');
+const LessonView = defineAsyncComponent(loadLessonView);
 
 type Hand = { userId: string; displayName: string };
 type Lesson = { conversationId: string; presenterId: string; startedAt?: number; hands?: Hand[] };
@@ -25,6 +29,7 @@ const connection = ref<'connecting' | 'connected' | 'reconnecting'>('connecting'
 const onlineUsers = ref(new Map<string, OnlineUser>());
 const whiteboard = ref<Lesson | null>(null);
 const showWhiteboard = ref(false);
+watch(whiteboard, lesson => { if (lesson) loadLessonView().catch(() => {}); });
 const className = ref('');
 const isTeacher = computed(() => currentUser.value?.role === 'teacher');
 const theme = ref<'light' | 'dark'>(localStorage.getItem('classroom-theme') === 'dark' ? 'dark' : 'light');

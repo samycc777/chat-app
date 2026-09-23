@@ -38,6 +38,9 @@
   <string name="participants_count">المشاركون (%1$d)</string>
   <string name="participants_hands"> · ✋ %1$d</string>
   <string name="action_lower_hand">خفض اليد</string>
+  <string name="action_mute_all">كتم الجميع</string>
+  <string name="action_mute_student">كتم %1$s</string>
+  <string name="mute_failed">تعذّر الكتم. حاول مرة أخرى.</string>
   <string name="hand_raised_toast">✋ يد مرفوعة: %1$s</string>
   <string name="chat_image">📷 صورة</string>
   <string name="chat_file">📄 %1$s</string>

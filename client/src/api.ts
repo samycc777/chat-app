@@ -40,6 +40,9 @@ export const api = {
   getClassInfo: (): Promise<{ name: string | null }> => request('/api/class'),
   getLiveKitToken: (conversationId: string): Promise<LiveKitCredentials> =>
     request('/api/livekit/token', { method: 'POST', body: JSON.stringify({ conversationId }) }),
+  // Without an identity, mutes every student's microphone.
+  muteInLesson: (identity?: string): Promise<{ muted: number }> =>
+    request('/api/lesson/mute', { method: 'POST', body: JSON.stringify(identity ? { identity } : {}) }),
   getUploadLimit: (): Promise<number> => {
     if (cachedUploadLimit !== null) return Promise.resolve(cachedUploadLimit);
     if (pendingUploadLimit) return pendingUploadLimit;

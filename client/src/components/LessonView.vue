@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
-  Ellipsis, Hand, Headphones, Info, Maximize, MessageSquare, Mic, MicOff, Minimize, Radio, Users, Volume2, VolumeX, X,
+  Ellipsis, Hand, Info, Maximize, MessageSquare, Mic, MicOff, Minimize, Radio, RotateCcw, ScreenShare, ScreenShareOff,
+  Users, Volume2, VolumeX, X,
 } from 'lucide-vue-next';
-import { Room, RoomEvent, Track, type Participant, type RemoteParticipant, type RemoteTrack } from 'livekit-client';
-import { api } from '../api';
+import { Room, RoomEvent, Track, type Participant, type RemoteParticipant, type RemoteTrack, type TrackPublication } from 'livekit-client';
+import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import Avatar from './Avatar.vue';
 
 type Sheet = 'participants' | 'chat' | 'more' | 'info' | 'leave';
+type Status = 'joining' | 'waiting' | 'live' | 'sharing' | 'reconnecting' | 'disconnected';
 type LessonMessage = { type: 'reaction'; emoji: string };
 type LessonParticipant = { identity: string; name: string; local: boolean; teacher: boolean; micOn: boolean; speaking: boolean };
 
@@ -23,13 +25,13 @@ const props = defineProps<{
   hands: { userId: string; displayName: string }[];
 }>();
 const emit = defineEmits<{ leave: []; end: [] }>();
-const { t } = useI18n();
+const { t, translateError } = useI18n();
 const overlay = ref<HTMLElement>();
 const video = ref<HTMLVideoElement>();
-const status = ref(t('joiningLesson'));
+const status = ref<Status>('joining');
 const error = ref('');
-const micJoined = ref(false);
-const micMuted = ref(false);
+const micOn = ref(false);
+const sharingScreen = ref(false);
 const audioBlocked = ref(false);
 const soundOn = ref(true);
 const sheet = ref<Sheet | null>(null);
@@ -44,9 +46,21 @@ const startedAt = ref(0);
 const now = ref(Date.now());
 const fullscreen = ref(false);
 const fullscreenSupported = typeof document !== 'undefined' && document.fullscreenEnabled;
+// Phones and tablets cannot share their screen from a browser; the teacher uses the Android app there.
+const canShareScreen = computed(() => props.presenter && typeof navigator.mediaDevices?.getDisplayMedia === 'function');
 const chromeVisible = ref(true);
-const live = computed(() => status.value === t('lessonLive') && !error.value);
+const live = computed(() => status.value === 'live' && !error.value);
+const statusText = computed(() => ({
+  joining: t('joiningLesson'),
+  waiting: t('waitingForTeacherScreen'),
+  live: t('lessonLive'),
+  sharing: t('youAreSharing'),
+  reconnecting: t('lessonReconnecting'),
+  disconnected: t('lessonDisconnected'),
+})[status.value]);
 let room: Room | null = null;
+let wakeLock: WakeLockSentinel | null = null;
+let mutingMyself = false;
 let hideChromeTimer: ReturnType<typeof setTimeout> | undefined;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let clockTimer: ReturnType<typeof setInterval> | undefined;
@@ -57,6 +71,7 @@ const detachedAudio: HTMLMediaElement[] = [];
 
 const myIdentity = computed(() => props.userId);
 const myHandRaised = computed(() => raisedHands.value.has(myIdentity.value));
+const studentsWithMicOn = computed(() => participants.value.filter(person => !person.local && !person.teacher && person.micOn).length);
 const elapsed = computed(() => {
   if (!startedAt.value) return '';
   const seconds = Math.max(0, Math.floor((now.value - startedAt.value) / 1000));
@@ -122,13 +137,16 @@ function refreshParticipants() {
     .map(participant => describe(participant, false))
     .sort((a, b) => Number(b.teacher) - Number(a.teacher) || handOrder(a.identity) - handOrder(b.identity) || a.name.localeCompare(b.name));
   participants.value = [describe(room.localParticipant, true), ...others];
+  micOn.value = room.localParticipant.isMicrophoneEnabled;
+  sharingScreen.value = room.localParticipant.isScreenShareEnabled;
+  if (props.presenter && (status.value === 'waiting' || status.value === 'sharing')) status.value = sharingScreen.value ? 'sharing' : 'waiting';
 }
 
 function attach(track: RemoteTrack) {
   if (disposed) return;
   if (track.kind === Track.Kind.Video && track.source === Track.Source.ScreenShare && video.value) {
     track.attach(video.value);
-    status.value = t('lessonLive');
+    status.value = 'live';
     return;
   }
   if (track.kind === Track.Kind.Audio) {
@@ -186,37 +204,37 @@ async function toggleSound() {
   applySound();
 }
 async function enableAudio() {
-  try { await room?.startAudio(); audioBlocked.value = false; soundOn.value = true; applySound(); } catch { error.value = t('voicePlaybackBlocked'); }
+  try { await room?.startAudio(); audioBlocked.value = false; soundOn.value = true; applySound(); } catch { showToast(t('voicePlaybackBlocked')); }
 }
-async function joinMic() {
+// Students join listening, with their microphone off, so a class of open microphones never
+// drowns out the teacher; each student unmutes to speak.
+async function setMicrophone(enabled: boolean) {
   if (!room) return;
   try {
-    soundOn.value = true;
-    applySound();
-    if (audioBlocked.value) await enableAudio();
-    await room.localParticipant.setMicrophoneEnabled(true);
-    micJoined.value = true;
-    micMuted.value = false;
-  } catch { error.value = t('voiceSetupFailed'); }
-}
-async function toggleMute() {
-  if (!room || !micJoined.value) return;
-  try {
-    const newMuted = !micMuted.value;
-    await room.localParticipant.setMicrophoneEnabled(!newMuted);
-    micMuted.value = newMuted;
-  } catch { error.value = t('voiceSetupFailed'); }
-}
-async function toggleAudioConnection() {
-  sheet.value = null;
-  if (micJoined.value || soundOn.value) {
-    try { await room?.localParticipant.setMicrophoneEnabled(false); } catch { /* already off */ }
-    micJoined.value = false;
-    soundOn.value = false;
-  } else {
-    await joinMic();
+    if (enabled && audioBlocked.value) await enableAudio();
+    mutingMyself = !enabled;
+    await room.localParticipant.setMicrophoneEnabled(enabled);
+  } catch {
+    showToast(t('micBlocked'));
+  } finally {
+    mutingMyself = false;
+    refreshParticipants();
   }
-  applySound();
+}
+async function muteParticipant(identity?: string) {
+  try {
+    await api.muteInLesson(identity);
+    if (!identity) showToast(t('mutedEveryone'));
+  } catch (cause) {
+    showToast(cause instanceof ApiError ? translateError(cause.message) : t('muteFailed'));
+  }
+}
+async function toggleScreenShare() {
+  if (!room) return;
+  try {
+    await room.localParticipant.setScreenShareEnabled(!sharingScreen.value, { audio: false, contentHint: 'text', selfBrowserSurface: 'exclude' });
+  } catch { /* The teacher closed the browser's screen picker. */ }
+  refreshParticipants();
 }
 async function toggleFullscreen() {
   sheet.value = null;
@@ -226,6 +244,14 @@ async function toggleFullscreen() {
   } catch { /* Some mobile browsers only allow video elements to go full screen. */ }
 }
 function onFullscreenChange() { fullscreen.value = Boolean(document.fullscreenElement); }
+
+// Keeps a phone from dimming and locking while its student watches the teacher's screen. Browsers
+// release the lock whenever the page is hidden, so it is requested again when the page returns.
+async function keepScreenOn() {
+  if (disposed || document.visibilityState !== 'visible' || !('wakeLock' in navigator)) return;
+  try { wakeLock = await navigator.wakeLock.request('screen'); } catch { /* Battery saver, or not supported. */ }
+}
+function onVisibilityChange() { if (document.visibilityState === 'visible') void keepScreenOn(); }
 
 function onChatMessage(message: { conversationId: string; senderId: string }) {
   if (message.conversationId === props.conversationId && message.senderId !== myIdentity.value && sheet.value !== 'chat') unreadChat.value++;
@@ -238,36 +264,62 @@ async function connect() {
     startedAt.value = credentials.startedAt;
     const connectingRoom = new Room();
     room = connectingRoom;
-    room.on(RoomEvent.TrackSubscribed, (track) => attach(track as RemoteTrack));
-    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+    // Events from a room that a rejoin has replaced are ignored.
+    const current = () => !disposed && room === connectingRoom;
+    connectingRoom.on(RoomEvent.TrackSubscribed, (track) => { if (current()) attach(track as RemoteTrack); });
+    connectingRoom.on(RoomEvent.TrackUnsubscribed, (track) => {
       const elements = track.detach();
       for (const element of elements) {
         const index = detachedAudio.indexOf(element);
         if (index !== -1) detachedAudio.splice(index, 1);
         if (element !== video.value) element.remove();
       }
-      if (!disposed && track.source === Track.Source.ScreenShare) status.value = t('waitingForTeacherScreen');
+      if (current() && track.source === Track.Source.ScreenShare) status.value = 'waiting';
     });
-    room.on(RoomEvent.AudioPlaybackStatusChanged, () => { if (!disposed) audioBlocked.value = !connectingRoom.canPlaybackAudio; });
-    room.on(RoomEvent.Disconnected, () => { if (!disposed && !error.value) status.value = t('lessonDisconnected'); });
-    room.on(RoomEvent.DataReceived, onData);
+    connectingRoom.on(RoomEvent.AudioPlaybackStatusChanged, () => { if (current()) audioBlocked.value = !connectingRoom.canPlaybackAudio; });
+    // LiveKit retries a dropped connection for a while before giving up with Disconnected.
+    connectingRoom.on(RoomEvent.Reconnecting, () => { if (current()) status.value = 'reconnecting'; });
+    connectingRoom.on(RoomEvent.Reconnected, () => {
+      if (!current()) return;
+      const screenShown = [...connectingRoom.remoteParticipants.values()].some(participant => participant.getTrackPublication(Track.Source.ScreenShare)?.track);
+      status.value = screenShown ? 'live' : 'waiting';
+      refreshParticipants();
+    });
+    connectingRoom.on(RoomEvent.Disconnected, () => { if (current() && !error.value) status.value = 'disconnected'; });
+    connectingRoom.on(RoomEvent.DataReceived, onData);
+    connectingRoom.on(RoomEvent.TrackMuted, (publication: TrackPublication, participant: Participant) => {
+      if (current() && participant === connectingRoom.localParticipant && publication.source === Track.Source.Microphone && !mutingMyself) {
+        showToast(t('teacherMutedYou'));
+      }
+    });
     for (const event of [
       RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected, RoomEvent.ParticipantNameChanged, RoomEvent.ParticipantAttributesChanged,
       RoomEvent.TrackPublished, RoomEvent.TrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
       RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished, RoomEvent.ActiveSpeakersChanged,
-    ] as const) room.on(event, refreshParticipants);
+    ] as const) connectingRoom.on(event, () => { if (current()) refreshParticipants(); });
     await connectingRoom.connect(credentials.url, credentials.token);
-    if (disposed) { connectingRoom.disconnect(); return; }
-    refreshParticipants();
-    for (const participant of room.remoteParticipants.values()) {
+    if (!current()) { connectingRoom.disconnect(); return; }
+    status.value = 'waiting';
+    for (const participant of connectingRoom.remoteParticipants.values()) {
       for (const publication of participant.trackPublications.values()) if (publication.track) attach(publication.track);
     }
-    // The teacher may already be sharing, in which case attach() has just marked the lesson live.
-    if (status.value !== t('lessonLive')) status.value = t('waitingForTeacherScreen');
+    refreshParticipants();
+    // The teacher is heard as soon as the lesson opens; students start muted.
+    if (props.presenter) await setMicrophone(true);
   } catch (cause) {
     if (disposed) return;
-    error.value = cause instanceof Error ? cause.message : t('lessonJoinFailed'); status.value = '';
+    error.value = cause instanceof ApiError ? translateError(cause.message) : t('lessonConnectFailed');
   }
+}
+async function rejoin() {
+  const previous = room;
+  room = null;
+  previous?.disconnect();
+  detachedAudio.splice(0).forEach(element => element.remove());
+  error.value = '';
+  status.value = 'joining';
+  participants.value = [];
+  await connect();
 }
 function cleanup() {
   if (disposed) return;
@@ -279,6 +331,8 @@ function cleanup() {
   getSocket()?.off('new_message', onChatMessage);
   document.removeEventListener('fullscreenchange', onFullscreenChange);
   document.removeEventListener('keydown', onKeydown);
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  void wakeLock?.release().catch(() => {});
   if (document.fullscreenElement === overlay.value) void document.exitFullscreen().catch(() => {});
   room?.disconnect(); room = null;
   detachedAudio.splice(0).forEach(element => element.remove());
@@ -291,7 +345,9 @@ onMounted(() => {
   document.addEventListener('fullscreenchange', onFullscreenChange);
   // Escape closes an open panel wherever keyboard focus happens to be.
   document.addEventListener('keydown', onKeydown);
+  document.addEventListener('visibilitychange', onVisibilityChange);
   clockTimer = setInterval(() => { now.value = Date.now(); }, 1000);
+  void keepScreenOn();
   void connect();
 });
 onBeforeUnmount(cleanup);
@@ -312,7 +368,7 @@ onBeforeUnmount(cleanup);
         <div>
           <span class="lesson-eyebrow"><span class="live-dot" />{{ t('liveNow') }}<bdi v-if="elapsed" class="lesson-clock">{{ elapsed }}</bdi></span>
           <strong>{{ t('liveLesson') }}</strong>
-          <p v-if="status">{{ status }}</p>
+          <p v-if="!error">{{ statusText }}</p>
         </div>
       </div>
       <div class="lesson-header-actions">
@@ -330,16 +386,28 @@ onBeforeUnmount(cleanup);
     </header>
 
     <main class="lesson-stage" @pointerup="onStageTap">
-      <video ref="video" class="lesson-screen" autoplay playsinline />
+      <!-- Muted: the teacher's voice plays through separate audio elements, and a muted video may always autoplay. -->
+      <video ref="video" class="lesson-screen" autoplay playsinline muted />
       <div v-if="error" class="lesson-state-card error" role="alert">
         <span class="lesson-state-icon"><X :size="22" /></span>
         <strong>{{ t('lessonJoinFailed') }}</strong>
         <p dir="auto">{{ error }}</p>
+        <button class="lesson-state-action" type="button" @click="rejoin"><RotateCcw :size="16" />{{ t('rejoinLesson') }}</button>
       </div>
-      <div v-else-if="status !== t('lessonLive')" class="lesson-state-card" role="status">
+      <div v-else-if="status === 'disconnected'" class="lesson-state-card" role="status">
+        <span class="lesson-state-icon"><Radio :size="22" /></span>
+        <strong>{{ t('lessonDisconnected') }}</strong>
+        <button class="lesson-state-action" type="button" @click="rejoin"><RotateCcw :size="16" />{{ t('rejoinLesson') }}</button>
+      </div>
+      <div v-else-if="status === 'sharing'" class="lesson-state-card" role="status">
+        <span class="lesson-state-icon"><ScreenShare :size="22" /></span>
+        <strong>{{ t('youAreSharing') }}</strong>
+        <p>{{ t('youAreSharingBody') }}</p>
+      </div>
+      <div v-else-if="status !== 'live'" class="lesson-state-card" role="status">
         <span class="lesson-state-icon"><Radio :size="22" /></span>
         <strong>{{ t('lessonWaitingTitle') }}</strong>
-        <p>{{ status || t('lessonWaitingBody') }}</p>
+        <p>{{ statusText }}</p>
       </div>
     </main>
 
@@ -360,30 +428,31 @@ onBeforeUnmount(cleanup);
     </button>
 
     <footer class="lesson-controls" @pointerdown="showChrome">
-      <button v-if="!micJoined" class="lesson-control" type="button" @click="joinMic">
-        <Headphones :size="22" />
-        <span>{{ t('joinAudio') }}</span>
-      </button>
       <button
-        v-else
-        class="lesson-control"
-        :class="{ active: !micMuted, muted: micMuted }"
+        class="lesson-control mic"
+        :class="{ active: micOn, muted: !micOn }"
         type="button"
-        :aria-pressed="micMuted"
-        @click="toggleMute"
+        :aria-pressed="micOn"
+        :disabled="status === 'joining' || Boolean(error)"
+        @click="setMicrophone(!micOn)"
       >
-        <Mic v-if="!micMuted" :size="22" />
+        <Mic v-if="micOn" :size="22" />
         <MicOff v-else :size="22" />
-        <span>{{ micMuted ? t('unmute') : t('mute') }}</span>
+        <span>{{ micOn ? t('mute') : t('unmute') }}</span>
       </button>
-      <button class="lesson-control" type="button" :aria-pressed="sheet === 'chat'" @click="openSheet('chat')">
+      <button v-if="canShareScreen" class="lesson-control share" :class="{ active: sharingScreen }" type="button" :aria-pressed="sharingScreen" @click="toggleScreenShare">
+        <ScreenShareOff v-if="sharingScreen" :size="22" />
+        <ScreenShare v-else :size="22" />
+        <span>{{ sharingScreen ? t('stopSharing') : t('shareScreen') }}</span>
+      </button>
+      <button class="lesson-control chat" type="button" :aria-pressed="sheet === 'chat'" @click="openSheet('chat')">
         <span class="lesson-control-icon">
           <MessageSquare :size="22" />
           <span v-if="unreadChat" class="lesson-badge">{{ unreadChat > 9 ? '9+' : unreadChat }}</span>
         </span>
         <span>{{ t('lessonChat') }}</span>
       </button>
-      <button class="lesson-control" type="button" :aria-pressed="sheet === 'participants'" @click="openSheet('participants')">
+      <button class="lesson-control people" type="button" :aria-pressed="sheet === 'participants'" @click="openSheet('participants')">
         <span class="lesson-control-icon">
           <Users :size="22" />
           <span v-if="participants.length" class="lesson-count">{{ participants.length }}</span>
@@ -391,7 +460,7 @@ onBeforeUnmount(cleanup);
         </span>
         <span>{{ t('participants') }}</span>
       </button>
-      <button class="lesson-control" type="button" :aria-pressed="sheet === 'more'" @click="openSheet('more')">
+      <button class="lesson-control more" type="button" :aria-pressed="sheet === 'more'" @click="openSheet('more')">
         <Ellipsis :size="22" />
         <span>{{ t('more') }}</span>
       </button>
@@ -409,6 +478,9 @@ onBeforeUnmount(cleanup);
           <button class="lesson-round-btn small" type="button" :aria-label="t('close')" @click="sheet = null"><X :size="18" /></button>
           <strong>{{ t('participantsCount', { count: participants.length }) }}</strong>
         </div>
+        <button v-if="isTeacher && studentsWithMicOn" class="lesson-mute-all" type="button" @click="muteParticipant()">
+          <MicOff :size="17" />{{ t('muteEveryone') }}
+        </button>
         <ul class="lesson-people">
           <li v-for="person in participants" :key="person.identity" :class="{ speaking: person.speaking }">
             <Avatar :name="person.name" :color="avatarColor(person.identity)" />
@@ -426,7 +498,17 @@ onBeforeUnmount(cleanup);
               @click="person.local ? toggleHand() : lowerHandOf(person.identity)"
             >✋</button>
             <span v-else-if="raisedHands.has(person.identity)" class="lesson-person-hand">✋</span>
-            <Mic v-if="person.micOn" :size="20" class="lesson-person-mic" :class="{ on: person.speaking }" />
+            <button
+              v-if="isTeacher && !person.local && !person.teacher && person.micOn"
+              class="lesson-person-mute"
+              type="button"
+              :title="t('muteParticipant', { name: person.name })"
+              :aria-label="t('muteParticipant', { name: person.name })"
+              @click="muteParticipant(person.identity)"
+            >
+              <Mic :size="20" class="lesson-person-mic on" />
+            </button>
+            <Mic v-else-if="person.micOn" :size="20" class="lesson-person-mic" :class="{ on: person.speaking }" />
             <MicOff v-else :size="20" class="lesson-person-mic off" />
           </li>
         </ul>
@@ -452,9 +534,6 @@ onBeforeUnmount(cleanup);
           <button type="button" @click="openSheet('participants')">
             <span class="lesson-control-icon"><Users :size="24" /><span class="lesson-count">{{ participants.length }}</span></span>
             {{ t('participants') }}
-          </button>
-          <button type="button" @click="toggleAudioConnection">
-            <Headphones :size="24" />{{ micJoined || soundOn ? t('disconnectAudio') : t('joinAudio') }}
           </button>
           <button v-if="fullscreenSupported" type="button" @click="toggleFullscreen">
             <Minimize v-if="fullscreen" :size="24" /><Maximize v-else :size="24" />{{ fullscreen ? t('exitFullscreen') : t('fullscreen') }}

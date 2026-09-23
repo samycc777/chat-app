@@ -1512,6 +1512,59 @@ textarea:focus-visible,
   background: rgba(240, 119, 110, 0.13);
 }
 
+.lesson-state-action {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+  padding: 0 16px;
+  border-radius: 12px;
+  color: #0b1a14;
+  background: #59cda0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.lesson-control:disabled {
+  opacity: 0.45;
+}
+
+.lesson-control.share.active > svg {
+  color: #59cda0;
+}
+
+.lesson-mute-all {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0 2px;
+  border-radius: 12px;
+  color: #edf3ef;
+  background: rgba(240, 119, 110, 0.16);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.lesson-mute-all:hover {
+  background: rgba(240, 119, 110, 0.26);
+}
+
+/* The teacher taps a student's open microphone to mute it. */
+button.lesson-person-mute {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border-radius: 10px;
+  background: rgba(89, 205, 160, 0.14);
+}
+
+button.lesson-person-mute:hover {
+  background: rgba(240, 119, 110, 0.22);
+}
+
 .lesson-control {
   min-width: 0;
   min-height: 58px;

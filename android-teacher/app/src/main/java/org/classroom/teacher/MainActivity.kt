@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
 
   private lateinit var lessonLayout: LinearLayout
   private lateinit var participantHeader: TextView
+  private lateinit var muteAllBtn: TextView
   private lateinit var participantList: LinearLayout
   private lateinit var chatMessages: LinearLayout
   private lateinit var chatScroll: ScrollView
@@ -396,16 +397,33 @@ class MainActivity : AppCompatActivity() {
     }
     lessonLayout.addView(lessonStatusText)
 
+    val participantHeaderRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding(dp(20), dp(12), dp(16), dp(8))
+      setBackgroundColor(Color.parseColor("#0f1a13"))
+    }
     participantHeader = TextView(this).apply {
       text = getString(R.string.participants_title)
-      setPadding(dp(20), dp(16), dp(20), dp(8))
       setTextColor(Color.parseColor("#8b949e"))
       textSize = 11f
       typeface = Typeface.DEFAULT_BOLD
-      gravity = Gravity.END
-      setBackgroundColor(Color.parseColor("#0f1a13"))
+      gravity = Gravity.START
     }
-    lessonLayout.addView(participantHeader)
+    participantHeaderRow.addView(participantHeader, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    // Shown while any student's microphone is open, for a class that has become noisy.
+    muteAllBtn = TextView(this).apply {
+      text = getString(R.string.action_mute_all)
+      setTextColor(Color.parseColor("#ffb4ae"))
+      textSize = 12f
+      typeface = Typeface.DEFAULT_BOLD
+      background = roundRect("#3a1d1b", 8)
+      setPadding(dp(12), dp(6), dp(12), dp(6))
+      visibility = View.GONE
+      setOnClickListener { muteStudents(null) }
+    }
+    participantHeaderRow.addView(muteAllBtn)
+    lessonLayout.addView(participantHeaderRow)
 
     participantList = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
@@ -526,6 +544,7 @@ class MainActivity : AppCompatActivity() {
     val hands = students.count { it.handRaised }
     participantHeader.text = getString(R.string.participants_count, rows.size) +
       if (hands == 0) "" else getString(R.string.participants_hands, hands)
+    muteAllBtn.visibility = if (students.any { it.micOn && !it.teacher }) View.VISIBLE else View.GONE
   }
 
   private fun addParticipantRow(participant: ParticipantRow) {
@@ -570,6 +589,13 @@ class MainActivity : AppCompatActivity() {
     val micIcon = TextView(this).apply {
       text = if (participant.micOn) "🎤" else "🔇"
       textSize = 14f
+      // The teacher taps a student's open microphone to mute it.
+      if (participant.micOn && !participant.teacher && participant.identity != null) {
+        background = roundRect("#1f4d2e", 8)
+        setPadding(dp(6), dp(2), dp(6), dp(2))
+        contentDescription = getString(R.string.action_mute_student, participant.name)
+        setOnClickListener { muteStudents(participant.identity) }
+      }
     }
     row.addView(micIcon)
 
@@ -665,6 +691,16 @@ class MainActivity : AppCompatActivity() {
     raisedHands.remove(identity)
     updateParticipants()
     socket?.emit("lower_hand", JSONObject().put("conversationId", CONVERSATION_ID).put("userId", identity))
+  }
+
+  // Without an identity, mutes every student's microphone. Students can unmute themselves again.
+  private fun muteStudents(identity: String?) {
+    val token = authToken ?: return
+    val body = JSONObject().apply { if (identity != null) put("identity", identity) }
+    lifecycleScope.launch {
+      val muted = runCatching { withContext(Dispatchers.IO) { request("${baseUrl()}/api/lesson/mute", body, token) } }.isSuccess
+      if (!muted) Toast.makeText(this@MainActivity, R.string.mute_failed, Toast.LENGTH_SHORT).show()
+    }
   }
 
   private fun watchRoom(activeRoom: Room) {

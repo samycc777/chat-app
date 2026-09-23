@@ -294,6 +294,40 @@ test('raised hands are kept by the server, shown to late joiners, and only the t
   await ended;
 });
 
+test('the teacher can mute one student or everyone, and students cannot mute anyone', async () => {
+  const conversationId = 'classroom';
+  const teacher = await joinTeacher('Muting teacher');
+  const loud = await join('Loud student');
+  const quiet = await join('Quiet student');
+  const teacherSocket = await connect(teacher.token);
+  await emitWithAck(teacherSocket, 'wb_start', { conversationId });
+  const { roomName } = await (await fetch(`${baseUrl}/api/livekit/token`, {
+    method: 'POST', headers: { Authorization: `Bearer ${teacher.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
+  })).json();
+  const microphone = (sid, muted = false) => ({ sid, type: 'AUDIO', source: 'MICROPHONE', muted });
+  liveKit.participants.set(roomName, [
+    { identity: teacher.user.id, attributes: { role: 'teacher' }, tracks: [microphone('TR_teacher_mic')] },
+    { identity: loud.user.id, attributes: { role: 'student' }, tracks: [microphone('TR_loud_mic'), { sid: 'TR_loud_screen', type: 'VIDEO', source: 'SCREEN_SHARE', muted: false }] },
+    { identity: quiet.user.id, attributes: { role: 'student' }, tracks: [microphone('TR_quiet_mic', true)] },
+  ]);
+  const mute = (token, body) => fetch(`${baseUrl}/api/lesson/mute`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const mutedTracks = () => liveKitCalls('MutePublishedTrack').filter(call => call.data.room === roomName).map(call => call.data.trackSid);
+
+  assert.equal((await mute(loud.token, { identity: quiet.user.id })).status, 403);
+  assert.deepEqual(mutedTracks(), []);
+  assert.deepEqual(await (await mute(teacher.token, { identity: loud.user.id })).json(), { muted: 1 });
+  assert.deepEqual(mutedTracks(), ['TR_loud_mic']);
+  // Everyone's microphone except the teacher's; muted microphones and other tracks are left alone.
+  assert.deepEqual(await (await mute(teacher.token, {})).json(), { muted: 1 });
+  assert.deepEqual(mutedTracks(), ['TR_loud_mic', 'TR_loud_mic']);
+  const ended = nextEvent(teacherSocket, 'wb_ended');
+  teacherSocket.emit('wb_end', { conversationId });
+  await ended;
+  assert.equal((await mute(teacher.token, {})).status, 409);
+});
+
 test('a burst of events is refused with an error instead of disconnecting the student', async () => {
   const conversationId = 'classroom';
   const student = await join('Fast typist');

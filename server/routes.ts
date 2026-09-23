@@ -10,7 +10,7 @@ import { MAX_UPLOAD_BYTES, UPLOADS_DIR } from './config';
 import { detectMime } from './attachments';
 import { AccessToken, TrackSource } from 'livekit-server-sdk';
 import { getLessonSession } from './lesson';
-import { liveKitConfig } from './livekit';
+import { liveKitConfig, roomService } from './livekit';
 import { rateLimit } from './rateLimit';
 
 const router = Router();
@@ -65,6 +65,32 @@ router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
   });
   res.setHeader('Cache-Control', 'no-store');
   res.json({ url: config.url, token: await token.toJwt(), roomName: session.roomName, encryptionKey: session.encryptionKey, startedAt: session.startedAt });
+});
+
+// The teacher can silence one student's microphone, or everyone's but the teachers'. Students can
+// unmute themselves again; this is for a forgotten open microphone, not a punishment.
+router.post('/lesson/mute', async (req: AuthRequest, res: Response) => {
+  if (req.role !== 'teacher') { res.status(403).json({ error: 'Only the teacher can mute students' }); return; }
+  const session = getLessonSession(CLASSROOM_ID);
+  if (!session) { res.status(409).json({ error: 'No lesson is active' }); return; }
+  const service = roomService();
+  if (!service) { res.status(503).json({ error: 'Lesson streaming is not configured' }); return; }
+  const target = typeof req.body?.identity === 'string' ? req.body.identity : null;
+  try {
+    let muted = 0;
+    for (const participant of await service.listParticipants(session.roomName)) {
+      const everyoneElse = !target && participant.identity !== req.userId && participant.attributes?.role !== 'teacher';
+      if (participant.identity !== target && !everyoneElse) continue;
+      for (const track of participant.tracks) {
+        if (track.source !== TrackSource.MICROPHONE || track.muted) continue;
+        await service.mutePublishedTrack(session.roomName, participant.identity, track.sid, true);
+        muted++;
+      }
+    }
+    res.json({ muted });
+  } catch {
+    res.status(502).json({ error: 'The lesson server could not be reached' });
+  }
 });
 
 function memberOf(conversationId: string, userId: string) {

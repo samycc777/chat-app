@@ -212,8 +212,15 @@ The Android project builds with Gradle 9.3, because the Java inside Android Stud
 older Gradle versions can't run on. An app installed before screen sharing existed still shows "this device
 can't share its screen" until it is updated.
 
-Calls keep going when the iPhone screen locks (the app is allowed to play audio in the background). On
-Android, check this on a real phone: some phones pause apps in the background to save battery.
+Calls keep going when the iPhone screen locks (the app is allowed to play audio in the background).
+
+**On Android, calls keep going while another app is in front.** Android cuts an app's microphone and lets
+its sound stop once it is in the background, unless the app shows a notification that it is in a call.
+So while someone is in a voice channel, `CallPlugin.kt` runs `CallService.kt`, which shows "You are in a
+voice call" with a **Leave call** button. The call screen switches it on when the call starts and off when
+it ends (`client/src/nativeCall.ts`). An app installed before this existed still goes quiet in the
+background until it is updated. Some phones also pause apps to save battery; if a call still stops, turn
+off battery saving for Majlis in the phone's settings.
 
 ## Changing things
 

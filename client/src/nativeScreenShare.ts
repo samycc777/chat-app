@@ -13,7 +13,7 @@ type Bridge = {
   addListener: (plugin: string, event: string, callback: () => void) => { remove: () => Promise<void> };
 };
 
-const bridge = (window as unknown as { Capacitor?: Bridge }).Capacitor;
+export const bridge = (window as unknown as { Capacitor?: Bridge }).Capacitor;
 // An app installed before screen sharing existed has the bridge but not the plugin.
 export const phoneScreenShareAvailable = Boolean(bridge?.PluginHeaders?.some(plugin => plugin.name === 'ScreenShare'));
 

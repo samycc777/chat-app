@@ -20,6 +20,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Keeps a voice call going, microphone and sound, while another app is shown. -->
+        <service
+            android:name=".CallService"
+            android:exported="false"
+            android:stopWithTask="true"
+            android:foregroundServiceType="microphone|mediaPlayback" />
+
         <!-- Keeps the microphone on while another app is shown during screen sharing. -->
         <service
             android:name=".ScreenShareService"
@@ -48,6 +55,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Voice calls keep playing the other people's voices while another app is on screen. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- The camera is optional, so phones without one can still install the app. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

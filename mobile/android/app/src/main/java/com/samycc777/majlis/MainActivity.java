@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Plugins must be registered before the bridge starts, so the call screen can find them.
         registerPlugin(ScreenSharePlugin.class);
+        registerPlugin(CallPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

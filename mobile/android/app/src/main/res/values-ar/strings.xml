@@ -4,4 +4,8 @@
     <string name="screen_share_title">أنت تشارك شاشتك</string>
     <string name="screen_share_text">يرى كل من في المكالمة شاشتك.</string>
     <string name="screen_share_stop">إيقاف المشاركة</string>
+    <string name="call_channel">المكالمات الصوتية</string>
+    <string name="call_title">أنت في مكالمة صوتية</string>
+    <string name="call_text">يظل أصدقاؤك يسمعونك وأنت تستخدم تطبيقات أخرى.</string>
+    <string name="call_leave">مغادرة المكالمة</string>
 </resources>

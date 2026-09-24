@@ -15,6 +15,7 @@ import { warmVoice } from '../warmVoice';
 import {
   onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
 } from '../nativeScreenShare';
+import { endPhoneCall, keepPhoneCallGoing, onPhoneCallLeave } from '../nativeCall';
 import type { OnlineUser } from '../types';
 import Avatar from './Avatar.vue';
 import CallTile, { type Tile } from './CallTile.vue';
@@ -63,6 +64,7 @@ const cameraOn = ref(false);
 const sharingScreen = ref(false);
 let phoneShareStarting = false;
 const phoneShareListener = onPhoneScreenShareStopped(() => refresh());
+const phoneLeaveListener = onPhoneCallLeave(() => leave());
 const audioBlocked = ref(false);
 const soundOn = ref(true);
 const volume = ref(savedVolume());
@@ -329,6 +331,8 @@ async function setMicrophone(enabled: boolean) {
     if (enabled && audioBlocked.value) await enableAudio();
     await room.localParticipant.setMicrophoneEnabled(enabled);
     if (enabled) await warmMicrophone();
+    // The first time, the phone has only just been allowed to use the microphone.
+    if (enabled) keepPhoneCallGoing();
   } catch {
     showToast(t('micBlocked'));
   } finally {
@@ -454,6 +458,8 @@ async function connect() {
       }
     }
     refresh();
+    // Started before the microphone, so the call's sound keeps going even if the microphone is refused.
+    keepPhoneCallGoing();
     // Like Discord, you join a voice channel with your microphone on; one tap mutes it.
     await setMicrophone(true);
   } catch (cause) {
@@ -490,6 +496,8 @@ function cleanup() {
   // The phone's screen is a separate connection, so it would keep going after the call closes.
   if (sharingScreen.value && phoneScreenShareAvailable) void stopPhoneScreenShare().catch(() => {});
   void phoneShareListener?.remove();
+  void phoneLeaveListener?.remove();
+  endPhoneCall();
   room?.disconnect(); room = null;
   detachedAudio.splice(0).forEach(element => element.remove());
   audioContext?.removeEventListener('statechange', onMixerStateChange);

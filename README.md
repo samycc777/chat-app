@@ -17,7 +17,7 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
 - **Keep talking while you read.** Like Discord, the call keeps going when you open a text channel. The "Voice connected" panel at the bottom of the channel list mutes you or hangs up.
 - **Make channels.** The + next to Text channels or Voice channels creates one. The gear next to a channel renames or deletes it. Deleting a text channel deletes its messages and files for everyone; the last text channel cannot be deleted.
 - **Settings.** The gear next to your name at the bottom changes the text size, dark or light theme and language, and signs you out.
-- **Phones.** On a phone the channel list slides in from the ☰ button. Screens stay awake during a call, and the app reconnects by itself after a network drop. If a phone switches to another app during a call, the sound comes back by itself when you return; if it ever stays silent, tap the speaker button at the top of the call.
+- **Phones.** On a phone the channel list slides in from the ☰ button. Screens stay awake during a call, and the app reconnects by itself after a network drop. In the Android app, a call keeps going while you use another app: a "You are in a voice call" notification stays while you're in a call, with a Leave call button. In a phone browser, the sound may stop while you're in another app and comes back by itself when you return; if it ever stays silent, tap the speaker button at the top of the call.
 
 ## A message you can send to your friends
 

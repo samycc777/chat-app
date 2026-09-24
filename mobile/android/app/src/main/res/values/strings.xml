@@ -8,4 +8,8 @@
     <string name="screen_share_title">You are sharing your screen</string>
     <string name="screen_share_text">Everyone in the call can see your screen.</string>
     <string name="screen_share_stop">Stop sharing</string>
+    <string name="call_channel">Voice calls</string>
+    <string name="call_title">You are in a voice call</string>
+    <string name="call_text">Your friends can still hear you while you use other apps.</string>
+    <string name="call_leave">Leave call</string>
 </resources>

@@ -1,6 +1,0 @@
-<resources>
-  <!-- Android 14 and newer can share a single app, so the teacher shares only JNotes. -->
-  <string name="setup_instruction">بعد بدء الدرس، اختر «مشاركة تطبيق واحد» ثم اختر JNotes.</string>
-  <string name="screen_share_picker_instruction">اختر «مشاركة تطبيق واحد» ثم اختر JNotes.</string>
-  <string name="status_sharing">تتم مشاركة الشاشة الآن. انتقل إلى JNotes وابدأ الشرح.</string>
-</resources>

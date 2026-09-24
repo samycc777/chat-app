@@ -1,7 +1,7 @@
 {
-  "name": "chat-app",
+  "name": "hangout",
   "version": "1.0.0",
-  "description": "Online room for one class: chat, shared worksheets, and live lessons.",
+  "description": "A Discord-style room for friends: text channels, and voice channels that work like a Zoom call.",
   "main": "dist/index.js",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",

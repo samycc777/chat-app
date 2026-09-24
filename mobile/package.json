@@ -1,0 +1,30 @@
+{
+  "name": "hangout-mobile",
+  "private": true,
+  "version": "1.0.0",
+  "description": "iPhone and Android apps for Hangout: native shells that load the website.",
+  "type": "module",
+  "scripts": {
+    "sync": "cap sync",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android",
+    "build:android": "cap sync android && node scripts/gradle.mjs assembleDebug",
+    "build:android:release": "cap sync android && node scripts/gradle.mjs assembleRelease",
+    "build:ios:simulator": "cap sync ios && xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -destination \"generic/platform=iOS Simulator\" -derivedDataPath ios/DerivedData CODE_SIGNING_ALLOWED=NO build",
+    "assets": "node scripts/icons.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.2",
+    "sharp": "^0.32.6",
+    "typescript": "^5.9.3"
+  },
+  "allowScripts": {
+    "sharp@0.32.6": true
+  }
+}

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Hangout</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #313338;
+        color: #f2f3f5;
+        font-family: -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+      }
+      main {
+        box-sizing: border-box;
+        min-height: 100%;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        text-align: center;
+      }
+      p {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.4;
+        max-width: 320px;
+      }
+      button {
+        font: inherit;
+        font-size: 17px;
+        padding: 12px 32px;
+        border: 0;
+        border-radius: 8px;
+        background: #5865f2;
+        color: #fff;
+      }
+      button:active {
+        background: #4752c4;
+      }
+    </style>
+    <script src="server-url.js"></script>
+  </head>
+  <body>
+    <!-- The app normally loads the Hangout website straight away. This page
+         only appears when the website can't be reached. -->
+    <main>
+      <p>Can't reach the server. Check your internet connection.</p>
+      <button type="button" id="retry">Retry</button>
+    </main>
+    <script>
+      document.getElementById('retry').addEventListener('click', function () {
+        if (window.HANGOUT_URL) window.location.href = window.HANGOUT_URL;
+        else window.location.reload();
+      });
+    </script>
+  </body>
+</html>

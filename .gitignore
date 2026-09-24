@@ -9,6 +9,7 @@ uploads/*
 *.log
 .DS_Store
 .vite/
+*.tsbuildinfo
 android-teacher/keystore.properties
 android-teacher/*.jks
 android-teacher/*.keystore

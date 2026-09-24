@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import {
   Ellipsis, Hand, Maximize, Menu, Mic, MicOff, Minimize, PhoneOff, RotateCcw, ScreenShare, ScreenShareOff,
   Users, Video, VideoOff, Volume1, Volume2, VolumeX, X,
@@ -69,7 +69,8 @@ const volume = ref(savedVolume());
 const personVolumes = ref(savedPersonVolumes());
 const sheet = ref<Sheet | null>(null);
 const participants = ref<CallParticipant[]>([]);
-const tiles = ref<Tile[]>([]);
+// Shallow, because each tile holds a LiveKit track that Vue must not wrap; the list is replaced whole.
+const tiles = shallowRef<Tile[]>([]);
 const focusedKey = ref<string | null>(null);
 const raisedHands = computed(() => new Set(props.hands.map(hand => hand.userId)));
 const reactions = ref<{ id: number; emoji: string; name: string; drift: number }[]>([]);

@@ -12,3 +12,31 @@ uploads/*
 *.tsbuildinfo
 *~
 *.un~
+
+# Mobile apps (mobile/): dependencies, build output and signing secrets.
+# The native ios/ and android/ projects themselves are committed.
+mobile/node_modules/
+mobile/assets/
+mobile/www/server-url.js
+mobile/ios/DerivedData/
+mobile/ios/App/build/
+mobile/ios/App/output/
+mobile/ios/App/App/public/
+mobile/ios/App/App/capacitor.config.json
+xcuserdata/
+*.xcuserstate
+mobile/android/keystore.properties
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/android/.idea/
+mobile/android/app/src/main/assets/public/
+mobile/android/app/src/main/assets/capacitor.config.json
+mobile/android/app/src/main/assets/capacitor.plugins.json
+*.jks
+*.keystore
+*.apk
+*.aab
+.gradle/
+local.properties

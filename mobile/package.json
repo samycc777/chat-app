@@ -10,6 +10,7 @@
     "open:android": "cap open android",
     "build:android": "cap sync android && node scripts/gradle.mjs assembleDebug",
     "build:android:release": "cap sync android && node scripts/gradle.mjs assembleRelease",
+    "build:android:play": "cap sync android && node scripts/gradle.mjs bundleRelease",
     "build:ios:simulator": "cap sync ios && xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -destination \"generic/platform=iOS Simulator\" -derivedDataPath ios/DerivedData CODE_SIGNING_ALLOWED=NO build",
     "assets": "node scripts/icons.mjs"
   },

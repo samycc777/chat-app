@@ -125,6 +125,33 @@ that app (the messaging app or file manager they opened it with). They tap **Set
 **Allow from this source**, go back and tap **Install**. The first time they join a voice channel,
 Android asks for the microphone (and the camera if they turn it on).
 
+## Android: Google Play internal testing
+
+This is how the class gets the Android app: through Google Play, but only for the people you list, and
+without the "unknown source" warning of an APK. Random people cannot find or install it.
+
+1. Build the file Google Play wants (an `.aab`, signed with the release key from the section above):
+
+   ```sh
+   cd mobile
+   HANGOUT_URL="https://<the site>/?invite=<INVITE_KEY>" npm run build:android:play
+   ```
+
+   The file is `mobile/android/app/build/outputs/bundle/release/app-release.aab`.
+2. In [Play Console](https://play.google.com/console): **Create app** → name "Hangout", app, free. Then
+   **Test and release → Testing → Internal testing → Testers**: create an email list with the Gmail
+   addresses of the teacher and the students, and save.
+3. **Internal testing → Create new release**: let Google manage the app signing key, upload the `.aab`,
+   and roll it out.
+4. Copy the **invite link** under Testers and send it to the class. Each person opens it on their Android
+   phone or tablet with the Gmail address you listed, taps **Accept**, then **Download it on Google Play**.
+
+Google also asks for a privacy policy address: use `https://<the site>/privacy.html`.
+
+For each new version, raise `versionCode` (and `versionName`) in `android/app/build.gradle`, build again
+and create a new release. Only changes in this `mobile/` folder need a new version; website changes reach
+the app by themselves.
+
 ## iPhone: send the app to friends with TestFlight
 
 Apple doesn't allow sending an app file directly. The simplest way to share it is TestFlight, Apple's

@@ -5,7 +5,7 @@ import { useI18n, type TranslationKey } from '../i18n';
 const emit = defineEmits<{ insert: [text: string]; backspace: [] }>();
 const { t } = useI18n();
 
-// Letters follow the alphabet students learn rather than a computer keyboard's layout.
+// Letters follow the order of the alphabet as it is taught rather than a computer keyboard's layout.
 const LETTER_ROWS = [
   ['ا', 'ب', 'ت', 'ث', 'ج', 'ح', 'خ'],
   ['د', 'ذ', 'ر', 'ز', 'س', 'ش', 'ص'],

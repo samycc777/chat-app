@@ -1,7 +1,7 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 type UploadResult = { attachmentId: string; name: string; type: 'image' | 'file' };
-export type LiveKitCredentials = { url: string; token: string; roomName: string; encryptionKey: string; startedAt: number };
+export type LiveKitCredentials = { url: string; token: string; roomName: string; startedAt: number };
 let cachedUploadLimit: number | null = null;
 let pendingUploadLimit: Promise<number> | null = null;
 
@@ -14,9 +14,14 @@ export class ApiError extends Error {
   }
 }
 
-function getToken(): string | null {
-  return sessionStorage.getItem('token');
-}
+// Kept across app restarts, so a friend who opens the app from their home screen is straight in.
+export const session = {
+  get token(): string | null { try { return localStorage.getItem('token'); } catch { return null; } },
+  set token(value: string | null) {
+    try { if (value) localStorage.setItem('token', value); else localStorage.removeItem('token'); } catch { /* Private browsing: the session lasts until the tab closes. */ }
+  },
+};
+const getToken = () => session.token;
 
 async function request(path: string, options: RequestInit = {}) {
   const token = getToken();
@@ -37,13 +42,9 @@ async function request(path: string, options: RequestInit = {}) {
 }
 
 export const api = {
-  getClassInfo: (): Promise<{ name: string | null }> => request('/api/class'),
-  getLiveKitToken: (conversationId: string): Promise<LiveKitCredentials> =>
-    request('/api/livekit/token', { method: 'POST', body: JSON.stringify({ conversationId }) }),
-  getRemovedMembers: (): Promise<{ id: string; displayName: string; avatarColor: string }[]> => request('/api/members/removed'),
-  // Without an identity, mutes every student's microphone.
-  muteInLesson: (identity?: string): Promise<{ muted: number }> =>
-    request('/api/lesson/mute', { method: 'POST', body: JSON.stringify(identity ? { identity } : {}) }),
+  getServerInfo: (): Promise<{ name: string | null }> => request('/api/server'),
+  getLiveKitToken: (channelId: string): Promise<LiveKitCredentials> =>
+    request('/api/livekit/token', { method: 'POST', body: JSON.stringify({ channelId }) }),
   getUploadLimit: (): Promise<number> => {
     if (cachedUploadLimit !== null) return Promise.resolve(cachedUploadLimit);
     if (pendingUploadLimit) return pendingUploadLimit;
@@ -57,12 +58,10 @@ export const api = {
     pendingUploadLimit = pending;
     return pending;
   },
-  joinClass: (classCode: string, visitorId: string, displayName: string) =>
-    request('/api/auth/join', { method: 'POST', body: JSON.stringify({ classCode, visitorId, displayName }) }),
+  join: (inviteKey: string, visitorId: string, displayName: string) =>
+    request('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteKey, visitorId, displayName }) }),
 
   getMe: () => request('/api/me'),
-
-  getConversations: () => request('/api/conversations'),
 
   // Pages back from the given message; its ID separates messages sent in the same millisecond.
   getMessages: (conversationId: string, before?: { createdAt: number; id: string }) =>

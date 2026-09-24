@@ -1,12 +1,9 @@
-export type Role = 'student' | 'teacher';
-
 export interface User {
   id: string;
   username: string;
   displayName: string;
   avatarColor: string;
   status: string;
-  role: Role;
   lastSeen?: number;
 }
 
@@ -14,7 +11,6 @@ export interface OnlineUser {
   id: string;
   displayName: string;
   avatarColor: string;
-  role: Role;
 }
 
 export interface Message {
@@ -43,7 +39,6 @@ export interface Message {
     username: string;
     displayName: string;
     avatarColor: string;
-    role?: Role;
   };
 }
 
@@ -58,4 +53,19 @@ export interface Conversation {
   lastMessageTime: number | null;
   unreadCount: number;
   members: User[];
+}
+
+export interface Channel {
+  id: string;
+  name: string;
+  kind: 'text' | 'voice';
+  position: number;
+}
+
+/** Who is in a voice channel's call, as the server knows it. */
+export interface VoiceCall {
+  channelId: string;
+  startedAt: number;
+  members: OnlineUser[];
+  hands: { userId: string; displayName: string }[];
 }

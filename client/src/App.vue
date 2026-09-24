@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, ref, watch, watchEffect } from 'vue';
-import { LoaderCircle, WifiOff } from 'lucide-vue-next';
+import { LoaderCircle, Menu, Volume2, WifiOff } from 'lucide-vue-next';
 import type { Socket } from 'socket.io-client';
-import type { Conversation, OnlineUser, User } from './types';
-import { api, ApiError } from './api';
+import type { Channel, OnlineUser, User, VoiceCall } from './types';
+import { api, ApiError, session } from './api';
 import { connectSocket, disconnectSocket, getSocket } from './socket';
 import { useI18n } from './i18n';
 import Auth from './components/Auth.vue';
 import ChatView from './components/ChatView.vue';
-import ClassroomHeader from './components/ClassroomHeader.vue';
+import MemberList from './components/MemberList.vue';
+import ServerSidebar from './components/ServerSidebar.vue';
 
-// LiveKit makes up most of the app's code, so the lesson screen loads only when there is a lesson;
-// it is fetched as soon as one starts, before anyone taps to join it. A page left open across a
-// deploy asks for files the new version no longer has, so it reloads once to pick up the new one.
-const loadLessonView = () => import('./components/LessonView.vue')
+// LiveKit makes up most of the app's code, so the call screen loads only when someone joins a voice
+// channel. A page left open across a deploy asks for files the new version no longer has, so it
+// reloads once to pick up the new one.
+const loadCallView = () => import('./components/CallView.vue')
   .then(module => { sessionStorage.removeItem('reloaded-for-update'); return module; })
   .catch(error => {
     if (!sessionStorage.getItem('reloaded-for-update')) {
@@ -22,52 +23,63 @@ const loadLessonView = () => import('./components/LessonView.vue')
     }
     throw error;
   });
-const LessonView = defineAsyncComponent(loadLessonView);
+const CallView = defineAsyncComponent(loadCallView);
 
-type Hand = { userId: string; displayName: string };
-type Lesson = { conversationId: string; presenterId: string; startedAt?: number; hands?: Hand[] };
-
-const { t } = useI18n();
-const token = ref(sessionStorage.getItem('token'));
+const { t, translateError } = useI18n();
+const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
+const store = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* Private browsing. */ } };
+const token = ref(session.token);
 const currentUser = ref<User | null>(null);
-const conversation = ref<Conversation | null>(null);
 const restoring = ref(false);
 const restoreFailed = ref(false);
-const sessionNotice = ref('');
 const connection = ref<'connecting' | 'connected' | 'reconnecting'>('connecting');
 const onlineUsers = ref(new Map<string, OnlineUser>());
-const whiteboard = ref<Lesson | null>(null);
-const showWhiteboard = ref(false);
-watch(whiteboard, lesson => { if (lesson) loadLessonView().catch(() => {}); });
-const className = ref('');
-const isTeacher = computed(() => currentUser.value?.role === 'teacher');
-const theme = ref<'light' | 'dark'>(localStorage.getItem('classroom-theme') === 'dark' ? 'dark' : 'light');
-watch(theme, value => { localStorage.setItem('classroom-theme', value); });
+const channels = ref<Channel[]>([]);
+const calls = ref<VoiceCall[]>([]);
+const selectedId = ref<string | null>(stored('lastChannel'));
+const callChannelId = ref<string | null>(null);
+const callState = ref({ micOn: false, cameraOn: false, sharing: false, speaking: [] as string[] });
+const callError = ref('');
+const callView = ref<{ toggleMicrophone: () => void; leave: () => void } | null>(null);
+const sidebarOpen = ref(false);
+const membersOpen = ref(window.innerWidth >= 1000);
+const serverName = ref('');
+// Discord is dark by default, and so is this app until someone picks the light theme.
+const theme = ref<'light' | 'dark'>(stored('theme') === 'light' ? 'light' : 'dark');
+watch(theme, value => store('theme', value));
 // Message text sizes in pixels; Arabic is set a little larger still, for its vowel marks.
 const TEXT_SIZES = [14, 16, 18, 21];
-const storedTextSize = localStorage.getItem('classroom-text-size');
+const storedTextSize = stored('text-size');
 const textSize = ref(storedTextSize !== null && TEXT_SIZES[Number(storedTextSize)] ? Number(storedTextSize) : 1);
-watch(textSize, value => { localStorage.setItem('classroom-text-size', String(value)); });
-// A background tab's title counts unseen messages and shows when a lesson is live.
+watch(textSize, value => store('text-size', String(value)));
+
+// The chosen channel, or the first text channel when it was deleted or nothing was chosen yet.
+const selectedChannel = computed(() => channels.value.find(channel => channel.id === selectedId.value)
+  ?? channels.value.find(channel => channel.kind === 'text') ?? null);
+const callChannel = computed(() => channels.value.find(channel => channel.id === callChannelId.value) ?? null);
+const handsInCall = computed(() => calls.value.find(call => call.channelId === callChannelId.value)?.hands ?? []);
+const selectedCall = computed(() => calls.value.find(call => call.channelId === selectedChannel.value?.id) ?? null);
+let lastTextChannelId: string | null = null;
+watch(selectedChannel, channel => {
+  if (channel?.kind === 'text') lastTextChannelId = channel.id;
+  if (channel) store('lastChannel', channel.id);
+});
+
+// A background tab's title counts unseen messages and shows when you are in a call.
 const unseen = ref(0);
 function onVisibilityChange() { if (!document.hidden) unseen.value = 0; }
 watchEffect(() => {
-  const name = className.value || t('classroom');
-  document.title = `${unseen.value ? `(${unseen.value}) ` : ''}${whiteboard.value ? '🔴 ' : ''}${name}`;
+  const name = serverName.value || t('appName');
+  document.title = `${unseen.value ? `(${unseen.value}) ` : ''}${callChannelId.value ? '🔊 ' : ''}${name}`;
 });
-function toggleTheme() { theme.value = theme.value === 'light' ? 'dark' : 'light'; }
-
-function openRoom(user: User, conversationId: string) {
-  currentUser.value = user;
-  conversation.value = {
-    id: conversationId, type: 'group', name: 'Classroom', createdAt: Date.now(),
-    lastMessage: null, lastMessageSender: null, lastMessageType: null,
-    lastMessageTime: null, unreadCount: 0, members: [user],
-  };
-}
 
 function listen(socket: Socket, user: User) {
-  socket.on('connect', () => { connection.value = 'connected'; });
+  socket.on('connect', () => {
+    connection.value = 'connected';
+    // The server forgets who was in a call when a connection drops, so a call in progress is
+    // announced again; the call screen itself reconnects to LiveKit on its own.
+    if (callChannelId.value) socket.emit('voice_join', { channelId: callChannelId.value });
+  });
   socket.on('disconnect', reason => {
     if (reason === 'io client disconnect') return;
     connection.value = 'reconnecting';
@@ -76,8 +88,8 @@ function listen(socket: Socket, user: User) {
     if (reason === 'io server disconnect') setTimeout(() => { if (getSocket() === socket) socket.connect(); }, 2000);
   });
   socket.on('connect_error', error => {
-    if (error.message === 'Removed from class') endSession(t('errRemovedFromClass'));
-    else if (error.message === 'Invalid classroom session' || error.message === 'No token') endSession(t('errSessionExpired'));
+    // An expired session goes back to the join screen, which signs straight back in with the saved invite.
+    if (error.message === 'Invalid session' || error.message === 'No token') endSession();
     else if (connection.value === 'connected') connection.value = 'reconnecting';
   });
   socket.on('presence_state', ({ users }: { users: OnlineUser[] }) => {
@@ -89,45 +101,36 @@ function listen(socket: Socket, user: User) {
     else next.delete(data.userId);
     onlineUsers.value = next;
   });
-  // Sent on every (re)connection, so a lesson that ended while this device was offline is closed here too.
-  socket.on('lesson_state', ({ lesson }: { lesson: Lesson | null }) => {
-    whiteboard.value = lesson;
-    if (!lesson) showWhiteboard.value = false;
+  socket.on('channels', ({ channels: list }: { channels: Channel[] }) => {
+    channels.value = list;
+    // A voice channel deleted while you were in it takes its call with it.
+    if (callChannelId.value && !list.some(channel => channel.id === callChannelId.value)) callChannelId.value = null;
   });
-  socket.on('wb_started', (data: Lesson) => {
-    whiteboard.value = data;
-    showWhiteboard.value = data.presenterId === user.id;
-  });
-  socket.on('wb_ended', () => { whiteboard.value = null; showWhiteboard.value = false; });
+  socket.on('voice_state', ({ calls: list }: { calls: VoiceCall[] }) => { calls.value = list; });
   socket.on('new_message', (message: { senderId: string }) => {
     if (document.hidden && message.senderId !== user.id) unseen.value++;
   });
-  socket.on('lesson_hands', ({ hands }: { hands: Hand[] }) => {
-    if (whiteboard.value) whiteboard.value = { ...whiteboard.value, hands };
-  });
 }
 
-function enterRoom(sessionToken: string, user: User) {
-  openRoom(user, 'classroom');
+function enterServer(sessionToken: string, user: User) {
+  currentUser.value = user;
   listen(connectSocket(sessionToken), user);
 }
 
-function joined(result: { token: string; user: User; conversationId: string }) {
-  sessionNotice.value = '';
+function joined(result: { token: string; user: User }) {
   token.value = result.token;
-  enterRoom(result.token, result.user);
+  enterServer(result.token, result.user);
 }
 
-// Only an ended session sends the student back to the code screen; a network problem offers a retry.
+// Only an ended session goes back to the join screen; a network problem offers a retry.
 async function restoreSession() {
   if (!token.value) return;
   restoring.value = true;
   restoreFailed.value = false;
   try {
-    enterRoom(token.value, await api.getMe());
+    enterServer(token.value, await api.getMe());
   } catch (cause) {
-    if (cause instanceof ApiError && cause.status === 403) endSession(t('errRemovedFromClass'));
-    else if (cause instanceof ApiError && cause.status === 401) endSession(t('errSessionExpired'));
+    if (cause instanceof ApiError && cause.status === 401) endSession();
     else restoreFailed.value = true;
   } finally {
     restoring.value = false;
@@ -136,59 +139,114 @@ async function restoreSession() {
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange);
-  api.getClassInfo().then(info => { className.value = info.name || ''; }).catch(() => {});
+  api.getServerInfo().then(info => { serverName.value = info.name || ''; }).catch(() => {});
   void restoreSession();
 });
-function openWhiteboard() {
-  if (!conversation.value || !currentUser.value) return;
-  if (whiteboard.value) { showWhiteboard.value = true; return; }
-  // Only the teacher starts lessons; the server's wb_started broadcast then opens it for them.
-  if (isTeacher.value) getSocket()?.emit('wb_start', { conversationId: conversation.value.id });
+
+// Opening a voice channel joins its call, as it does in Discord; opening a text channel keeps the
+// call going in the background.
+function select(channel: Channel) {
+  selectedId.value = channel.id;
+  sidebarOpen.value = false;
+  if (channel.kind !== 'voice' || channel.id === callChannelId.value) return;
+  callError.value = '';
+  // Loading the call screen starts now, while the server is still being told.
+  loadCallView().catch(() => {});
+  getSocket()?.emit('voice_join', { channelId: channel.id }, (result: { error?: string }) => {
+    if (result?.error) { callError.value = translateError(result.error); return; }
+    callChannelId.value = channel.id;
+  });
 }
-function leaveLesson() { showWhiteboard.value = false; }
-function endLesson() {
-  if (conversation.value && isTeacher.value) getSocket()?.emit('wb_end', { conversationId: conversation.value.id });
-  showWhiteboard.value = false;
+function leftCall() {
+  getSocket()?.emit('voice_leave');
+  if (selectedChannel.value?.id === callChannelId.value) selectedId.value = lastTextChannelId;
+  callChannelId.value = null;
+  callState.value = { micOn: false, cameraOn: false, sharing: false, speaking: [] };
 }
-function endSession(notice = '') {
-  disconnectSocket(); sessionStorage.removeItem('token'); token.value = null;
-  currentUser.value = null; conversation.value = null; whiteboard.value = null; showWhiteboard.value = false;
+function endSession() {
+  disconnectSocket(); session.token = null; token.value = null;
+  currentUser.value = null; callChannelId.value = null; channels.value = []; calls.value = [];
   onlineUsers.value = new Map(); connection.value = 'connecting'; restoreFailed.value = false;
-  sessionNotice.value = notice;
+}
+function signOut() {
+  // Signing out also forgets the name and invite, so the next person on this device starts fresh.
+  try { localStorage.removeItem('displayName'); localStorage.removeItem('inviteKey'); } catch { /* Private browsing. */ }
+  endSession();
 }
 </script>
 <template>
-  <div class="app-shell" :class="{ 'classroom-open': Boolean(token && currentUser) }" :data-theme="theme" :style="{ '--message-text-size': `${TEXT_SIZES[textSize]}px` }">
+  <div class="app-shell" :data-theme="theme" :style="{ '--message-text-size': `${TEXT_SIZES[textSize]}px` }">
   <div v-if="token && !currentUser && (restoring || restoreFailed)" class="boot-state" role="status">
     <template v-if="restoreFailed">
       <span class="boot-icon"><WifiOff :size="24" /></span>
-      <p>{{ t('cannotReachClass') }}</p>
+      <p>{{ t('cannotReach') }}</p>
       <button class="auth-btn" type="button" @click="restoreSession">{{ t('retry') }}</button>
     </template>
     <LoaderCircle v-else class="boot-spinner" :size="30" :aria-label="t('pleaseWait')" />
   </div>
-  <Auth v-else-if="!token || !currentUser" :theme="theme" :class-name="className" :notice="sessionNotice" @auth="joined" @toggle-theme="toggleTheme" />
-  <main v-else-if="conversation && currentUser" class="classroom-layout">
-    <ClassroomHeader
+  <Auth v-else-if="!token || !currentUser" :theme="theme" :server-name="serverName" @auth="joined" @toggle-theme="theme = theme === 'light' ? 'dark' : 'light'" />
+  <main v-else class="server-layout" :class="{ 'sidebar-open': sidebarOpen, 'members-open': membersOpen }">
+    <ServerSidebar
+      :server-name="serverName"
+      :channels="channels"
+      :calls="calls"
+      :current-channel-id="selectedChannel?.id ?? null"
+      :call-channel-id="callChannelId"
+      :call-state="callState"
       :current-user="currentUser"
-      :people="[...onlineUsers.values()]"
-      :class-name="className"
       :theme="theme"
       :text-size="textSize"
-      :is-teacher="isTeacher"
-      :lesson-active="Boolean(whiteboard)"
-      @lesson="openWhiteboard"
+      @select="select"
+      @toggle-mic="callView?.toggleMicrophone()"
+      @leave-call="callView?.leave()"
       @set-theme="theme = $event"
       @set-text-size="textSize = $event"
-      @leave="endSession()"
+      @sign-out="signOut"
     />
-    <div v-if="connection !== 'connected'" class="connection-banner" role="status">
-      <WifiOff :size="15" />{{ connection === 'connecting' ? t('connecting') : t('reconnecting') }}
+    <div class="drawer-backdrop" @click="sidebarOpen = false; membersOpen = false" />
+    <div class="main-pane">
+      <div v-if="connection !== 'connected'" class="connection-banner" role="status">
+        <WifiOff :size="15" />{{ connection === 'connecting' ? t('connecting') : t('reconnecting') }}
+      </div>
+      <ChatView
+        v-if="selectedChannel?.kind === 'text'"
+        :channel="selectedChannel"
+        :current-user="currentUser"
+        :online-users="onlineUsers"
+        :members-open="membersOpen"
+        @menu="sidebarOpen = true"
+        @members="membersOpen = !membersOpen"
+      />
+      <!-- The call stays mounted while text channels are read, so its sound carries on. -->
+      <CallView
+        v-if="callChannel"
+        ref="callView"
+        :key="callChannel.id"
+        :channel-id="callChannel.id"
+        :channel-name="callChannel.name"
+        :user-id="currentUser.id"
+        :visible="selectedChannel?.id === callChannel.id"
+        :people="onlineUsers"
+        :hands="handsInCall"
+        @state="callState = $event"
+        @leave="leftCall"
+        @menu="sidebarOpen = true"
+      />
+      <section v-if="selectedChannel?.kind === 'voice' && selectedChannel.id !== callChannel?.id" class="voice-lobby">
+        <header class="voice-lobby-header">
+          <button class="voice-lobby-menu" type="button" :aria-label="t('channels')" @click="sidebarOpen = true"><Menu :size="20" /></button>
+          <Volume2 :size="20" /><h2><bdi>{{ selectedChannel.name }}</bdi></h2>
+        </header>
+        <div class="voice-lobby-body">
+          <strong>{{ selectedCall?.members.length ? t('inThisChannel') : t('callEmpty') }}</strong>
+          <p v-if="!selectedCall?.members.length">{{ t('callEmptyBody') }}</p>
+          <p v-else class="voice-lobby-names"><bdi v-for="member in selectedCall.members" :key="member.id">{{ member.displayName }}</bdi></p>
+          <p v-if="callError" class="voice-lobby-error" role="alert">{{ callError }}</p>
+          <button class="auth-btn" type="button" @click="select(selectedChannel)">{{ t('joinCall') }}</button>
+        </div>
+      </section>
     </div>
-    <ChatView :conversation="conversation" :current-user="currentUser" :online-users="onlineUsers" :is-teacher="isTeacher" :lesson-active="Boolean(whiteboard)" @whiteboard="openWhiteboard" />
-    <LessonView v-if="showWhiteboard && whiteboard" :conversation-id="whiteboard.conversationId" :user-id="currentUser.id" :is-teacher="isTeacher" :presenter="whiteboard.presenterId === currentUser.id" :presenter-id="whiteboard.presenterId" :hands="whiteboard.hands ?? []" @leave="leaveLesson" @end="endLesson">
-      <template #chat><ChatView :conversation="conversation" :current-user="currentUser" :online-users="onlineUsers" :is-teacher="isTeacher" /></template>
-    </LessonView>
+    <MemberList v-if="membersOpen && selectedChannel?.kind === 'text'" :people="[...onlineUsers.values()]" :current-user-id="currentUser.id" />
   </main>
   </div>
 </template>
@@ -201,18 +259,10 @@ function endSession(notice = '') {
   min-height: 0;
   display: flex;
   color: var(--text-primary);
-  background:
-    radial-gradient(circle at 14% 8%, color-mix(in srgb, var(--text-accent) 13%, transparent), transparent 38%),
-    var(--bg-chat);
+  background: var(--bg-chat);
 }
 
-.app-shell.classroom-open {
-  align-items: center;
-  justify-content: center;
-  padding: clamp(16px, 2.2vw, 28px);
-}
-
-/* Shown while a saved session is restored, or when the class cannot be reached. */
+/* Shown while a saved session is restored, or when the server cannot be reached. */
 .boot-state {
   width: 100%;
   min-height: 100dvh;
@@ -231,7 +281,7 @@ function endSession(notice = '') {
   height: 52px;
   display: grid;
   place-items: center;
-  border-radius: 17px;
+  border-radius: 50%;
   color: var(--danger);
   background: var(--danger-soft);
 }
@@ -241,19 +291,27 @@ function endSession(notice = '') {
   animation: spin 1s linear infinite;
 }
 
-/* Authenticated classroom shell */
-.classroom-layout {
-  width: min(1180px, 100%);
+/* The server: channel list, then the open channel, then who is online, as in Discord. */
+.server-layout {
+  width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
   display: flex;
-  flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border-color);
-  border-radius: 24px;
-  background: var(--bg-primary);
-  box-shadow: 0 24px 70px var(--shadow-color);
+}
+
+.main-pane {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-chat);
+}
+
+.drawer-backdrop {
+  display: none;
 }
 
 /* Appears only after a short delay, so a brief network blip does not flash it. */
@@ -263,10 +321,9 @@ function endSession(notice = '') {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 7px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--danger) 22%, var(--border-color));
-  color: var(--danger);
-  background: var(--danger-soft);
+  padding: max(7px, env(safe-area-inset-top)) 14px 7px;
+  color: #ffffff;
+  background: var(--danger);
   font-size: 12px;
   font-weight: 700;
   animation: connection-banner-in 200ms ease-out 1.5s both;
@@ -276,17 +333,113 @@ function endSession(notice = '') {
   from { opacity: 0; }
 }
 
+.voice-lobby {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  color: #f2f3f5;
+  background: #000000;
+}
+
+.voice-lobby-header {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: max(6px, env(safe-area-inset-top)) 12px 6px;
+  color: #949ba4;
+  background: #111214;
+}
+
+.voice-lobby-header h2 {
+  color: #f2f3f5;
+  font-size: 16px;
+}
+
+.voice-lobby-menu {
+  width: 36px;
+  height: 36px;
+  display: none;
+  place-items: center;
+}
+
+.voice-lobby-body {
+  max-width: 420px;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+}
+
+.voice-lobby-body strong {
+  font-size: 22px;
+}
+
+.voice-lobby-body p {
+  color: #b5bac1;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.voice-lobby-names {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 12px;
+}
+
+.voice-lobby-error {
+  color: #f23f43 !important;
+}
+
+.voice-lobby-body .auth-btn {
+  width: auto;
+  min-width: 180px;
+}
+
+/* On phones the channel list and the members slide in over the channel, as in Discord's app. */
 @media (max-width: 768px) {
-  .app-shell.classroom-open {
-    padding: 0;
+  .server-layout :deep(.server-sidebar) {
+    width: min(320px, 86vw);
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 220ms ease;
   }
 
-  .classroom-layout {
-    width: 100%;
-    height: 100dvh;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
+  [dir='rtl'] .server-layout :deep(.server-sidebar) {
+    transform: translateX(100%);
+  }
+
+  .server-layout.sidebar-open :deep(.server-sidebar) {
+    transform: none;
+  }
+
+  .server-layout :deep(.member-list) {
+    width: min(280px, 80vw);
+    position: fixed;
+    inset-block: 0;
+    inset-inline-end: 0;
+    z-index: 60;
+  }
+
+  .server-layout.sidebar-open .drawer-backdrop,
+  .server-layout.members-open:has(.member-list) .drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    display: block;
+    background: rgba(0, 0, 0, 0.55);
+  }
+
+  .voice-lobby-menu {
+    display: grid;
   }
 }
 </style>

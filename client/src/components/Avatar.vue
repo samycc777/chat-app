@@ -4,7 +4,7 @@ const props = withDefaults(
   defineProps<{
     name: string;
     color: string;
-    size?: "normal" | "small";
+    size?: "normal" | "small" | "tiny" | "large";
     online?: boolean;
   }>(),
   { size: "normal", online: false },
@@ -41,7 +41,7 @@ const initials = computed(() => {
   position: relative;
   display: grid;
   place-items: center;
-  border-radius: 15px;
+  border-radius: 50%;
   color: #ffffff;
   font-size: 15px;
   font-weight: 700;
@@ -51,8 +51,23 @@ const initials = computed(() => {
   width: 30px;
   height: 30px;
   flex-basis: 30px;
-  border-radius: 10px;
   font-size: 11px;
+}
+
+/* Beside a name in the channel list, under the voice channel they are in. */
+.avatar.tiny {
+  width: 22px;
+  height: 22px;
+  flex-basis: 22px;
+  font-size: 9px;
+}
+
+/* In a call tile, for someone whose camera is off. */
+.avatar.large {
+  width: 80px;
+  height: 80px;
+  flex-basis: 80px;
+  font-size: 28px;
 }
 
 .online-dot {
@@ -63,7 +78,7 @@ const initials = computed(() => {
   bottom: -1px;
   border: 2px solid var(--bg-chat);
   border-radius: 50%;
-  background: #38b878;
+  background: #23a55a;
 }
 
 @media (max-width: 768px) {

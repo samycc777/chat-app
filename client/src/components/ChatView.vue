@@ -11,6 +11,9 @@ import { format, isSameDay, isToday, isYesterday } from 'date-fns';
 import {
   ArrowDown,
   Copy,
+  Hash,
+  Menu,
+  Users,
   MessageCircle,
   Paperclip,
   Pencil,
@@ -20,7 +23,7 @@ import {
   Trash2,
   X,
 } from 'lucide-vue-next';
-import type { Conversation, Message, OnlineUser, User } from '../types';
+import type { Channel, Message, OnlineUser, User } from '../types';
 import { api } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
@@ -29,14 +32,13 @@ import Attachment from './Attachment.vue';
 import Avatar from './Avatar.vue';
 
 const props = defineProps<{
-  conversation: Conversation;
+  channel: Channel;
   currentUser: User;
   onlineUsers: Map<string, OnlineUser>;
-  isTeacher?: boolean;
-  lessonActive?: boolean;
+  membersOpen: boolean;
 }>();
 
-const emit = defineEmits<{ whiteboard: [] }>();
+const emit = defineEmits<{ menu: []; members: [] }>();
 const { t, lang, dateLocale, translateError } = useI18n();
 
 const messages = ref<Message[]>([]);
@@ -56,8 +58,8 @@ const container = ref<HTMLElement | null>(null);
 const textarea = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const contextMenu = ref<{ x: number; y: number; message: Message } | null>(null);
-const arabicKeyboard = ref(localStorage.getItem('classroom-arabic-keyboard') === '1');
-watch(arabicKeyboard, (open) => localStorage.setItem('classroom-arabic-keyboard', open ? '1' : '0'));
+const arabicKeyboard = ref(localStorage.getItem('arabic-keyboard') === '1');
+watch(arabicKeyboard, (open) => localStorage.setItem('arabic-keyboard', open ? '1' : '0'));
 
 // Mostly-Arabic messages are set larger, with room between lines for vowel marks; a Latin message
 // quoting a few Arabic words keeps its size and only gets the taller lines.
@@ -110,9 +112,9 @@ async function loadMessages(id: string) {
 // Messages sent while this device was offline are fetched once it reconnects.
 async function catchUp() {
   if (loadingMessages.value) return;
-  if (loadError.value) { void loadMessages(props.conversation.id); return; }
+  if (loadError.value) { void loadMessages(props.channel.id); return; }
   try {
-    const latest: Message[] = await api.getMessages(props.conversation.id);
+    const latest: Message[] = await api.getMessages(props.channel.id);
     const merged = new Map(messages.value.map((message) => [message.id, message]));
     for (const message of latest) merged.set(message.id, message);
     messages.value = [...merged.values()].sort((a, b) => a.createdAt - b.createdAt || (a.seq ?? 0) - (b.seq ?? 0));
@@ -130,7 +132,7 @@ async function loadEarlier() {
   loadingEarlier.value = true;
   const distanceFromBottom = element.scrollHeight - element.scrollTop;
   try {
-    const earlier: Message[] = await api.getMessages(props.conversation.id, oldest);
+    const earlier: Message[] = await api.getMessages(props.channel.id, oldest);
     hasEarlier.value = earlier.length >= PAGE_SIZE;
     const known = new Set(messages.value.map((message) => message.id));
     messages.value = [...earlier.filter((message) => !known.has(message.id)), ...messages.value];
@@ -160,7 +162,7 @@ function keepAtBottom() {
 }
 
 function onNewMessage(message: Message) {
-  if (message.conversationId !== props.conversation.id) return;
+  if (message.conversationId !== props.channel.id) return;
   if (messages.value.some((existing) => existing.id === message.id)) return;
   messages.value.push(message);
   if (!atBottom && message.senderId !== props.currentUser.id) newBelow.value++;
@@ -202,21 +204,21 @@ function onDeleted(data: { messageId: string }) {
 // Typing notices repeat every few seconds while someone types, so one that stops arriving
 // (for example because the typist went offline) expires on its own.
 function onTyping(data: { conversationId: string; userId: string; displayName?: string }) {
-  if (data.conversationId !== props.conversation.id || data.userId === props.currentUser.id) return;
+  if (data.conversationId !== props.channel.id || data.userId === props.currentUser.id) return;
   typingUsers.value.set(data.userId, data.displayName || '');
   clearTimeout(typingExpiry.get(data.userId));
   typingExpiry.set(data.userId, setTimeout(() => onStopTyping(data), 6000));
 }
 
 function onStopTyping(data: { conversationId: string; userId: string }) {
-  if (data.conversationId !== props.conversation.id) return;
+  if (data.conversationId !== props.channel.id) return;
   clearTimeout(typingExpiry.get(data.userId));
   typingExpiry.delete(data.userId);
   typingUsers.value.delete(data.userId);
 }
 
 watch(
-  () => props.conversation.id,
+  () => props.channel.id,
   (id) => void loadMessages(id),
   { immediate: true },
 );
@@ -308,7 +310,7 @@ function stopTyping() {
   clearTimeout(typingTimer);
   if (!lastTypingSent) return;
   lastTypingSent = 0;
-  getSocket()?.emit('stop_typing', { conversationId: props.conversation.id });
+  getSocket()?.emit('stop_typing', { conversationId: props.channel.id });
 }
 
 // Classmates hear about typing at most every two seconds, which keeps fast typists far inside
@@ -320,7 +322,7 @@ function updateInput(value: string) {
   if (!value.trim()) { stopTyping(); return; }
   if (Date.now() - lastTypingSent > 2000) {
     lastTypingSent = Date.now();
-    socket.emit('typing', { conversationId: props.conversation.id });
+    socket.emit('typing', { conversationId: props.channel.id });
   }
   clearTimeout(typingTimer);
   typingTimer = setTimeout(stopTyping, 3000);
@@ -341,7 +343,7 @@ function send() {
   }
 
   socket.emit('send_message', {
-    conversationId: props.conversation.id,
+    conversationId: props.channel.id,
     content,
     type: 'text',
     replyTo: replyTo.value?.id || null,
@@ -385,13 +387,13 @@ async function upload(event: Event) {
 
   setFeedback({ kind: 'uploading', message: t('uploading'), progress: 0 });
   try {
-    const result = await api.uploadFile(file, props.conversation.id, (progress) => {
+    const result = await api.uploadFile(file, props.channel.id, (progress) => {
       feedback.value = { kind: 'uploading', message: t('uploading'), progress };
     });
     getSocket()?.emit(
       'send_message',
       {
-        conversationId: props.conversation.id,
+        conversationId: props.channel.id,
         content: result.type === 'image' ? '' : result.name,
         type: result.type,
         attachmentId: result.attachmentId,
@@ -448,9 +450,9 @@ function canEdit(message: Message) {
   return !message.deleted && message.type === 'text' && message.senderId === props.currentUser.id;
 }
 
-// The teacher can remove any message; everyone else only their own.
+// Nobody moderates the server, so everyone can remove only their own messages.
 function canDelete(message: Message) {
-  return !message.deleted && (message.senderId === props.currentUser.id || Boolean(props.isTeacher));
+  return !message.deleted && message.senderId === props.currentUser.id;
 }
 
 function canCopy(message: Message) {
@@ -523,30 +525,24 @@ function beginsGroup(index: number) {
   );
 }
 
-function endsGroup(index: number) {
-  if (index === messages.value.length - 1) return true;
-  const message = messages.value[index];
-  const next = messages.value[index + 1];
-  return (
-    next.senderId !== message.senderId ||
-    !isSameDay(new Date(next.createdAt), new Date(message.createdAt)) ||
-    next.createdAt - message.createdAt > 5 * 60_000
-  );
+// Like Discord, a group of messages is headed by its time, with the day for anything older than today.
+function timeLabel(timestamp: number) {
+  const date = new Date(timestamp);
+  const time = format(date, 'HH:mm');
+  if (isToday(date)) return time;
+  return `${isYesterday(date) ? t('yesterday') : format(date, 'P', { locale: dateLocale.value })} ${time}`;
 }
 </script>
 
 <template>
   <div class="chat-area">
-    <div v-if="lessonActive" class="lesson-banner" role="status">
-      <div class="lesson-banner-icon"><span class="live-dot" /></div>
-      <div class="lesson-banner-copy">
-        <strong>{{ t('liveLesson') }}</strong>
-        <span>{{ t('lessonInProgress') }}</span>
-      </div>
-      <button class="lesson-join-btn" type="button" @click="emit('whiteboard')">
-        {{ t('joinLesson') }}
-      </button>
-    </div>
+    <header class="channel-header">
+      <button class="channel-header-btn menu-btn" type="button" :aria-label="t('channels')" @click="emit('menu')"><Menu :size="20" /></button>
+      <Hash :size="22" class="channel-header-hash" aria-hidden="true" />
+      <h2><bdi>{{ channel.name }}</bdi></h2>
+      <span class="channel-header-spacer" />
+      <button class="channel-header-btn" :class="{ active: membersOpen }" type="button" :title="t('members')" :aria-label="t('members')" :aria-pressed="membersOpen" @click="emit('members')"><Users :size="20" /></button>
+    </header>
 
     <div ref="container" class="messages-container" @scroll="onScroll">
       <div v-if="loadingMessages" class="conversation-state" role="status">
@@ -557,14 +553,14 @@ function endsGroup(index: number) {
       <div v-else-if="loadError" class="conversation-state error" role="alert">
         <span class="state-icon"><MessageCircle :size="22" /></span>
         <p>{{ loadError }}</p>
-        <button type="button" @click="loadMessages(conversation.id)">
+        <button type="button" @click="loadMessages(channel.id)">
           <RefreshCw :size="15" />{{ t('retry') }}
         </button>
       </div>
 
       <div v-else-if="messages.length === 0" class="conversation-state empty">
         <span class="state-icon"><MessageCircle :size="22" /></span>
-        <strong>{{ t('noMessagesYet') }}</strong>
+        <strong>{{ t('noMessagesYet', { name: channel.name }) }}</strong>
         <p>{{ t('startConversation') }}</p>
       </div>
 
@@ -591,36 +587,27 @@ function endsGroup(index: number) {
 
         <div
           class="message-row"
-          :class="[
-            message.senderId === currentUser.id ? 'out' : 'in',
-            { 'starts-group': beginsGroup(index), 'ends-group': endsGroup(index) },
-          ]"
+          :class="{ 'starts-group': beginsGroup(index) }"
+          @contextmenu="openContext($event, message)"
+          @pointerdown="pressStartOn($event, message)"
+          @pointermove="pressMove"
+          @pointerup="pressEnd"
+          @pointercancel="pressEnd"
         >
-          <div v-if="message.senderId !== currentUser.id" class="message-avatar-slot">
+          <div class="message-avatar-slot">
             <Avatar
-              v-if="endsGroup(index)"
+              v-if="beginsGroup(index)"
               :name="message.sender.displayName"
               :color="message.sender.avatarColor"
               :online="onlineUsers.has(message.senderId)"
-              size="small"
             />
+            <span v-else class="message-side-time"><bdi>{{ format(new Date(message.createdAt), 'HH:mm') }}</bdi></span>
           </div>
 
-          <div
-            class="message-bubble"
-            :class="message.senderId === currentUser.id ? 'out' : 'in'"
-            @contextmenu="openContext($event, message)"
-            @pointerdown="pressStartOn($event, message)"
-            @pointermove="pressMove"
-            @pointerup="pressEnd"
-            @pointercancel="pressEnd"
-          >
-            <div
-              v-if="message.senderId !== currentUser.id && beginsGroup(index)"
-              class="message-sender"
-            >
-              <bdi>{{ message.sender.displayName }}</bdi>
-              <span v-if="message.sender.role === 'teacher'" class="role-badge">{{ t('teacherBadge') }}</span>
+          <div class="message-body">
+            <div v-if="beginsGroup(index)" class="message-sender">
+              <bdi class="message-sender-name" :style="{ color: message.sender.avatarColor }">{{ message.sender.displayName }}</bdi>
+              <span class="message-time"><bdi>{{ timeLabel(message.createdAt) }}</bdi></span>
             </div>
 
             <div v-if="message.replyTo" class="message-reply">
@@ -655,10 +642,7 @@ function endsGroup(index: number) {
             />
             <div v-else class="message-content" :class="scriptClass(message.content)" dir="auto"><template v-for="(part, partIndex) in linkParts(message.content ?? '')" :key="partIndex"><a v-if="part.href" :href="part.href" target="_blank" rel="noopener noreferrer" dir="ltr">{{ part.text }}</a><template v-else>{{ part.text }}</template></template></div>
 
-            <div class="message-meta">
-              <span v-if="message.editedAt" class="message-edited">{{ t('edited') }}</span>
-              <span class="message-time"><bdi>{{ format(new Date(message.createdAt), 'HH:mm') }}</bdi></span>
-            </div>
+            <span v-if="message.editedAt" class="message-edited">({{ t('edited') }})</span>
 
             <div v-if="!message.deleted" class="message-actions">
               <button
@@ -751,8 +735,8 @@ function endsGroup(index: number) {
           <textarea
             ref="textarea"
             :value="input"
-            :placeholder="t('typeAMessage')"
-            :aria-label="t('typeAMessage')"
+            :placeholder="t('typeAMessage', { name: channel.name })"
+            :aria-label="t('typeAMessage', { name: channel.name })"
             rows="1"
             maxlength="8000"
             dir="auto"
@@ -807,74 +791,72 @@ function endsGroup(index: number) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--text-accent) 7%, transparent), transparent 36%),
-    var(--bg-chat);
+  background: var(--bg-chat);
 }
 
-.lesson-banner {
-  width: calc(100% - 32px);
-  max-width: 800px;
-  min-height: 58px;
+.channel-header {
+  min-height: 48px;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 11px;
-  margin: 14px auto 0;
-  padding: 9px 10px 9px 12px;
-  border: 1px solid color-mix(in srgb, var(--text-accent) 26%, var(--border-color));
-  border-radius: 17px;
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--bg-primary) 90%, var(--accent-soft));
-  box-shadow: 0 7px 22px color-mix(in srgb, var(--shadow-color) 68%, transparent);
+  gap: 8px;
+  padding: max(6px, env(safe-area-inset-top)) 12px 6px 16px;
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
 }
 
-.lesson-banner-icon {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+.channel-header h2 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-header-hash {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.channel-header-spacer {
+  flex: 1;
+}
+
+.channel-header-btn {
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
-  border-radius: 11px;
-  color: var(--text-accent);
-  background: var(--accent-soft);
+  border-radius: 6px;
+  color: var(--text-secondary);
 }
 
-.lesson-banner-copy {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+.channel-header-btn:hover,
+.channel-header-btn.active {
+  color: var(--text-primary);
 }
 
-.lesson-banner-copy strong {
-  font-size: 13px;
+.channel-header-btn.active {
+  background: var(--bg-hover);
 }
 
-.lesson-join-btn {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 12px;
-  color: var(--text-on-accent);
-  background: var(--text-accent);
-  font-size: 12px;
-  font-weight: 700;
-  transition: background 160ms ease, transform 160ms ease;
+.menu-btn {
+  display: none;
 }
 
-.lesson-join-btn:hover {
-  background: var(--accent-strong);
-  transform: translateY(-1px);
-}
+
+
+
+
+
 
 .messages-container {
   width: 100%;
-  max-width: 800px;
   min-height: 0;
   flex: 1;
-  align-self: center;
   overflow-y: auto;
-  padding: 18px 20px 28px;
+  padding: 16px 0 24px;
   overscroll-behavior: contain;
   scroll-behavior: smooth;
 }
@@ -924,65 +906,73 @@ function endsGroup(index: number) {
 }
 
 .message-row {
-  width: 100%;
+  position: relative;
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  margin-block: 2px;
-  direction: ltr;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 2px 48px 2px 16px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.message-row:hover {
+  background: var(--bg-message-hover);
 }
 
 .message-row.starts-group {
-  margin-top: 11px;
-}
-
-.message-row.out {
-  justify-content: flex-end;
+  margin-top: 16px;
+  padding-top: 4px;
 }
 
 .message-avatar-slot {
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
+  width: 40px;
+  min-width: 40px;
+  display: flex;
+  justify-content: center;
 }
 
-.message-bubble {
+.message-avatar-slot .avatar {
+  width: 40px;
+  height: 40px;
+  flex-basis: 40px;
+}
+
+/* Later messages of a group show their time beside them only while hovered, as Discord does. */
+.message-side-time {
+  padding-top: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  opacity: 0;
+}
+
+.message-row:hover .message-side-time {
+  opacity: 1;
+}
+
+.message-body {
   min-width: 0;
-  max-width: min(72%, 560px);
-  position: relative;
-  padding: 9px 11px 7px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 74%, transparent);
-  border-radius: 17px;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--shadow-color) 56%, transparent);
-}
-
-.message-bubble.in {
-  border-start-start-radius: 6px;
-  background: var(--bg-message-in);
-}
-
-.message-bubble.out {
-  border-start-end-radius: 6px;
-  background: var(--bg-message-out);
-}
-
-.message-row:not(.starts-group) .message-bubble {
-  border-start-start-radius: 14px;
-  border-start-end-radius: 14px;
-}
-
-.message-row:not(.ends-group) .message-bubble {
-  border-end-start-radius: 14px;
-  border-end-end-radius: 14px;
+  flex: 1;
 }
 
 .message-sender {
-  margin-bottom: 3px;
-  color: var(--text-accent);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.message-sender-name {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-time {
+  flex: none;
+  color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 700;
 }
 
 .message-reply {
@@ -1026,20 +1016,10 @@ function endsGroup(index: number) {
   font-style: italic;
 }
 
-.message-meta {
-  min-height: 15px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 5px;
-  margin-top: 2px;
-  color: var(--message-meta);
-  font-size: 10px;
-  line-height: 1;
-}
 
 .message-edited {
-  font-style: italic;
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 
 .load-earlier {
@@ -1049,7 +1029,7 @@ function endsGroup(index: number) {
 }
 
 @media (pointer: coarse) {
-  .message-bubble {
+  .message-row {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
@@ -1059,8 +1039,8 @@ function endsGroup(index: number) {
 .message-actions {
   position: absolute;
   z-index: 2;
-  inset-block-start: 4px;
-  inset-inline-end: 4px;
+  inset-block-start: -14px;
+  inset-inline-end: 16px;
   display: none;
   overflow: hidden;
   border: 1px solid var(--border-color);
@@ -1069,8 +1049,8 @@ function endsGroup(index: number) {
   box-shadow: 0 5px 14px var(--shadow-color);
 }
 
-.message-bubble:hover .message-actions,
-.message-bubble:focus-within .message-actions {
+.message-row:hover .message-actions,
+.message-row:focus-within .message-actions {
   display: flex;
 }
 
@@ -1266,7 +1246,7 @@ function endsGroup(index: number) {
   background: var(--accent-strong);
 }
 
-/* On-screen Arabic keyboard, for students without one on their device. */
+/* On-screen Arabic keyboard, for anyone without one on their device. */
 .chat-bottom:has(.arabic-keyboard) .chat-input-area {
   padding-bottom: 8px;
 }
@@ -1316,40 +1296,31 @@ function endsGroup(index: number) {
 }
 
 @media (max-width: 768px) {
-  .lesson-banner {
-    width: calc(100% - 20px);
-    min-height: 54px;
-    margin-top: 10px;
-    border-radius: 15px;
+
+
+
+  .menu-btn {
+    display: grid;
   }
 
-  .lesson-banner-icon {
-    width: 32px;
-    height: 32px;
-    flex-basis: 32px;
-  }
-
-  .lesson-join-btn {
-    min-height: 36px;
-    padding-inline: 12px;
+  .channel-header {
+    padding-inline-start: 6px;
   }
 
   .messages-container {
-    padding: 10px 11px 20px;
+    padding: 10px 0 20px;
   }
 
   .message-row {
-    gap: 6px;
+    gap: 10px;
+    padding-inline: 10px;
   }
 
-  .message-avatar-slot {
-    width: 28px;
-    min-width: 28px;
-  }
-
-  .message-bubble {
-    max-width: 86%;
-    padding: 8px 10px 6px;
+  .message-avatar-slot,
+  .message-avatar-slot .avatar {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
   }
 
   .message-actions {
@@ -1409,12 +1380,6 @@ function endsGroup(index: number) {
   }
 }
 
-@media (max-width: 460px) {
-  .message-bubble {
-    max-width: 88%;
-  }
-}
-
 @media (max-width: 360px) {
   .chat-input-area {
     gap: 5px;
@@ -1432,10 +1397,4 @@ function endsGroup(index: number) {
   }
 }
 
-@media (orientation: landscape) and (max-height: 520px) {
-  .lesson-banner {
-    min-height: 48px;
-    margin-top: 7px;
-  }
-}
 </style>

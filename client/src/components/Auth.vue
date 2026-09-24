@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { BookOpenText } from 'lucide-vue-next';
-import { api } from '../api';
+import { computed, onMounted, ref } from 'vue';
+import { api, session } from '../api';
 import { useI18n } from '../i18n';
-const emit = defineEmits<{ auth: [result: { token: string; user: any; conversationId: string }]; 'toggle-theme': [] }>();
-defineProps<{ theme: 'light' | 'dark'; className: string; notice?: string }>();
+import type { User } from '../types';
+const emit = defineEmits<{ auth: [result: { token: string; user: User }]; 'toggle-theme': [] }>();
+const props = defineProps<{ theme: 'light' | 'dark'; serverName: string; notice?: string }>();
 const { t, lang, setLang, translateError } = useI18n();
 
 // iOS Safari before 15.4 has no randomUUID, so build the same version 4 format from random bytes.
@@ -16,35 +16,63 @@ function randomId() {
   const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+const stored = (key: string) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
+const store = (key: string, value: string) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch { /* Private browsing. */ } };
 
-const savedName = ref(localStorage.getItem('displayName') || '');
-const visitorId = ref(localStorage.getItem('visitorId') || randomId());
-localStorage.setItem('visitorId', visitorId.value);
-const displayName = ref(savedName.value), code = ref(''), error = ref(''), loading = ref(false);
+// Accepts a whole invite link or just the key inside it.
+function keyFrom(text: string) {
+  const trimmed = text.trim();
+  try { return new URL(trimmed).searchParams.get('invite') ?? trimmed; } catch { return trimmed; }
+}
+// The key arrives in the invite link. It is remembered and taken out of the address bar, so it does
+// not end up in a screenshot or a link copied from the address bar later.
+const linkKey = new URLSearchParams(window.location.search).get('invite');
+if (linkKey) {
+  store('inviteKey', linkKey);
+  const url = new URL(window.location.href);
+  url.searchParams.delete('invite');
+  window.history.replaceState(null, '', url);
+}
+
+const savedName = ref(stored('displayName'));
+const visitorId = stored('visitorId') || randomId();
+store('visitorId', visitorId);
+const inviteKey = ref(stored('inviteKey'));
+const pastedLink = ref('');
+const displayName = ref(savedName.value), error = ref(''), loading = ref(false);
 const needsName = computed(() => !savedName.value);
 async function submit() {
   error.value = ''; loading.value = true;
+  const key = inviteKey.value || keyFrom(pastedLink.value);
   try {
     const name = (needsName.value ? displayName.value : savedName.value).trim();
-    const result = await api.joinClass(code.value, visitorId.value, name);
-    localStorage.setItem('displayName', result.user.displayName);
-    sessionStorage.setItem('token', result.token);
+    const result = await api.join(key, visitorId, name);
+    store('inviteKey', key);
+    store('displayName', result.user.displayName);
+    session.token = result.token;
     emit('auth', result);
-  } catch (cause) { error.value = translateError(cause instanceof Error ? cause.message : ''); }
-  finally { loading.value = false; }
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : '';
+    // A key that stopped working (because it was changed) is forgotten, so the new link can be pasted.
+    if (message === 'Invalid invite link') { inviteKey.value = ''; store('inviteKey', ''); }
+    error.value = translateError(message);
+  } finally { loading.value = false; }
 }
-function changeName() { savedName.value = ''; displayName.value = ''; localStorage.removeItem('displayName'); }
+function changeName() { savedName.value = ''; displayName.value = ''; store('displayName', ''); }
+// Someone who has been here before, on this device, goes straight back in.
+onMounted(() => { if (inviteKey.value && savedName.value && !props.notice) void submit(); });
 </script>
 <template>
   <div class="auth-container"><form class="auth-card" @submit.prevent="submit">
-    <div class="auth-topline"><span class="auth-mark" aria-hidden="true"><BookOpenText :size="22" /></span><div class="auth-utilities"><button class="auth-utility" type="button" :aria-label="t('toggleTheme')" @click="emit('toggle-theme')">{{ theme === 'light' ? '☾' : '☼' }}</button><button class="auth-language-trigger" type="button" @click="setLang(lang === 'en' ? 'ar' : 'en')">{{ lang === 'en' ? 'العربية' : 'English' }}</button></div></div>
-    <div class="auth-eyebrow"><bdi>{{ className || t('classroom') }}</bdi></div><h1>{{ t('welcomeClassroom') }}</h1><p>{{ t('enterClassCode') }}</p>
+    <div class="auth-topline"><span class="auth-mark" aria-hidden="true">{{ (serverName || t('appName')).slice(0, 1).toUpperCase() }}</span><div class="auth-utilities"><button class="auth-utility" type="button" :aria-label="t('toggleTheme')" @click="emit('toggle-theme')">{{ theme === 'light' ? '☾' : '☼' }}</button><button class="auth-language-trigger" type="button" @click="setLang(lang === 'en' ? 'ar' : 'en')">{{ lang === 'en' ? 'العربية' : 'English' }}</button></div></div>
+    <div class="auth-eyebrow"><bdi>{{ serverName || t('appName') }}</bdi></div><h1>{{ t('welcomeTitle') }}</h1>
+    <p>{{ inviteKey ? t('welcomeBody', { name: serverName || t('appName') }) : t('needInvite') }}</p>
     <div v-if="error" class="auth-error" role="alert">{{ error }}</div>
     <div v-else-if="notice" class="auth-notice" role="status">{{ notice }}</div>
-    <div class="input-group"><label for="class-code">{{ t('classCode') }}</label><input id="class-code" v-model="code" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="64" required autofocus :placeholder="t('classCodePlaceholder')"></div>
-    <div v-if="needsName" class="input-group"><label for="display-name">{{ t('displayName') }}</label><input id="display-name" v-model="displayName" :placeholder="t('yourName')" autocomplete="name" maxlength="60" required></div>
+    <div v-if="!inviteKey" class="input-group"><label for="invite-link">{{ t('inviteLink') }}</label><input id="invite-link" v-model="pastedLink" type="text" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="300" required :placeholder="t('inviteLinkPlaceholder')"></div>
+    <div v-if="needsName" class="input-group"><label for="display-name">{{ t('displayName') }}</label><input id="display-name" v-model="displayName" :placeholder="t('yourName')" autocomplete="name" maxlength="60" required :autofocus="Boolean(inviteKey)"></div>
     <div v-else class="saved-name">{{ t('joiningAs', { name: savedName }) }} <button type="button" @click="changeName">{{ t('changeName') }}</button></div>
-    <button class="auth-btn" type="submit" :disabled="loading">{{ loading ? t('pleaseWait') : t('joinClass') }}</button>
+    <button class="auth-btn" type="submit" :disabled="loading">{{ loading ? t('pleaseWait') : t('join') }}</button>
   </form></div>
 </template>
 

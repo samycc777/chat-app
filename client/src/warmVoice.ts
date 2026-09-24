@@ -1,8 +1,8 @@
 import type { AudioProcessorOptions, LocalTrack, Track, TrackProcessor } from 'livekit-client';
 
-// The same warmer tone the teacher's Android app gives the teacher's voice: a little more bass, and
-// less of the sharp treble that hurts on small speakers. It is applied to the microphone before the
-// voice is sent, so the teacher and every student hear it, whatever they listen on.
+// A warmer tone for every voice: a little more bass, and less of the sharp treble that hurts on
+// small speakers. It is applied to the microphone before the voice is sent, so everyone in the call
+// hears it, whatever they listen on.
 const BASS_HZ = 250;
 const BASS_DB = 4;
 const TREBLE_HZ = 3000;
@@ -44,11 +44,11 @@ export function warmVoice(): TrackProcessor<Track.Kind.Audio, AudioProcessorOpti
       localTrack = options.localTrack;
       if (paused()) await Promise.race([context.resume(), new Promise(resolve => setTimeout(resolve, 200))]);
       // LiveKit then keeps sending the microphone as it is.
-      if (context.state !== 'running') throw new Error('Lesson audio is paused');
+      if (context.state !== 'running') throw new Error('Call audio is paused');
       shape(options.track);
       context.addEventListener('statechange', onStateChange);
     },
-    // A new microphone, such as after the student plugs in earphones; LiveKit does not pass the context again.
+    // A new microphone, such as after earphones are plugged in; LiveKit does not pass the context again.
     async restart(options) {
       if (paused()) { release(); sendAsRecorded(); } else shape(options.track);
     },

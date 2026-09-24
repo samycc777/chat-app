@@ -436,6 +436,7 @@ onBeforeUnmount(() => { document.removeEventListener('keydown', closeOnEscape); 
 }
 
 .user-panel {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -453,14 +454,14 @@ onBeforeUnmount(() => { document.removeEventListener('keydown', closeOnEscape); 
   white-space: nowrap;
 }
 
-.settings-menu {
-  position: relative;
-}
-
+/* The settings box is anchored to the whole user panel rather than to the
+   small button, and spans the sidebar's width. Anchored to the button, it was
+   wider than the sidebar and ran off the screen, in Arabic past the right edge. */
 .settings-popover {
+  width: auto;
   top: auto;
   bottom: calc(100% + 8px);
-  inset-inline-end: 0;
+  inset-inline: 8px;
 }
 
 .display-label {

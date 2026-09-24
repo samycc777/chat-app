@@ -32,6 +32,8 @@ npm test        # tests only
 npm run dev     # server on :3001, client on https://localhost:5173/?invite=0000
 ```
 
+`npm run dev:phone` runs everything (LiveKit included) for an Android phone on wireless debugging; see the README's Development section.
+
 For real calls locally: `livekit-server --dev` (from `brew install livekit`), then `LIVEKIT_URL=ws://127.0.0.1:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret npm run dev`.
 
 ## Conventions

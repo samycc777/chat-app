@@ -3,8 +3,10 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [vue(), basicSsl()],
-  // The lesson screen, which carries LiveKit, is its own chunk loaded only when a lesson starts.
+  // A phone app refuses the development certificate, so `npm run dev:phone` serves plain http
+  // instead; the phone reaches it as localhost, where the camera and microphone are still allowed.
+  plugins: [vue(), ...(process.env.DEV_HTTP ? [] : [basicSsl()])],
+  // The call screen, which carries LiveKit, is its own chunk loaded only when someone joins a call.
   build: { chunkSizeWarningLimit: 600 },
   server: {
     port: 5173,

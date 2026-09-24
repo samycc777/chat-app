@@ -10,7 +10,7 @@ type NativeError = { message?: string; code?: string };
 type Bridge = {
   PluginHeaders?: { name: string }[];
   nativePromise: (plugin: string, method: string, options?: object) => Promise<unknown>;
-  addListener: (plugin: string, event: string, callback: () => void) => { remove: () => Promise<void> };
+  addListener: (plugin: string, event: string, callback: (data: Record<string, unknown>) => void) => { remove: () => Promise<void> };
 };
 
 export const bridge = (window as unknown as { Capacitor?: Bridge }).Capacitor;

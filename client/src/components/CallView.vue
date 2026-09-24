@@ -15,7 +15,7 @@ import { warmVoice } from '../warmVoice';
 import {
   onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
 } from '../nativeScreenShare';
-import { endPhoneCall, keepPhoneCallGoing, onPhoneCallLeave } from '../nativeCall';
+import { endPhoneCall, inMiniWindow, keepPhoneCallGoing, onPhoneCallLeave, setMiniWindow } from '../nativeCall';
 import type { OnlineUser } from '../types';
 import Avatar from './Avatar.vue';
 import CallTile, { type Tile } from './CallTile.vue';
@@ -74,6 +74,7 @@ const participants = ref<CallParticipant[]>([]);
 // Shallow, because each tile holds a LiveKit track that Vue must not wrap; the list is replaced whole.
 const tiles = shallowRef<Tile[]>([]);
 const focusedKey = ref<string | null>(null);
+const lastSpeakerKey = ref('');
 const raisedHands = computed(() => new Set(props.hands.map(hand => hand.userId)));
 const reactions = ref<{ id: number; emoji: string; name: string; drift: number }[]>([]);
 const toast = ref('');
@@ -106,6 +107,16 @@ const elapsed = computed(() => {
 });
 const focusedTile = computed(() => tiles.value.find(tile => tile.key === focusedKey.value) ?? null);
 const otherTiles = computed(() => tiles.value.filter(tile => tile.key !== focusedKey.value));
+// The one video the Android app shows in its small window over other apps: the one made big, else
+// a shared screen, else whoever spoke last with their camera on. Never your own video, and nothing
+// while you share your screen, because the small window would then appear in what you share.
+const miniTile = computed(() => {
+  if (sharingScreen.value) return null;
+  const watchable = tiles.value.filter(tile => !tile.local && tile.track);
+  return watchable.find(tile => tile.key === focusedKey.value) ?? watchable.find(tile => tile.kind === 'screen')
+    ?? watchable.find(tile => tile.key === lastSpeakerKey.value) ?? watchable[0] ?? null;
+});
+const miniSpeaker = computed(() => participants.value.find(person => person.speaking && !person.local) ?? null);
 // Columns grow with the number of tiles, so everyone stays as large as the screen allows; a phone
 // held upright stacks them instead.
 const narrow = ref(window.innerWidth < 700);
@@ -161,12 +172,14 @@ function refresh() {
     const screen = participant.getTrackPublication(Track.Source.ScreenShare);
     // This phone's own screen is never downloaded (see onTrackPublished), so it has no track here.
     if (phoneScreen && local && screen && !screen.isMuted) next.push({ ...base, key: `${participant.identity}:screen`, kind: 'screen', track: null });
-    else if (screen?.track && !screen.isMuted) next.push({ ...base, key: `${participant.identity}:screen`, kind: 'screen', track: markRaw(screen.track as VideoTrack) });
+    else if (screen?.track && !screen.isMuted) next.push({ ...base, key: `${participant.identity}:screen`, kind: 'screen', track: markRaw(screen.track as VideoTrack), dimensions: screen.dimensions });
     if (phoneScreen) continue;
     const camera = participant.getTrackPublication(Track.Source.Camera);
     const cameraTrack = camera?.track && !camera.isMuted ? markRaw(camera.track as VideoTrack) : null;
-    next.push({ ...base, key: `${participant.identity}:camera`, kind: 'camera', track: cameraTrack });
+    next.push({ ...base, key: `${participant.identity}:camera`, kind: 'camera', track: cameraTrack, dimensions: camera?.dimensions });
   }
+  const speaker = next.find(tile => tile.speaking && tile.kind === 'camera' && tile.track && !tile.local);
+  if (speaker) lastSpeakerKey.value = speaker.key;
   // A screen someone starts sharing is made big straight away, as in a video call; it goes back
   // to the grid when they stop.
   const screens = next.filter(tile => tile.kind === 'screen' && !tile.local);
@@ -182,6 +195,19 @@ function refresh() {
     speaking: participants.value.filter(person => person.speaking).map(person => person.identity),
   });
 }
+// Tells the Android app whether to shrink into the small window when its owner leaves it, and in
+// what shape. Wide or tall, the window matches the video, so none of it is cut off. The shape is
+// compared as text, so the app is only told when it really changes, not on every refresh.
+const miniShape = computed(() => {
+  const tile = miniTile.value;
+  if (!tile) return '';
+  const size = tile.dimensions ?? (tile.kind === 'screen' ? { width: 16, height: 9 } : { width: 4, height: 3 });
+  return `${size.width}x${size.height}`;
+});
+watch(miniShape, shape => {
+  const [width, height] = shape.split('x').map(Number);
+  setMiniWindow(shape ? { width, height } : null);
+});
 function toggleFocus(key: string) { focusedKey.value = focusedKey.value === key ? null : key; }
 
 function attachAudio(track: RemoteTrack, participant: RemoteParticipant) {
@@ -523,140 +549,151 @@ onBeforeUnmount(cleanup);
 </script>
 
 <template>
-  <section v-show="visible" ref="root" class="call-view" :aria-label="channelName">
-    <header class="call-header">
-      <button class="call-icon-btn menu-btn" type="button" :aria-label="t('channels')" @click="emit('menu')"><Menu :size="20" /></button>
-      <Volume2 :size="20" class="call-header-icon" aria-hidden="true" />
-      <h2><bdi>{{ channelName }}</bdi></h2>
-      <bdi v-if="elapsed" class="call-clock">{{ elapsed }}</bdi>
-      <span class="call-header-spacer" />
-      <button
-        class="call-icon-btn"
-        type="button"
-        :title="soundOn && !audioBlocked ? t('callSoundOn') : t('callSoundOff')"
-        :aria-label="soundOn && !audioBlocked ? t('callSoundOn') : t('callSoundOff')"
-        @click="toggleSound"
-      >
-        <Volume2 v-if="soundOn && !audioBlocked" :size="20" />
-        <VolumeX v-else :size="20" />
-      </button>
-      <button class="call-icon-btn" type="button" :title="t('participants')" :aria-label="t('participantsCount', { count: participants.length })" @click="openSheet('participants')">
-        <Users :size="20" /><span class="call-count">{{ participants.length }}</span>
-      </button>
-    </header>
-
-    <main class="call-stage">
-      <div v-if="error" class="call-state-card error" role="alert">
-        <strong>{{ t('callJoinFailed') }}</strong>
-        <p dir="auto">{{ error }}</p>
-        <button class="call-state-action" type="button" @click="rejoin"><RotateCcw :size="16" />{{ t('rejoinCall') }}</button>
-      </div>
-      <div v-else-if="status === 'disconnected'" class="call-state-card" role="status">
-        <strong>{{ t('callDisconnected') }}</strong>
-        <button class="call-state-action" type="button" @click="rejoin"><RotateCcw :size="16" />{{ t('rejoinCall') }}</button>
-      </div>
-      <div v-else-if="status === 'joining'" class="call-state-card" role="status">
-        <strong>{{ t('joiningCall') }}</strong>
-      </div>
-      <template v-else-if="focusedTile">
-        <div class="call-focus">
-          <CallTile :tile="focusedTile" focused @focus="toggleFocus(focusedTile.key)" @click="toggleFocus(focusedTile.key)" />
-        </div>
-        <div v-if="otherTiles.length" class="call-strip">
-          <CallTile v-for="tile in otherTiles" :key="tile.key" :tile="tile" :focused="false" small @click="toggleFocus(tile.key)" />
-        </div>
-      </template>
-      <div v-else class="call-grid" :style="gridStyle">
-        <CallTile v-for="tile in tiles" :key="tile.key" :tile="tile" :focused="false" @focus="toggleFocus(tile.key)" @click="toggleFocus(tile.key)" />
-      </div>
-      <p v-if="status === 'reconnecting'" class="call-pill call-reconnecting" role="status">{{ t('callReconnecting') }}</p>
-    </main>
-
-    <button v-if="audioBlocked" class="call-pill call-sound-pill" type="button" @click="enableAudio">
-      <Volume2 :size="17" />{{ t('tapToEnableSound') }}
-    </button>
-    <div v-if="toast" class="call-pill call-toast" role="status"><bdi>{{ toast }}</bdi></div>
-
-    <div class="call-reactions" aria-hidden="true">
-      <div v-for="reaction in reactions" :key="reaction.id" class="call-reaction" :style="{ '--drift': `${reaction.drift}px` }">
-        <span class="call-reaction-emoji">{{ reaction.emoji }}</span>
-        <bdi class="call-reaction-name">{{ reaction.name }}</bdi>
+  <section v-show="visible || inMiniWindow" ref="root" class="call-view" :class="{ mini: inMiniWindow }" :aria-label="channelName">
+    <!-- The Android app's small window over other apps: just one video, or who is talking. -->
+    <div v-if="inMiniWindow" class="call-mini">
+      <CallTile v-if="miniTile && status === 'connected'" :tile="miniTile" :focused="false" small />
+      <div v-else class="call-mini-card">
+        <Avatar v-if="miniSpeaker" :name="miniSpeaker.name" :color="colorOf(miniSpeaker.identity)" size="small" />
+        <Volume2 v-else :size="22" aria-hidden="true" />
+        <bdi>{{ miniSpeaker?.name ?? channelName }}</bdi>
       </div>
     </div>
-
-    <footer class="call-controls">
-      <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="micOn ? t('mute') : t('unmute')" :aria-label="micOn ? t('mute') : t('unmute')" :disabled="status !== 'connected'" @click="setMicrophone(!micOn)">
-        <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
-      </button>
-      <button class="call-control" :class="{ on: cameraOn }" type="button" :aria-pressed="cameraOn" :title="cameraOn ? t('cameraOff') : t('cameraOn')" :aria-label="cameraOn ? t('cameraOff') : t('cameraOn')" :disabled="status !== 'connected'" @click="toggleCamera">
-        <Video v-if="cameraOn" :size="22" /><VideoOff v-else :size="22" />
-      </button>
-      <button class="call-control" :class="{ on: sharingScreen }" type="button" :aria-pressed="sharingScreen" :title="sharingScreen ? t('stopSharing') : t('shareScreen')" :aria-label="sharingScreen ? t('stopSharing') : t('shareScreen')" :disabled="status !== 'connected'" @click="toggleScreenShare">
-        <ScreenShareOff v-if="sharingScreen" :size="22" /><ScreenShare v-else :size="22" />
-      </button>
-      <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="myHandRaised ? t('lowerHand') : t('raiseHand')" :aria-label="myHandRaised ? t('lowerHand') : t('raiseHand')" @click="toggleHand">
-        <Hand :size="22" />
-      </button>
-      <button class="call-control" type="button" :aria-pressed="sheet === 'more'" :title="t('more')" :aria-label="t('more')" @click="openSheet('more')">
-        <Ellipsis :size="22" />
-      </button>
-      <button class="call-control leave" type="button" :title="t('disconnect')" :aria-label="t('disconnect')" @click="leave">
-        <PhoneOff :size="22" />
-      </button>
-    </footer>
-
-    <template v-if="sheet">
-      <div class="call-sheet-backdrop" @click="sheet = null" />
-
-      <section v-if="sheet === 'participants'" class="call-sheet side" :aria-label="t('participants')">
-        <div class="call-sheet-head">
-          <strong>{{ t('participantsCount', { count: participants.length }) }}</strong>
-          <button class="call-icon-btn" type="button" :aria-label="t('close')" @click="sheet = null"><X :size="18" /></button>
-        </div>
-        <ul class="call-people">
-          <li v-for="person in participants" :key="person.identity" :class="{ speaking: person.speaking }">
-            <Avatar :name="person.name" :color="colorOf(person.identity)" size="small" />
-            <div class="call-person-main">
-              <span class="call-person-name">
-                <bdi>{{ person.name }}</bdi>
-                <small v-if="person.local">{{ t('youLabel') }}</small>
-              </span>
-              <!-- Only on this device: turning someone down here changes nothing for anyone else. -->
-              <label v-if="canAdjustVolume && !person.local" class="call-person-volume">
-                <Volume1 :size="16" aria-hidden="true" />
-                <input
-                  type="range"
-                  :min="MIN_VOLUME"
-                  max="1"
-                  step="0.05"
-                  :value="levelOf(person.identity)"
-                  :aria-label="t('personVolume', { name: person.name })"
-                  @input="setPersonVolume(person.identity, ($event.target as HTMLInputElement).valueAsNumber)"
-                >
-              </label>
-            </div>
-            <span v-if="raisedHands.has(person.identity)" class="call-person-hand">✋</span>
-            <Mic v-if="person.micOn" :size="18" class="call-person-mic" :class="{ on: person.speaking }" />
-            <MicOff v-else :size="18" class="call-person-mic off" />
-          </li>
-        </ul>
-      </section>
-
-      <section v-else-if="sheet === 'more'" class="call-sheet" :aria-label="t('more')">
-        <span class="call-sheet-handle" />
-        <div class="call-reaction-row">
-          <button v-for="emoji in REACTIONS" :key="emoji" class="call-emoji-btn" type="button" :aria-label="`${t('reactions')} ${emoji}`" @click="react(emoji)">{{ emoji }}</button>
-        </div>
-        <label v-if="canAdjustVolume" class="call-volume">
-          <Volume1 :size="20" aria-hidden="true" />
-          <span>{{ t('callVolume') }}</span>
-          <input v-model.number="volume" type="range" :min="MIN_VOLUME" max="1" step="0.05">
-          <Volume2 :size="20" aria-hidden="true" />
-        </label>
-        <button v-if="fullscreenSupported" class="call-sheet-row" type="button" @click="toggleFullscreen">
-          <Minimize v-if="fullscreen" :size="20" /><Maximize v-else :size="20" />{{ fullscreen ? t('exitFullscreen') : t('fullscreen') }}
+    <template v-else>
+      <header class="call-header">
+        <button class="call-icon-btn menu-btn" type="button" :aria-label="t('channels')" @click="emit('menu')"><Menu :size="20" /></button>
+        <Volume2 :size="20" class="call-header-icon" aria-hidden="true" />
+        <h2><bdi>{{ channelName }}</bdi></h2>
+        <bdi v-if="elapsed" class="call-clock">{{ elapsed }}</bdi>
+        <span class="call-header-spacer" />
+        <button
+          class="call-icon-btn"
+          type="button"
+          :title="soundOn && !audioBlocked ? t('callSoundOn') : t('callSoundOff')"
+          :aria-label="soundOn && !audioBlocked ? t('callSoundOn') : t('callSoundOff')"
+          @click="toggleSound"
+        >
+          <Volume2 v-if="soundOn && !audioBlocked" :size="20" />
+          <VolumeX v-else :size="20" />
         </button>
-      </section>
+        <button class="call-icon-btn" type="button" :title="t('participants')" :aria-label="t('participantsCount', { count: participants.length })" @click="openSheet('participants')">
+          <Users :size="20" /><span class="call-count">{{ participants.length }}</span>
+        </button>
+      </header>
+
+      <main class="call-stage">
+        <div v-if="error" class="call-state-card error" role="alert">
+          <strong>{{ t('callJoinFailed') }}</strong>
+          <p dir="auto">{{ error }}</p>
+          <button class="call-state-action" type="button" @click="rejoin"><RotateCcw :size="16" />{{ t('rejoinCall') }}</button>
+        </div>
+        <div v-else-if="status === 'disconnected'" class="call-state-card" role="status">
+          <strong>{{ t('callDisconnected') }}</strong>
+          <button class="call-state-action" type="button" @click="rejoin"><RotateCcw :size="16" />{{ t('rejoinCall') }}</button>
+        </div>
+        <div v-else-if="status === 'joining'" class="call-state-card" role="status">
+          <strong>{{ t('joiningCall') }}</strong>
+        </div>
+        <template v-else-if="focusedTile">
+          <div class="call-focus">
+            <CallTile :tile="focusedTile" focused @focus="toggleFocus(focusedTile.key)" @click="toggleFocus(focusedTile.key)" />
+          </div>
+          <div v-if="otherTiles.length" class="call-strip">
+            <CallTile v-for="tile in otherTiles" :key="tile.key" :tile="tile" :focused="false" small @click="toggleFocus(tile.key)" />
+          </div>
+        </template>
+        <div v-else class="call-grid" :style="gridStyle">
+          <CallTile v-for="tile in tiles" :key="tile.key" :tile="tile" :focused="false" @focus="toggleFocus(tile.key)" @click="toggleFocus(tile.key)" />
+        </div>
+        <p v-if="status === 'reconnecting'" class="call-pill call-reconnecting" role="status">{{ t('callReconnecting') }}</p>
+      </main>
+
+      <button v-if="audioBlocked" class="call-pill call-sound-pill" type="button" @click="enableAudio">
+        <Volume2 :size="17" />{{ t('tapToEnableSound') }}
+      </button>
+      <div v-if="toast" class="call-pill call-toast" role="status"><bdi>{{ toast }}</bdi></div>
+
+      <div class="call-reactions" aria-hidden="true">
+        <div v-for="reaction in reactions" :key="reaction.id" class="call-reaction" :style="{ '--drift': `${reaction.drift}px` }">
+          <span class="call-reaction-emoji">{{ reaction.emoji }}</span>
+          <bdi class="call-reaction-name">{{ reaction.name }}</bdi>
+        </div>
+      </div>
+
+      <footer class="call-controls">
+        <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="micOn ? t('mute') : t('unmute')" :aria-label="micOn ? t('mute') : t('unmute')" :disabled="status !== 'connected'" @click="setMicrophone(!micOn)">
+          <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
+        </button>
+        <button class="call-control" :class="{ on: cameraOn }" type="button" :aria-pressed="cameraOn" :title="cameraOn ? t('cameraOff') : t('cameraOn')" :aria-label="cameraOn ? t('cameraOff') : t('cameraOn')" :disabled="status !== 'connected'" @click="toggleCamera">
+          <Video v-if="cameraOn" :size="22" /><VideoOff v-else :size="22" />
+        </button>
+        <button class="call-control" :class="{ on: sharingScreen }" type="button" :aria-pressed="sharingScreen" :title="sharingScreen ? t('stopSharing') : t('shareScreen')" :aria-label="sharingScreen ? t('stopSharing') : t('shareScreen')" :disabled="status !== 'connected'" @click="toggleScreenShare">
+          <ScreenShareOff v-if="sharingScreen" :size="22" /><ScreenShare v-else :size="22" />
+        </button>
+        <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="myHandRaised ? t('lowerHand') : t('raiseHand')" :aria-label="myHandRaised ? t('lowerHand') : t('raiseHand')" @click="toggleHand">
+          <Hand :size="22" />
+        </button>
+        <button class="call-control" type="button" :aria-pressed="sheet === 'more'" :title="t('more')" :aria-label="t('more')" @click="openSheet('more')">
+          <Ellipsis :size="22" />
+        </button>
+        <button class="call-control leave" type="button" :title="t('disconnect')" :aria-label="t('disconnect')" @click="leave">
+          <PhoneOff :size="22" />
+        </button>
+      </footer>
+
+      <template v-if="sheet">
+        <div class="call-sheet-backdrop" @click="sheet = null" />
+
+        <section v-if="sheet === 'participants'" class="call-sheet side" :aria-label="t('participants')">
+          <div class="call-sheet-head">
+            <strong>{{ t('participantsCount', { count: participants.length }) }}</strong>
+            <button class="call-icon-btn" type="button" :aria-label="t('close')" @click="sheet = null"><X :size="18" /></button>
+          </div>
+          <ul class="call-people">
+            <li v-for="person in participants" :key="person.identity" :class="{ speaking: person.speaking }">
+              <Avatar :name="person.name" :color="colorOf(person.identity)" size="small" />
+              <div class="call-person-main">
+                <span class="call-person-name">
+                  <bdi>{{ person.name }}</bdi>
+                  <small v-if="person.local">{{ t('youLabel') }}</small>
+                </span>
+                <!-- Only on this device: turning someone down here changes nothing for anyone else. -->
+                <label v-if="canAdjustVolume && !person.local" class="call-person-volume">
+                  <Volume1 :size="16" aria-hidden="true" />
+                  <input
+                    type="range"
+                    :min="MIN_VOLUME"
+                    max="1"
+                    step="0.05"
+                    :value="levelOf(person.identity)"
+                    :aria-label="t('personVolume', { name: person.name })"
+                    @input="setPersonVolume(person.identity, ($event.target as HTMLInputElement).valueAsNumber)"
+                  >
+                </label>
+              </div>
+              <span v-if="raisedHands.has(person.identity)" class="call-person-hand">✋</span>
+              <Mic v-if="person.micOn" :size="18" class="call-person-mic" :class="{ on: person.speaking }" />
+              <MicOff v-else :size="18" class="call-person-mic off" />
+            </li>
+          </ul>
+        </section>
+
+        <section v-else-if="sheet === 'more'" class="call-sheet" :aria-label="t('more')">
+          <span class="call-sheet-handle" />
+          <div class="call-reaction-row">
+            <button v-for="emoji in REACTIONS" :key="emoji" class="call-emoji-btn" type="button" :aria-label="`${t('reactions')} ${emoji}`" @click="react(emoji)">{{ emoji }}</button>
+          </div>
+          <label v-if="canAdjustVolume" class="call-volume">
+            <Volume1 :size="20" aria-hidden="true" />
+            <span>{{ t('callVolume') }}</span>
+            <input v-model.number="volume" type="range" :min="MIN_VOLUME" max="1" step="0.05">
+            <Volume2 :size="20" aria-hidden="true" />
+          </label>
+          <button v-if="fullscreenSupported" class="call-sheet-row" type="button" @click="toggleFullscreen">
+            <Minimize v-if="fullscreen" :size="20" /><Maximize v-else :size="20" />{{ fullscreen ? t('exitFullscreen') : t('fullscreen') }}
+          </button>
+        </section>
+      </template>
     </template>
   </section>
 </template>
@@ -673,6 +710,45 @@ onBeforeUnmount(cleanup);
   overflow: hidden;
   color: #f2f3f5;
   background: #000000;
+}
+
+/* In the Android app's small window, the call covers the whole page, even when a text channel was open. */
+.call-view.mini {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.call-mini {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.call-mini .call-tile {
+  flex: 1;
+  border-radius: 0;
+}
+
+.call-mini-card {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  color: #b5bac1;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.call-mini-card bdi {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .call-header {

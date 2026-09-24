@@ -13,6 +13,8 @@ export interface Tile {
   kind: 'camera' | 'screen';
   local: boolean;
   track: VideoTrack | null;
+  /** The size the video is sent at, when known; it gives the phone's small window its shape. */
+  dimensions?: { width: number; height: number };
   micOn: boolean;
   speaking: boolean;
   hand: boolean;

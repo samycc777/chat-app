@@ -222,6 +222,17 @@ it ends (`client/src/nativeCall.ts`). An app installed before this existed still
 background until it is updated. Some phones also pause apps to save battery; if a call still stops, turn
 off battery saving for Majlis in the phone's settings.
 
+**On Android, a video call shrinks into a small window over other apps**, like a WhatsApp video call
+(Android calls this "picture-in-picture"). The call screen picks one video to show there (a shared
+screen first, else whoever spoke last with their camera on, never your own) and sends its shape to
+`CallPlugin.kt` (`setMiniWindow` in `client/src/nativeCall.ts`). While there is such a video, leaving
+the app shrinks it: Android 12 and newer do it by themselves, older versions when `CallPlugin` hears
+the Home button. The whole app becomes that small window, so the page tells the call screen when it is
+in one, and the call screen then shows only that video. Nothing shrinks while you share your own
+screen, or when nobody's video is on. Closing the small window keeps the call going with sound only.
+An app installed before this existed goes to the background as before until it is updated. People can
+turn small windows off for Majlis in Android's settings (Apps → Special app access → Picture-in-picture).
+
 ## Changing things
 
 - **The website**: just deploy it. Apps pick it up next time they open.

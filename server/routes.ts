@@ -5,12 +5,12 @@ import path from 'path';
 import fs from 'fs';
 import db from './database';
 import { AuthRequest, authMiddleware } from './auth';
-import { CLASSROOM_ID } from './database';
+import { getCall } from './voice';
+import { isTextChannel, isVoiceChannel } from './channels';
 import { MAX_UPLOAD_BYTES, UPLOADS_DIR } from './config';
 import { detectMime } from './attachments';
 import { AccessToken, TrackSource } from 'livekit-server-sdk';
-import { getLessonSession } from './lesson';
-import { liveKitConfig, roomService } from './livekit';
+import { liveKitConfig } from './livekit';
 import { rateLimit } from './rateLimit';
 
 const router = Router();
@@ -32,74 +32,40 @@ router.get('/upload-config', (_req: AuthRequest, res: Response) => {
   res.json({ maxUploadBytes: MAX_UPLOAD_BYTES });
 });
 
+// Only someone the server has put in the voice channel gets into its call, so nobody can listen in
+// without showing up in the sidebar.
 router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
-  const conversationId = req.body?.conversationId;
-  if (typeof conversationId !== 'string' || !memberOf(conversationId, req.userId!)) {
-    res.status(403).json({ error: 'Not a classroom member' }); return;
-  }
-  const session = getLessonSession(conversationId);
-  if (!session) { res.status(409).json({ error: 'No lesson is active' }); return; }
+  const channelId = req.body?.channelId;
+  if (!isVoiceChannel(channelId)) { res.status(404).json({ error: 'Unknown channel' }); return; }
+  const call = getCall(channelId);
+  if (!call?.members.has(req.userId!)) { res.status(409).json({ error: 'Not in this voice channel' }); return; }
 
   const config = liveKitConfig();
-  if (!config) { res.status(503).json({ error: 'Lesson streaming is not configured' }); return; }
+  if (!config) { res.status(503).json({ error: 'Calls are not configured' }); return; }
 
-  const isPresenter = session.presenterId === req.userId;
   const user = db.prepare('SELECT display_name FROM users WHERE id = ?').get(req.userId!) as { display_name?: string } | undefined;
   const token = new AccessToken(config.apiKey, config.apiSecret, {
     identity: req.userId!,
-    name: user?.display_name || 'Classroom member',
-    ttl: '1h',
-    // Lets every lesson client recognise the teacher, even one who is not presenting.
-    attributes: { role: req.role! },
+    name: user?.display_name || 'Friend',
+    ttl: '6h',
   });
+  // Everyone is equal in a call: anyone can talk, show their camera and share their screen.
   token.addGrant({
     roomJoin: true,
-    room: session.roomName,
+    room: call.roomName,
     canSubscribe: true,
     canPublish: true,
-    // Raised hands and reactions travel over LiveKit data messages.
+    // Reactions travel over LiveKit data messages.
     canPublishData: true,
-    canPublishSources: isPresenter
-      ? [TrackSource.SCREEN_SHARE, TrackSource.MICROPHONE]
-      : [TrackSource.MICROPHONE],
+    canPublishSources: [TrackSource.MICROPHONE, TrackSource.CAMERA, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO],
   });
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ url: config.url, token: await token.toJwt(), roomName: session.roomName, encryptionKey: session.encryptionKey, startedAt: session.startedAt });
+  res.json({ url: config.url, token: await token.toJwt(), roomName: call.roomName, startedAt: call.startedAt });
 });
-
-// The teacher can silence one student's microphone, or everyone's but the teachers'. Students can
-// unmute themselves again; this is for a forgotten open microphone, not a punishment.
-router.post('/lesson/mute', async (req: AuthRequest, res: Response) => {
-  if (req.role !== 'teacher') { res.status(403).json({ error: 'Only the teacher can mute students' }); return; }
-  const session = getLessonSession(CLASSROOM_ID);
-  if (!session) { res.status(409).json({ error: 'No lesson is active' }); return; }
-  const service = roomService();
-  if (!service) { res.status(503).json({ error: 'Lesson streaming is not configured' }); return; }
-  const target = typeof req.body?.identity === 'string' ? req.body.identity : null;
-  try {
-    let muted = 0;
-    for (const participant of await service.listParticipants(session.roomName)) {
-      const everyoneElse = !target && participant.identity !== req.userId && participant.attributes?.role !== 'teacher';
-      if (participant.identity !== target && !everyoneElse) continue;
-      for (const track of participant.tracks) {
-        if (track.source !== TrackSource.MICROPHONE || track.muted) continue;
-        await service.mutePublishedTrack(session.roomName, participant.identity, track.sid, true);
-        muted++;
-      }
-    }
-    res.json({ muted });
-  } catch {
-    res.status(502).json({ error: 'The lesson server could not be reached' });
-  }
-});
-
-function memberOf(conversationId: string, userId: string) {
-  return conversationId === CLASSROOM_ID && Boolean(db.prepare('SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?').get(CLASSROOM_ID, userId));
-}
 
 router.get('/me', (req: AuthRequest, res: Response) => {
   const user = db.prepare(
-    'SELECT id, username, display_name, avatar_color, status, role FROM users WHERE id = ?'
+    'SELECT id, username, display_name, avatar_color, status FROM users WHERE id = ?'
   ).get(req.userId!) as any;
   if (!user) { res.status(404).json({ error: 'User not found' }); return; }
   res.json({
@@ -108,58 +74,7 @@ router.get('/me', (req: AuthRequest, res: Response) => {
     displayName: user.display_name,
     avatarColor: user.avatar_color,
     status: user.status,
-    role: user.role,
   });
-});
-
-// Students the teacher has removed, so the teacher can let them back in.
-router.get('/members/removed', (req: AuthRequest, res: Response) => {
-  if (req.role !== 'teacher') { res.status(403).json({ error: 'Only the teacher can see removed students' }); return; }
-  const removed = db.prepare(`
-    SELECT u.id, u.display_name AS displayName, u.avatar_color AS avatarColor, u.removed_at AS removedAt
-    FROM users u JOIN conversation_members cm ON cm.user_id = u.id AND cm.conversation_id = ?
-    WHERE u.removed_at IS NOT NULL ORDER BY u.removed_at DESC LIMIT 100
-  `).all(CLASSROOM_ID);
-  res.setHeader('Cache-Control', 'no-store');
-  res.json(removed);
-});
-
-router.get('/conversations', (req: AuthRequest, res: Response) => {
-  const conversations = db.prepare(`
-    SELECT c.id, c.type, c.name, c.created_at,
-      (SELECT content FROM messages WHERE conversation_id = c.id AND deleted = 0 ORDER BY created_at DESC LIMIT 1) as last_message,
-      (SELECT sender_id FROM messages WHERE conversation_id = c.id AND deleted = 0 ORDER BY created_at DESC LIMIT 1) as last_message_sender,
-      (SELECT type FROM messages WHERE conversation_id = c.id AND deleted = 0 ORDER BY created_at DESC LIMIT 1) as last_message_type,
-      (SELECT created_at FROM messages WHERE conversation_id = c.id AND deleted = 0 ORDER BY created_at DESC LIMIT 1) as last_message_time,
-      (SELECT COUNT(*) FROM messages m
-       WHERE m.conversation_id = c.id AND m.deleted = 0 AND m.sender_id != ?
-       AND NOT EXISTS (SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id = ?)) as unread_count
-    FROM conversations c
-    JOIN conversation_members cm ON cm.conversation_id = c.id
-    WHERE cm.user_id = ? AND c.id = ?
-    ORDER BY last_message_time DESC NULLS LAST
-  `).all(req.userId!, req.userId!, req.userId!, CLASSROOM_ID) as any[];
-
-  const result = conversations.map(c => {
-    const members = db.prepare(`
-      SELECT u.id, u.username, u.display_name, u.avatar_color, u.status, u.last_seen
-      FROM users u JOIN conversation_members cm ON cm.user_id = u.id
-      WHERE cm.conversation_id = ?
-    `).all(c.id) as any[];
-
-    return {
-      id: c.id, type: c.type, name: c.name, createdAt: c.created_at,
-      lastMessage: c.last_message, lastMessageSender: c.last_message_sender,
-      lastMessageType: c.last_message_type, lastMessageTime: c.last_message_time,
-      unreadCount: c.unread_count,
-      members: members.map(m => ({
-        id: m.id, username: m.username, displayName: m.display_name,
-        avatarColor: m.avatar_color, status: m.status, lastSeen: m.last_seen,
-      })),
-    };
-  });
-
-  res.json(result);
 });
 
 router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
@@ -176,16 +91,12 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: 'Invalid message cursor' }); return;
   }
 
-  const isMember = db.prepare(
-    'SELECT 1 FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
-  ).get(id, req.userId!);
-  if (id !== CLASSROOM_ID || !isMember) { res.status(403).json({ error: 'Not a classroom member' }); return; }
+  if (!isTextChannel(id)) { res.status(404).json({ error: 'Unknown channel' }); return; }
 
   let query = `
     SELECT m.rowid AS seq, m.id, m.conversation_id, m.sender_id, m.content, m.type, m.file_url, m.file_name, m.attachment_id,
       m.reply_to, m.edited_at, m.deleted, m.created_at,
-      u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color,
-      u.role as sender_role
+      u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color
     FROM messages m
     JOIN users u ON u.id = m.sender_id
     WHERE m.conversation_id = ?
@@ -228,7 +139,7 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
       replyTo, editedAt: m.edited_at, deleted: !!m.deleted, createdAt: m.created_at,
       sender: {
         username: m.sender_username, displayName: m.sender_display_name,
-        avatarColor: m.sender_avatar_color, role: m.sender_role,
+        avatarColor: m.sender_avatar_color,
       },
     };
   });
@@ -240,8 +151,8 @@ router.post('/upload', rateLimit<AuthRequest>(20, 60_000, req => req.userId!), u
   if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
   const conversationId = req.body.conversationId;
   const storedPath = path.join(uploadsDir, req.file.filename);
-  if (typeof conversationId !== 'string' || !memberOf(conversationId, req.userId!)) {
-    fs.unlinkSync(storedPath); res.status(403).json({ error: 'Not a conversation member' }); return;
+  if (!isTextChannel(conversationId)) {
+    fs.unlinkSync(storedPath); res.status(404).json({ error: 'Unknown channel' }); return;
   }
   const mimeType = detectMime(fs.readFileSync(storedPath).subarray(0, 16));
   if (!mimeType) { fs.unlinkSync(storedPath); res.status(415).json({ error: 'Only images and PDFs are allowed' }); return; }
@@ -258,7 +169,7 @@ router.post('/upload', rateLimit<AuthRequest>(20, 60_000, req => req.userId!), u
 
 router.get('/attachments/:id', (req: AuthRequest, res: Response) => {
   const attachment = db.prepare('SELECT * FROM attachments WHERE id = ?').get(req.params.id) as any;
-  if (!attachment || !memberOf(attachment.conversation_id, req.userId!)) {
+  if (!attachment) {
     res.status(404).json({ error: 'Attachment not found' }); return;
   }
   const diskPath = path.join(uploadsDir, attachment.disk_name);

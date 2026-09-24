@@ -80,17 +80,25 @@ if (!userColumns.some(column => column.name === 'visitor_id')) {
   db.exec('ALTER TABLE users ADD COLUMN visitor_id TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_visitor_id ON users(visitor_id)');
 }
-if (!userColumns.some(column => column.name === 'role')) {
-  db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'student' CHECK(role IN ('student', 'teacher'))");
-}
-if (!userColumns.some(column => column.name === 'removed_at')) {
-  db.exec('ALTER TABLE users ADD COLUMN removed_at INTEGER');
-}
 
-export const CLASSROOM_ID = 'classroom';
-const classroomExists = db.prepare('SELECT 1 FROM conversations WHERE id = ?').get(CLASSROOM_ID);
-if (!classroomExists) {
-  db.prepare("INSERT INTO conversations (id, type, name) VALUES (?, 'group', 'Classroom')").run(CLASSROOM_ID);
+// A text channel is also a row in conversations, so its messages and files keep their existing
+// tables and are removed with it; a voice channel has no messages and exists only here.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS channels (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('text', 'voice')),
+    position INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`);
+if (!db.prepare('SELECT 1 FROM channels LIMIT 1').get()) {
+  const now = Date.now();
+  const general = uuid();
+  db.prepare("INSERT INTO conversations (id, type, name) VALUES (?, 'group', ?)").run(general, 'general');
+  const addChannel = db.prepare('INSERT INTO channels (id, name, kind, position, created_at) VALUES (?, ?, ?, ?, ?)');
+  addChannel.run(general, 'general', 'text', 0, now);
+  addChannel.run(uuid(), 'General', 'voice', 1, now);
 }
 
 // Apply additive schema changes to databases created before attachment IDs existed.

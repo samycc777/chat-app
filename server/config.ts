@@ -13,10 +13,8 @@ export const MAX_UPLOAD_BYTES = Number.isSafeInteger(configuredMaxUploadBytes) &
   ? configuredMaxUploadBytes
   : DEFAULT_MAX_UPLOAD_BYTES;
 
-export type Role = 'student' | 'teacher';
-
-// Phones set to Arabic type Arabic-Indic digits and often capitalize the first letter,
-// so codes are compared without case, spaces, or digit-script differences.
+// Phones often capitalize the first letter or type Arabic-Indic digits, so a key pasted or typed by
+// hand is compared without case, spaces, or digit-script differences.
 export function normalizeCode(value: string): string {
   return value.normalize('NFKC')
     .replace(/[\u0660-\u0669]/g, digit => String(digit.charCodeAt(0) - 0x0660))
@@ -25,37 +23,25 @@ export function normalizeCode(value: string): string {
     .toLowerCase();
 }
 
-// Codes are read on every use so that a changed code takes effect without stale copies.
-export function classCode(role: Role): string {
-  const name = role === 'teacher' ? 'TEACHER_CODE' : 'CLASS_CODE';
-  const code = normalizeCode(process.env[name] || '');
-  if (code) return code;
-  if (production) throw new Error(`${name} is required in production`);
-  return role === 'teacher' ? 'teacher' : '0000';
+// The invite key travels inside the invite link, so nobody has to type it. It is read on every use
+// so that a changed key takes effect straight away.
+export function inviteKey(): string {
+  const key = normalizeCode(process.env.INVITE_KEY || '');
+  if (key) return key;
+  if (production) throw new Error('INVITE_KEY is required in production');
+  return '0000';
 }
 
-function sameCode(a: string, b: string) {
-  const digest = (value: string) => createHash('sha256').update(value).digest();
-  return timingSafeEqual(digest(a), digest(b));
-}
-
-export function roleForCode(entered: string): Role | null {
+export function inviteKeyMatches(entered: string): boolean {
   const code = normalizeCode(entered);
-  if (!code) return null;
-  if (sameCode(code, classCode('teacher'))) return 'teacher';
-  if (sameCode(code, classCode('student'))) return 'student';
-  return null;
+  if (!code) return false;
+  const digest = (value: string) => createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest(code), digest(inviteKey()));
 }
 
-export function className(): string {
-  return (process.env.CLASS_NAME || '').trim().slice(0, 80);
+export function serverName(): string {
+  return (process.env.SERVER_NAME || '').trim().slice(0, 80);
 }
 
-// Four digits are enough for a class that types codes on phones; repeated wrong codes are locked out.
-if (production) {
-  const student = classCode('student');
-  const teacher = classCode('teacher');
-  if (student.length < 4) throw new Error('CLASS_CODE must be at least 4 characters in production');
-  if (teacher.length < 4) throw new Error('TEACHER_CODE must be at least 4 characters in production');
-  if (student === teacher) throw new Error('CLASS_CODE and TEACHER_CODE must be different');
-}
+// Nobody types the key, so it can be long enough that guessing it is hopeless.
+if (production && inviteKey().length < 12) throw new Error('INVITE_KEY must be at least 12 characters in production');

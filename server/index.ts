@@ -7,7 +7,7 @@ import fs from 'fs';
 import authRouter from './auth';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
-import { className, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, production, UPLOADS_DIR } from './config';
+import { serverName, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, production, UPLOADS_DIR } from './config';
 import { rateLimit } from './rateLimit';
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -32,15 +32,15 @@ app.use((_req, res, next) => {
   if (production) res.setHeader('Strict-Transport-Security', 'max-age=15552000');
   next();
 });
-// Students often join on mobile data; compressing the app's code and data cuts what they download.
+// Friends often join on mobile data; compressing the app's code and data cuts what they download.
 app.use(compression());
 app.use(express.json({ limit: '64kb' }));
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
-// The class name is shown on the join screen, before anyone has entered a code.
-app.get('/api/class', (_req, res) => res.json({ name: className() || null }));
+// The server's name is shown on the join screen, before anyone has joined.
+app.get('/api/server', (_req, res) => res.json({ name: serverName() || null }));
 
-// A whole class may share one school network address, so these per-address limits are generous;
-// signed-in requests are also limited per student in the API router.
+// Several friends may share one network address, so these per-address limits are generous;
+// signed-in requests are also limited per person in the API router.
 app.use('/api/auth', rateLimit(300, 15 * 60_000), authRouter);
 app.use('/api', rateLimit(1200, 60_000), apiRouter);
 app.use('/uploads', (_req, res) => res.status(404).json({ error: 'Not found' }));
@@ -57,13 +57,13 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 });
 
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
-// Named after the class, so a student who adds the app to their home screen sees the class's name.
+// Named after the server, so someone who adds the app to their home screen sees its name.
 app.get('/manifest.webmanifest', (_req, res) => {
-  const name = className() || 'Classroom';
+  const name = serverName() || 'Hangout';
   res.setHeader('Content-Type', 'application/manifest+json');
   res.json({
     name, short_name: name, start_url: '/', scope: '/', display: 'standalone',
-    background_color: '#eee8de', theme_color: '#187b5b',
+    background_color: '#313338', theme_color: '#1e1f22',
     icons: [
       { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
       { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -73,7 +73,7 @@ app.get('/manifest.webmanifest', (_req, res) => {
   });
 });
 // Built files carry a hash of their content in their names, so browsers may keep them for a year;
-// the page itself is revalidated on every visit, so a new deploy reaches students straight away.
+// the page itself is revalidated on every visit, so a new deploy reaches everyone straight away.
 app.use('/assets', express.static(path.join(clientDist, 'assets'), { immutable: true, maxAge: '1y', fallthrough: false }));
 app.use(express.static(clientDist));
 app.get('/{*path}', (_req, res) => {

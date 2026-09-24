@@ -60,14 +60,25 @@ function joinRequest(body) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
 }
-async function join(displayName, classCode = '0000') {
-  const response = await joinRequest({ classCode, visitorId: nextVisitorId(), displayName });
+async function join(displayName, inviteKey = '0000') {
+  const response = await joinRequest({ inviteKey, visitorId: nextVisitorId(), displayName });
   assert.equal(response.status, 200);
   return response.json();
 }
-const joinTeacher = displayName => join(displayName, 'teacher');
+const auth = token => ({ Authorization: `Bearer ${token}` });
+const jsonAuth = token => ({ ...auth(token), 'Content-Type': 'application/json' });
+const firstChannel = kind => db.prepare('SELECT id FROM channels WHERE kind = ? ORDER BY position LIMIT 1').get(kind).id;
+const callToken = (token, channelId) => fetch(`${baseUrl}/api/livekit/token`, {
+  method: 'POST', headers: jsonAuth(token), body: JSON.stringify({ channelId }),
+});
 const emitWithAck = (socket, event, data) => new Promise(resolve => socket.emit(event, data, resolve));
 const nextEvent = (socket, event) => new Promise(resolve => socket.once(event, resolve));
+// Resolves with the first event that passes the check, skipping updates that were already on their way.
+const eventWhere = (socket, event, check) => new Promise(resolve => {
+  function heard(data) { if (check(data)) { socket.off(event, heard); resolve(data); } }
+  socket.on(event, heard);
+});
+const membersIn = (state, channelId) => state.calls.find(call => call.channelId === channelId)?.members.map(member => member.displayName) ?? [];
 const quietFor = (socket, event, ms = 150) => new Promise(resolve => {
   const timer = setTimeout(() => { socket.off(event, heard); resolve(true); }, ms);
   function heard() { clearTimeout(timer); resolve(false); }
@@ -85,11 +96,10 @@ async function connect(token) {
 }
 
 before(async () => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-app-security-'));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hangout-security-'));
   process.env.NODE_ENV = 'test';
   process.env.DATA_DIR = tempDir;
   process.env.JWT_SECRET = 'test-only-signing-secret-that-is-long-enough';
-  process.env.LESSON_ABANDON_GRACE_MS = '150';
   await startFakeLiveKit();
   Object.assign(process.env, {
     LIVEKIT_URL: `ws://127.0.0.1:${liveKit.server.address().port}`, LIVEKIT_API_KEY: 'test-key', LIVEKIT_API_SECRET: 'test-secret',
@@ -109,13 +119,13 @@ after(async () => {
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test('classroom members can fetch attachments and unadmitted users cannot', async () => {
-  const alice = await joinTeacher('Alice');
+
+test('everyone can read and post in text channels, see files, and nobody gets into unknown channels', async () => {
+  const general = firstChannel('text');
+  const alice = await join('Alice');
   const bob = await join('Bob');
-  const conversationId = 'classroom';
-  const auth = token => ({ Authorization: `Bearer ${token}` });
   const form = new FormData();
-  form.append('conversationId', conversationId);
+  form.append('conversationId', general);
   form.append('file', new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/F+4AAAAASUVORK5CYII=', 'base64')], { type: 'image/png' }), 'tiny.png');
   const uploaded = await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth(alice.token), body: form });
   assert.equal(uploaded.status, 200);
@@ -125,222 +135,190 @@ test('classroom members can fetch attachments and unadmitted users cannot', asyn
   assert.equal((await fetch(`${baseUrl}/uploads/${attachmentId}`, { headers: auth('invalid') })).status, 404);
 
   const [aliceSocket, bobSocket] = await Promise.all([connect(alice.token), connect(bob.token)]);
-  const outsiderMessage = new Promise(resolve => {
-    const timer = setTimeout(() => resolve(false), 150);
-    bobSocket.once('new_message', () => { clearTimeout(timer); resolve(true); });
-  });
-  const ack = await new Promise(resolve => aliceSocket.emit('send_message', {
-    conversationId, content: 'member message', type: 'text',
-  }, resolve));
+  const bobHears = nextEvent(bobSocket, 'new_message');
+  const ack = await emitWithAck(aliceSocket, 'send_message', { conversationId: general, content: 'hello', type: 'text' });
   assert.ok(ack.id);
-  assert.equal(await outsiderMessage, true);
-  const rooms = await fetch(`${baseUrl}/api/conversations`, { headers: auth(alice.token) });
-  assert.equal(rooms.status, 200);
-  assert.deepEqual((await rooms.json()).map(room => room.id), [conversationId]);
-  assert.equal((await fetch(`${baseUrl}/api/conversations`, {
-    method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'direct', memberIds: [bob.user.id] }),
-  })).status, 404);
-  assert.equal((await fetch(`${baseUrl}/api/conversations/not-the-classroom/messages`, { headers: auth(alice.token) })).status, 403);
-
-  const aliceStarted = nextEvent(aliceSocket, 'wb_started');
-  const bobStarted = nextEvent(bobSocket, 'wb_started');
-  aliceSocket.emit('wb_start', { conversationId });
-  const [aliceSession, bobSession] = await Promise.all([aliceStarted, bobStarted]);
-  assert.equal(aliceSession.presenterId, alice.user.id);
-  assert.equal(bobSession.presenterId, alice.user.id);
-  assert.deepEqual(await emitWithAck(bobSocket, 'wb_start', { conversationId }), { error: 'Only the teacher can start a lesson' });
-
-  assert.equal((await fetch(`${baseUrl}/api/livekit/token`)).status, 401);
-  const unavailableMedia = await withoutLiveKit(() => fetch(`${baseUrl}/api/livekit/token`, {
-    method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
-  }));
-  assert.equal(unavailableMedia.status, 503);
-  const presenterMedia = await fetch(`${baseUrl}/api/livekit/token`, {
-    method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
-  });
-  assert.equal(presenterMedia.status, 200);
-  const presenterCredentials = await presenterMedia.json();
-  assert.equal(presenterCredentials.url, process.env.LIVEKIT_URL);
-  assert.ok(presenterCredentials.encryptionKey.length >= 32);
-  const presenterClaims = jwt.decode(presenterCredentials.token);
-  assert.equal(presenterClaims.attributes.role, 'teacher');
-  const presenterGrant = presenterClaims.video;
-  assert.equal(presenterGrant.room, presenterCredentials.roomName);
-  assert.equal(presenterGrant.canPublishData, true);
-  assert.equal(typeof presenterCredentials.startedAt, 'number');
-  assert.deepEqual(presenterGrant.canPublishSources.sort(), ['microphone', 'screen_share']);
-  const studentMedia = await fetch(`${baseUrl}/api/livekit/token`, {
-    method: 'POST', headers: { ...auth(bob.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
-  });
-  assert.equal(studentMedia.status, 200);
-  const studentClaims = jwt.decode((await studentMedia.json()).token);
-  assert.equal(studentClaims.attributes.role, 'student');
-  assert.deepEqual(studentClaims.video.canPublishSources, ['microphone']);
-
-  const unauthorizedEnd = quietFor(aliceSocket, 'wb_ended');
-  bobSocket.emit('wb_end', { conversationId });
-  assert.equal(await unauthorizedEnd, true);
-  const presenterSawEnd = nextEvent(aliceSocket, 'wb_ended');
-  aliceSocket.emit('wb_end', { conversationId });
-  await presenterSawEnd;
-  const endedMedia = await fetch(`${baseUrl}/api/livekit/token`, {
-    method: 'POST', headers: { ...auth(alice.token), 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
-  });
-  assert.equal(endedMedia.status, 409);
-  assert.ok(await eventually(() => liveKitCalls('DeleteRoom').some(call => call.data.room === presenterCredentials.roomName)));
+  const heard = await bobHears;
+  assert.equal(heard.content, 'hello');
+  assert.equal(heard.conversationId, general);
+  assert.equal(heard.sender.role, undefined);
+  assert.deepEqual(await emitWithAck(aliceSocket, 'send_message', { conversationId: 'nowhere', content: 'x', type: 'text' }), { error: 'Unknown channel' });
+  assert.equal((await fetch(`${baseUrl}/api/conversations/nowhere/messages`, { headers: auth(alice.token) })).status, 404);
+  const voice = firstChannel('voice');
+  assert.equal((await fetch(`${baseUrl}/api/conversations/${voice}/messages`, { headers: auth(alice.token) })).status, 404);
 });
 
-test('only the teacher starts lessons, and a second teacher device takes the lesson over', async () => {
-  const conversationId = 'classroom';
-  const teacherPhone = await joinTeacher('Teacher phone');
-  const teacherLaptop = await joinTeacher('Teacher laptop');
-  const student = await join('Student');
-  const [phoneSocket, laptopSocket, studentSocket] = await Promise.all([teacherPhone, teacherLaptop, student].map(member => connect(member.token)));
-  const credentials = async token => (await fetch(`${baseUrl}/api/livekit/token`, {
-    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
-  })).json();
-  {
-    assert.deepEqual(await emitWithAck(studentSocket, 'wb_start', { conversationId }), { error: 'Only the teacher can start a lesson' });
-    const studentSawLesson = nextEvent(studentSocket, 'wb_started');
-    assert.deepEqual(await emitWithAck(phoneSocket, 'wb_start', { conversationId }), { presenterId: teacherPhone.user.id });
-    assert.equal((await studentSawLesson).presenterId, teacherPhone.user.id);
-    assert.deepEqual(await emitWithAck(phoneSocket, 'wb_start', { conversationId }), { presenterId: teacherPhone.user.id });
-    const firstRoom = (await credentials(teacherPhone.token)).roomName;
+test('anyone can create, rename and delete channels, and the last text channel stays', async () => {
+  const carol = await join('Carol');
+  const socket = await connect(carol.token);
+  const updated = nextEvent(socket, 'channels');
+  const { channel } = await emitWithAck(socket, 'create_channel', { name: '  Homework‮ ', kind: 'text' });
+  assert.equal(channel.name, 'Homework');
+  assert.equal(channel.kind, 'text');
+  assert.ok((await updated).channels.some(listed => listed.id === channel.id));
+  assert.deepEqual(await emitWithAck(socket, 'create_channel', { name: '', kind: 'text' }), { error: 'Invalid channel' });
+  assert.deepEqual(await emitWithAck(socket, 'create_channel', { name: 'x', kind: 'video' }), { error: 'Invalid channel' });
 
-    const ended = nextEvent(studentSocket, 'wb_ended');
-    const restarted = nextEvent(studentSocket, 'wb_started');
-    assert.deepEqual(await emitWithAck(laptopSocket, 'wb_start', { conversationId }), { presenterId: teacherLaptop.user.id });
-    await ended;
-    assert.equal((await restarted).presenterId, teacherLaptop.user.id);
-    const laptopCredentials = await credentials(teacherLaptop.token);
-    assert.notEqual(laptopCredentials.roomName, firstRoom);
-    assert.ok(await eventually(() => liveKitCalls('DeleteRoom').some(call => call.data.room === firstRoom)));
-    assert.ok(jwt.decode(laptopCredentials.token).video.canPublishSources.includes('screen_share'));
-    assert.deepEqual(jwt.decode((await credentials(teacherPhone.token)).token).video.canPublishSources, ['microphone']);
+  await emitWithAck(socket, 'send_message', { conversationId: channel.id, content: 'in homework', type: 'text' });
+  assert.deepEqual(await emitWithAck(socket, 'rename_channel', { channelId: channel.id, name: 'Revision' }), { ok: true });
+  assert.equal(db.prepare('SELECT name FROM channels WHERE id = ?').get(channel.id).name, 'Revision');
+  assert.deepEqual(await emitWithAck(socket, 'delete_channel', { channelId: channel.id }), { ok: true });
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?').get(channel.id).n, 0);
+  assert.equal((await fetch(`${baseUrl}/api/conversations/${channel.id}/messages`, { headers: auth(carol.token) })).status, 404);
 
-    const studentCannotEnd = quietFor(laptopSocket, 'wb_ended');
-    studentSocket.emit('wb_end', { conversationId });
-    assert.equal(await studentCannotEnd, true);
-    const endedByOtherTeacher = nextEvent(studentSocket, 'wb_ended');
-    phoneSocket.emit('wb_end', { conversationId });
-    await endedByOtherTeacher;
+  // Only one text channel is left now, and it cannot be deleted.
+  assert.deepEqual(await emitWithAck(socket, 'delete_channel', { channelId: firstChannel('text') }), { error: 'Last text channel' });
+});
+
+test('joining a voice channel shows everyone who is in it, and anyone in it can share screen and camera', async () => {
+  const voice = firstChannel('voice');
+  const dan = await join('Dan');
+  const erin = await join('Erin');
+  const outsider = await join('Outsider');
+  const [danSocket, erinSocket] = await Promise.all([connect(dan.token), connect(erin.token)]);
+
+  // Nobody gets into a call without showing up in the channel first.
+  assert.equal((await callToken(outsider.token, voice)).status, 409);
+  assert.equal((await callToken(dan.token, 'nowhere')).status, 404);
+
+  const erinSees = eventWhere(erinSocket, 'voice_state', state => membersIn(state, voice).includes('Dan'));
+  const joined = await emitWithAck(danSocket, 'voice_join', { channelId: voice });
+  assert.equal(typeof joined.startedAt, 'number');
+  const state = await erinSees;
+  const call = state.calls.find(listed => listed.channelId === voice);
+  assert.deepEqual(call.members.map(member => member.displayName), ['Dan']);
+
+  assert.equal((await withoutLiveKit(() => callToken(dan.token, voice))).status, 503);
+  const media = await callToken(dan.token, voice);
+  assert.equal(media.status, 200);
+  const credentials = await media.json();
+  assert.equal(credentials.url, process.env.LIVEKIT_URL);
+  assert.equal(credentials.roomName, `voice-${voice}`);
+  const grant = jwt.decode(credentials.token).video;
+  assert.equal(grant.room, credentials.roomName);
+  assert.deepEqual(grant.canPublishSources.sort(), ['camera', 'microphone', 'screen_share', 'screen_share_audio']);
+
+  // A second person meets the first in the same room, with the same powers.
+  await emitWithAck(erinSocket, 'voice_join', { channelId: voice });
+  const erinCredentials = await (await callToken(erin.token, voice)).json();
+  assert.equal(erinCredentials.roomName, credentials.roomName);
+  assert.deepEqual(jwt.decode(erinCredentials.token).video.canPublishSources.sort(), ['camera', 'microphone', 'screen_share', 'screen_share_audio']);
+
+  // Hands are shown to everyone, and only their owner lowers them.
+  const handSeen = eventWhere(danSocket, 'voice_state', state => state.calls.some(call => call.hands.length));
+  erinSocket.emit('raise_hand', { channelId: voice, raised: true });
+  assert.deepEqual((await handSeen).calls.find(listed => listed.channelId === voice).hands.map(hand => hand.displayName), ['Erin']);
+
+  // Leaving, or losing the connection, takes a person out of the channel.
+  const afterLeave = eventWhere(erinSocket, 'voice_state', state => !membersIn(state, voice).includes('Dan'));
+  danSocket.emit('voice_leave');
+  assert.deepEqual(membersIn(await afterLeave, voice), ['Erin']);
+  assert.equal((await callToken(dan.token, voice)).status, 409);
+  const afterDrop = eventWhere(danSocket, 'voice_state', state => !membersIn(state, voice).includes('Erin'));
+  erinSocket.disconnect();
+  assert.equal((await afterDrop).calls.some(listed => listed.channelId === voice), false);
+});
+
+test('a person is in one voice channel at a time, and deleting a voice channel closes its call', async () => {
+  const frank = await join('Frank');
+  const socket = await connect(frank.token);
+  const lounge = (await emitWithAck(socket, 'create_channel', { name: 'Lounge', kind: 'voice' })).channel;
+  await emitWithAck(socket, 'voice_join', { channelId: firstChannel('voice') });
+  const moved = eventWhere(socket, 'voice_state', state => membersIn(state, lounge.id).length > 0);
+  await emitWithAck(socket, 'voice_join', { channelId: lounge.id });
+  const calls = (await moved).calls;
+  assert.deepEqual(calls.map(call => call.channelId), [lounge.id]);
+  assert.deepEqual(await emitWithAck(socket, 'voice_join', { channelId: firstChannel('text') }), { error: 'Unknown channel' });
+
+  const closed = eventWhere(socket, 'voice_state', state => state.calls.length === 0);
+  assert.deepEqual(await emitWithAck(socket, 'delete_channel', { channelId: lounge.id }), { ok: true });
+  assert.deepEqual((await closed).calls, []);
+  assert.ok(await eventually(() => liveKitCalls('DeleteRoom').some(call => call.data.room === `voice-${lounge.id}`)));
+});
+
+test('a connecting client learns the channels, who is online and who is in calls', async () => {
+  const gina = await join('Gina');
+  const socket = io(baseUrl, { auth: { token: gina.token }, transports: ['websocket'] });
+  sockets.push(socket);
+  const [presence, channels, voice] = await Promise.all([nextEvent(socket, 'presence_state'), nextEvent(socket, 'channels'), nextEvent(socket, 'voice_state')]);
+  assert.ok(presence.users.some(user => user.displayName === 'Gina'));
+  assert.ok(channels.channels.some(channel => channel.kind === 'text'));
+  assert.ok(channels.channels.some(channel => channel.kind === 'voice'));
+  assert.ok(Array.isArray(voice.calls));
+});
+
+test('everyone can delete only their own messages, and deleted text stays hidden', async () => {
+  const conversationId = firstChannel('text');
+  const [henry, iris] = await Promise.all([join('Henry'), join('Iris')]);
+  const [henrySocket, irisSocket] = await Promise.all([connect(henry.token), connect(iris.token)]);
+  const { id } = await emitWithAck(henrySocket, 'send_message', { conversationId, content: 'mine', type: 'text' });
+  const untouched = quietFor(henrySocket, 'message_deleted');
+  irisSocket.emit('delete_message', { messageId: id });
+  assert.equal(await untouched, true);
+  const deleted = nextEvent(irisSocket, 'message_deleted');
+  henrySocket.emit('delete_message', { messageId: id });
+  assert.equal((await deleted).messageId, id);
+  const history = await (await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, { headers: auth(iris.token) })).json();
+  const gone = history.find(message => message.id === id);
+  assert.equal(gone.deleted, true);
+  assert.equal(gone.content, null);
+});
+
+test('the invite key lets anyone in by name, with cleaned names and no roles', async () => {
+  const visitorId = nextVisitorId();
+  const arabicDigits = await joinRequest({ inviteKey: ' ٠٠٠٠ ', visitorId, displayName: '  Jamal‮  Ali ' });
+  assert.equal(arabicDigits.status, 200);
+  const session = await arabicDigits.json();
+  assert.equal(session.user.displayName, 'Jamal Ali');
+  assert.equal(session.user.role, undefined);
+  const me = await (await fetch(`${baseUrl}/api/me`, { headers: auth(session.token) })).json();
+  assert.equal(me.displayName, 'Jamal Ali');
+  // The same device comes back as the same person without typing its name again.
+  const restored = await (await joinRequest({ inviteKey: '0000', visitorId })).json();
+  assert.equal(restored.user.id, session.user.id);
+  assert.equal(restored.user.displayName, 'Jamal Ali');
+  assert.equal((await joinRequest({ inviteKey: '9999', visitorId: nextVisitorId(), displayName: 'Eve' })).status, 401);
+  assert.equal((await joinRequest({ inviteKey: '0000', visitorId: nextVisitorId() })).status, 400);
+});
+
+test('changing the invite key signs out everyone who does not have the new link', async () => {
+  const before = await join('Before the change');
+  const me = token => fetch(`${baseUrl}/api/me`, { headers: auth(token) });
+  const previous = process.env.INVITE_KEY;
+  process.env.INVITE_KEY = 'new-secret-key';
+  try {
+    assert.equal((await me(before.token)).status, 401);
+    await assert.rejects(connect(before.token));
+    assert.equal((await joinRequest({ inviteKey: '0000', visitorId: nextVisitorId(), displayName: 'Old link' })).status, 401);
+    const rejoined = await join('After the change', 'NEW-SECRET-KEY');
+    assert.equal((await me(rejoined.token)).status, 200);
+  } finally {
+    previous === undefined ? delete process.env.INVITE_KEY : process.env.INVITE_KEY = previous;
   }
 });
 
-test('a connecting client learns who is online and whether a lesson is running', async () => {
-  const conversationId = 'classroom';
-  const teacher = await joinTeacher('Presence teacher');
-  const student = await join('Presence student');
-  const teacherSocket = io(baseUrl, { auth: { token: teacher.token }, transports: ['websocket'] });
-  sockets.push(teacherSocket);
-  const [teacherPresence, teacherLesson] = await Promise.all([nextEvent(teacherSocket, 'presence_state'), nextEvent(teacherSocket, 'lesson_state')]);
-  assert.ok(teacherPresence.users.some(user => user.id === teacher.user.id && user.role === 'teacher' && user.displayName === 'Presence teacher'));
-  assert.equal(teacherLesson.lesson, null);
-
-  const announced = new Promise(resolve => teacherSocket.on('presence', event => { if (event.userId === student.user.id && event.online) resolve(event); }));
-  const studentSocket = io(baseUrl, { auth: { token: student.token }, transports: ['websocket'] });
-  sockets.push(studentSocket);
-  const studentPresence = await nextEvent(studentSocket, 'presence_state');
-  assert.ok(studentPresence.users.some(user => user.id === teacher.user.id));
-  assert.deepEqual((await announced).user, { id: student.user.id, displayName: 'Presence student', avatarColor: student.user.avatarColor, role: 'student' });
-
-  const typing = nextEvent(teacherSocket, 'user_typing');
-  studentSocket.emit('typing', { conversationId });
-  assert.equal((await typing).displayName, 'Presence student');
-
-  await emitWithAck(teacherSocket, 'wb_start', { conversationId });
-  const lateSocket = io(baseUrl, { auth: { token: student.token }, transports: ['websocket'] });
-  sockets.push(lateSocket);
-  assert.equal((await nextEvent(lateSocket, 'lesson_state')).lesson.presenterId, teacher.user.id);
-  const ended = nextEvent(studentSocket, 'wb_ended');
-  teacherSocket.emit('wb_end', { conversationId });
-  await ended;
-});
-
-test('raised hands are kept by the server, shown to late joiners, and only the teacher lowers others', async () => {
-  const conversationId = 'classroom';
-  const teacher = await joinTeacher('Hands teacher');
-  const student = await join('Hand raiser');
-  const classmate = await join('Hands classmate');
-  const [teacherSocket, studentSocket, classmateSocket] = await Promise.all([teacher, student, classmate].map(member => connect(member.token)));
-  await emitWithAck(teacherSocket, 'wb_start', { conversationId });
-
-  const raised = nextEvent(teacherSocket, 'lesson_hands');
-  studentSocket.emit('raise_hand', { conversationId, raised: true });
-  assert.deepEqual((await raised).hands, [{ userId: student.user.id, displayName: 'Hand raiser' }]);
-
-  // Someone joining later sees the hand that is already up.
-  const late = io(baseUrl, { auth: { token: classmate.token }, transports: ['websocket'] });
-  sockets.push(late);
-  assert.deepEqual((await nextEvent(late, 'lesson_state')).lesson.hands.map(hand => hand.userId), [student.user.id]);
-
-  // A classmate cannot lower it; the teacher can.
-  const untouched = quietFor(teacherSocket, 'lesson_hands');
-  classmateSocket.emit('lower_hand', { conversationId, userId: student.user.id });
-  assert.equal(await untouched, true);
-  const lowered = nextEvent(studentSocket, 'lesson_hands');
-  teacherSocket.emit('lower_hand', { conversationId, userId: student.user.id });
-  assert.deepEqual((await lowered).hands, []);
-
-  // A student who leaves the class takes their raised hand with them.
-  const raisedAgain = nextEvent(teacherSocket, 'lesson_hands');
-  studentSocket.emit('raise_hand', { conversationId, raised: true });
-  await raisedAgain;
-  const gone = nextEvent(teacherSocket, 'lesson_hands');
-  studentSocket.disconnect();
-  assert.deepEqual((await gone).hands, []);
-  const ended = nextEvent(classmateSocket, 'wb_ended');
-  teacherSocket.emit('wb_end', { conversationId });
-  await ended;
-});
-
-test('the teacher can mute one student or everyone, and students cannot mute anyone', async () => {
-  const conversationId = 'classroom';
-  const teacher = await joinTeacher('Muting teacher');
-  const loud = await join('Loud student');
-  const quiet = await join('Quiet student');
-  const teacherSocket = await connect(teacher.token);
-  await emitWithAck(teacherSocket, 'wb_start', { conversationId });
-  const { roomName } = await (await fetch(`${baseUrl}/api/livekit/token`, {
-    method: 'POST', headers: { Authorization: `Bearer ${teacher.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
-  })).json();
-  const microphone = (sid, muted = false) => ({ sid, type: 'AUDIO', source: 'MICROPHONE', muted });
-  liveKit.participants.set(roomName, [
-    { identity: teacher.user.id, attributes: { role: 'teacher' }, tracks: [microphone('TR_teacher_mic')] },
-    { identity: loud.user.id, attributes: { role: 'student' }, tracks: [microphone('TR_loud_mic'), { sid: 'TR_loud_screen', type: 'VIDEO', source: 'SCREEN_SHARE', muted: false }] },
-    { identity: quiet.user.id, attributes: { role: 'student' }, tracks: [microphone('TR_quiet_mic', true)] },
-  ]);
-  const mute = (token, body) => fetch(`${baseUrl}/api/lesson/mute`, {
-    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+test('production needs a long invite key', () => {
+  const loadConfig = env => spawnSync(process.execPath, ['--import', 'tsx', '--eval', "require('./server/config.ts')"], {
+    cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'production', DATA_DIR: tempDir, ...env },
   });
-  const mutedTracks = () => liveKitCalls('MutePublishedTrack').filter(call => call.data.room === roomName).map(call => call.data.trackSid);
-
-  assert.equal((await mute(loud.token, { identity: quiet.user.id })).status, 403);
-  assert.deepEqual(mutedTracks(), []);
-  assert.deepEqual(await (await mute(teacher.token, { identity: loud.user.id })).json(), { muted: 1 });
-  assert.deepEqual(mutedTracks(), ['TR_loud_mic']);
-  // Everyone's microphone except the teacher's; muted microphones and other tracks are left alone.
-  assert.deepEqual(await (await mute(teacher.token, {})).json(), { muted: 1 });
-  assert.deepEqual(mutedTracks(), ['TR_loud_mic', 'TR_loud_mic']);
-  const ended = nextEvent(teacherSocket, 'wb_ended');
-  teacherSocket.emit('wb_end', { conversationId });
-  await ended;
-  assert.equal((await mute(teacher.token, {})).status, 409);
+  assert.equal(loadConfig({ INVITE_KEY: 'k7QpX2mZr9Tb' }).status, 0);
+  assert.match(loadConfig({ INVITE_KEY: '' }).stderr, /INVITE_KEY is required in production/);
+  assert.match(loadConfig({ INVITE_KEY: 'short' }).stderr, /INVITE_KEY must be at least 12 characters/);
 });
 
 test('paging through history never skips messages sent in the same millisecond', async () => {
   const reader = await join('History reader');
-  const insert = db.prepare("INSERT INTO messages (id, conversation_id, sender_id, content, type, created_at) VALUES (?, 'classroom', ?, ?, 'text', ?)");
+  const general = firstChannel('text');
+  const insert = db.prepare("INSERT INTO messages (id, conversation_id, sender_id, content, type, created_at) VALUES (?, ?, ?, ?, 'text', ?)");
   // Dated in the past so they stay out of other tests' latest page.
   const sameMoment = 946_684_800_000;
   const ids = [];
   for (let n = 0; n < 75; n++) {
     const id = `00000000-0000-4000-9000-${String(n).padStart(12, '0')}`;
     ids.push(id);
-    insert.run(id, reader.user.id, `Same moment ${n}`, sameMoment);
+    insert.run(id, general, reader.user.id, `Same moment ${n}`, sameMoment);
   }
-  const page = async query => (await fetch(`${baseUrl}/api/conversations/classroom/messages${query}`, { headers: { Authorization: `Bearer ${reader.token}` } })).json();
+  const page = async query => (await fetch(`${baseUrl}/api/conversations/${general}/messages${query}`, { headers: { Authorization: `Bearer ${reader.token}` } })).json();
   const seen = [];
   let batch = await page(`?before=${sameMoment + 1}`);
   while (batch.length) {
@@ -349,38 +327,11 @@ test('paging through history never skips messages sent in the same millisecond',
   }
   // All of them, once each, in the order they were written.
   assert.deepEqual(seen.filter(id => ids.includes(id)), ids);
-  assert.equal((await fetch(`${baseUrl}/api/conversations/classroom/messages?before=1&beforeId=nope`, { headers: { Authorization: `Bearer ${reader.token}` } })).status, 400);
+  assert.equal((await fetch(`${baseUrl}/api/conversations/${general}/messages?before=1&beforeId=nope`, { headers: { Authorization: `Bearer ${reader.token}` } })).status, 400);
 });
 
-test('the teacher can remove a student, who is signed out and kept out until allowed back', async () => {
-  const teacher = await joinTeacher('Removing teacher');
-  const visitorId = nextVisitorId();
-  const troll = await (await joinRequest({ classCode: '0000', visitorId, displayName: 'Troll' })).json();
-  const classmate = await join('Kind classmate');
-  const [teacherSocket, trollSocket, classmateSocket] = await Promise.all([teacher, troll, classmate].map(member => connect(member.token)));
-
-  assert.deepEqual(await emitWithAck(classmateSocket, 'remove_member', { userId: troll.user.id }), { error: 'Only the teacher can remove students' });
-  assert.deepEqual(await emitWithAck(teacherSocket, 'remove_member', { userId: teacher.user.id }), { error: 'Only students can be removed' });
-
-  const kicked = nextEvent(trollSocket, 'disconnect');
-  assert.deepEqual(await emitWithAck(teacherSocket, 'remove_member', { userId: troll.user.id }), { ok: true });
-  assert.equal(await kicked, 'io server disconnect');
-  const refused = await fetch(`${baseUrl}/api/me`, { headers: { Authorization: `Bearer ${troll.token}` } });
-  assert.equal(refused.status, 403);
-  assert.equal((await refused.json()).error, 'Removed from class');
-  await assert.rejects(connect(troll.token), /Removed from class/);
-  assert.equal((await joinRequest({ classCode: '0000', visitorId, displayName: 'Troll again' })).status, 403);
-
-  const removed = await (await fetch(`${baseUrl}/api/members/removed`, { headers: { Authorization: `Bearer ${teacher.token}` } })).json();
-  assert.ok(removed.some(user => user.id === troll.user.id && user.displayName === 'Troll'));
-  assert.equal((await fetch(`${baseUrl}/api/members/removed`, { headers: { Authorization: `Bearer ${classmate.token}` } })).status, 403);
-
-  assert.deepEqual(await emitWithAck(teacherSocket, 'restore_member', { userId: troll.user.id }), { ok: true });
-  assert.equal((await joinRequest({ classCode: '0000', visitorId, displayName: 'Reformed' })).status, 200);
-});
-
-test('a burst of events is refused with an error instead of disconnecting the student', async () => {
-  const conversationId = 'classroom';
+test('a burst of events is refused with an error instead of disconnecting', async () => {
+  const conversationId = firstChannel('text');
   const student = await join('Fast typist');
   const socket = await connect(student.token);
   for (let key = 0; key < 130; key++) socket.emit('typing', { conversationId });
@@ -389,89 +340,14 @@ test('a burst of events is refused with an error instead of disconnecting the st
   assert.equal(socket.connected, true);
 });
 
-test('a lesson whose presenter disappears ends, but not while LiveKit still has them', async () => {
-  const conversationId = 'classroom';
-  const teacher = await joinTeacher('Vanishing teacher');
-  const student = await join('Waiting student');
-  const [teacherSocket, studentSocket] = await Promise.all([connect(teacher.token), connect(student.token)]);
-  await emitWithAck(teacherSocket, 'wb_start', { conversationId });
-  const { roomName } = await (await fetch(`${baseUrl}/api/livekit/token`, {
-    method: 'POST', headers: { Authorization: `Bearer ${teacher.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }),
-  })).json();
-
-  // The teacher's chat connection drops but their stream is still in the LiveKit room.
-  liveKit.participants.set(roomName, [{ identity: teacher.user.id }]);
-  let ended = false;
-  studentSocket.once('wb_ended', () => { ended = true; });
-  teacherSocket.disconnect();
-  assert.ok(await eventually(() => liveKitCalls('ListParticipants').filter(call => call.data.room === roomName).length >= 2));
-  assert.equal(ended, false);
-
-  // Once the stream is gone too, the lesson is ended for everyone and its room is closed.
-  liveKit.participants.delete(roomName);
-  assert.ok(await eventually(() => ended));
-  assert.ok(await eventually(() => liveKitCalls('DeleteRoom').some(call => call.data.room === roomName)));
-});
-
-test('a presenter who reconnects within the grace period keeps the lesson', async () => {
-  const conversationId = 'classroom';
-  const teacher = await joinTeacher('Flaky teacher');
-  const student = await join('Patient student');
-  const [teacherSocket, studentSocket] = await Promise.all([connect(teacher.token), connect(student.token)]);
-  await emitWithAck(teacherSocket, 'wb_start', { conversationId });
-  const stayed = quietFor(studentSocket, 'wb_ended', 500);
-  teacherSocket.disconnect();
-  const back = await connect(teacher.token);
-  assert.equal(await stayed, true);
-  const ended = nextEvent(studentSocket, 'wb_ended');
-  back.emit('wb_end', { conversationId });
-  await ended;
-});
-
-test('the teacher can delete any message, students only their own, and deleted text stays hidden', async () => {
-  const conversationId = 'classroom';
-  const teacher = await joinTeacher('Moderator');
-  const student = await join('Talkative');
-  const classmate = await join('Classmate');
-  const [teacherSocket, studentSocket, classmateSocket] = await Promise.all([teacher, student, classmate].map(member => connect(member.token)));
-  const auth = { Authorization: `Bearer ${classmate.token}` };
-
-  const { id: rude } = await emitWithAck(studentSocket, 'send_message', { conversationId, content: 'something rude', type: 'text' });
-  const { id: reply } = await emitWithAck(classmateSocket, 'send_message', { conversationId, content: 'what?', type: 'text', replyTo: rude });
-  const { id: teacherNote } = await emitWithAck(teacherSocket, 'send_message', { conversationId, content: 'Homework: page 12', type: 'text' });
-
-  const notDeleted = quietFor(teacherSocket, 'message_deleted');
-  classmateSocket.emit('delete_message', { messageId: teacherNote });
-  assert.equal(await notDeleted, true);
-  const deleted = nextEvent(classmateSocket, 'message_deleted');
-  teacherSocket.emit('delete_message', { messageId: rude });
-  assert.equal((await deleted).messageId, rude);
-
-  const history = await (await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, { headers: auth })).json();
-  const byId = Object.fromEntries(history.map(message => [message.id, message]));
-  assert.equal(byId[rude].deleted, true);
-  assert.equal(byId[rude].content, null);
-  assert.equal(byId[reply].replyTo.content, null);
-  assert.equal(byId[reply].replyTo.deleted, true);
-  assert.equal(byId[teacherNote].content, 'Homework: page 12');
-  assert.equal(byId[teacherNote].sender.role, 'teacher');
-  assert.equal(byId[reply].sender.role, 'student');
-  assert.ok(!JSON.stringify(history).includes('something rude'));
-
-  const unchanged = quietFor(studentSocket, 'message_edited');
-  studentSocket.emit('edit_message', { messageId: rude, content: 'revived' });
-  classmateSocket.emit('edit_message', { messageId: reply, content: '   ' });
-  assert.equal(await unchanged, true);
-});
-
 test('large PDFs up to the 100 MB default upload limit are accepted', async () => {
   const user = await join('Large PDF');
   const auth = { Authorization: `Bearer ${user.token}` };
   const pdf = Buffer.alloc(Math.floor(12.8 * 1024 * 1024));
   pdf.write('%PDF-1.7');
   const form = new FormData();
-  form.append('conversationId', 'classroom');
-  form.append('file', new Blob([pdf], { type: 'application/pdf' }), 'large-class.pdf');
+  form.append('conversationId', firstChannel('text'));
+  form.append('file', new Blob([pdf], { type: 'application/pdf' }), 'large.pdf');
   const uploaded = await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth, body: form });
   assert.equal(uploaded.status, 200);
   const { attachmentId } = await uploaded.json();
@@ -485,7 +361,7 @@ test('uploads larger than 100 MB are rejected with a clear size error', async ()
   const pdf = Buffer.alloc(100 * 1024 * 1024 + 1);
   pdf.write('%PDF-1.7');
   const form = new FormData();
-  form.append('conversationId', 'classroom');
+  form.append('conversationId', firstChannel('text'));
   form.append('file', new Blob([pdf], { type: 'application/pdf' }), 'too-large.pdf');
   const rejected = await fetch(`${baseUrl}/api/upload`, {
     method: 'POST', headers: { Authorization: `Bearer ${user.token}` }, body: form,
@@ -502,84 +378,16 @@ test('upload configuration requires authentication and reports the configured de
   assert.equal((await response.json()).maxUploadBytes, 100 * 1024 * 1024);
 });
 
-test('the class code admits students, the teacher code admits the teacher, and names are cleaned', async () => {
-  const student = await joinRequest({ classCode: ' ٠٠٠٠ ', visitorId: nextVisitorId(), displayName: 'Arabic digits' });
-  assert.equal(student.status, 200);
-  assert.equal((await student.json()).user.role, 'student');
-  const visitorId = nextVisitorId();
-  const teacher = await joinRequest({ classCode: 'TEACHER', visitorId, displayName: '  Ustadh\u202e  Ahmad ' });
-  assert.equal(teacher.status, 200);
-  const teacherSession = await teacher.json();
-  assert.equal(teacherSession.user.role, 'teacher');
-  assert.equal(teacherSession.user.displayName, 'Ustadh Ahmad');
-  const me = await (await fetch(`${baseUrl}/api/me`, { headers: { Authorization: `Bearer ${teacherSession.token}` } })).json();
-  assert.equal(me.role, 'teacher');
-
-  // Joining again with the class code turns the same browser back into a student and retires the teacher session.
-  const demoted = await (await joinRequest({ classCode: '0000', visitorId })).json();
-  assert.equal(demoted.user.role, 'student');
-  assert.equal((await fetch(`${baseUrl}/api/me`, { headers: { Authorization: `Bearer ${teacherSession.token}` } })).status, 401);
-  assert.equal((await fetch(`${baseUrl}/api/me`, { headers: { Authorization: `Bearer ${demoted.token}` } })).status, 200);
-});
-
-test('changing the class code signs out students who have not entered the new code', async () => {
-  const student = await join('Before the change');
-  const teacher = await joinTeacher('Unaffected teacher');
-  const me = token => fetch(`${baseUrl}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
-  const previous = process.env.CLASS_CODE;
-  process.env.CLASS_CODE = '246810';
-  try {
-    assert.equal((await me(student.token)).status, 401);
-    assert.equal((await me(teacher.token)).status, 200);
-    await assert.rejects(connect(student.token));
-    assert.equal((await joinRequest({ classCode: '0000', visitorId: nextVisitorId(), displayName: 'Old code' })).status, 401);
-    const rejoined = await join('After the change', '246810');
-    assert.equal((await me(rejoined.token)).status, 200);
-  } finally {
-    previous === undefined ? delete process.env.CLASS_CODE : process.env.CLASS_CODE = previous;
-  }
-});
-
-test('production starts with four-digit codes and refuses missing, shorter, or identical ones', () => {
-  const loadConfig = codes => spawnSync(process.execPath, ['--import', 'tsx', '--eval', "require('./server/config.ts')"], {
-    cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'production', DATA_DIR: tempDir, ...codes },
-  });
-  assert.equal(loadConfig({ CLASS_CODE: '0000', TEACHER_CODE: '1111' }).status, 0);
-  assert.match(loadConfig({ CLASS_CODE: '', TEACHER_CODE: '1111' }).stderr, /CLASS_CODE is required in production/);
-  assert.match(loadConfig({ CLASS_CODE: '000', TEACHER_CODE: '1111' }).stderr, /CLASS_CODE must be at least 4 characters/);
-  assert.match(loadConfig({ CLASS_CODE: '0000', TEACHER_CODE: '111' }).stderr, /TEACHER_CODE must be at least 4 characters/);
-  assert.match(loadConfig({ CLASS_CODE: '0000', TEACHER_CODE: ' 0000' }).stderr, /must be different/);
-});
-
-test('class code is required and the display name is restored from browser identity', async () => {
-  const rejected = await fetch(`${baseUrl}/api/auth/join`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ classCode: '9999', visitorId: '00000000-0000-4000-8000-000000000001', displayName: 'Eve' }),
-  });
-  assert.equal(rejected.status, 401);
-  const visitorId = '00000000-0000-4000-8000-000000000002';
-  const initial = await fetch(`${baseUrl}/api/auth/join`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ classCode: '0000', visitorId, displayName: 'Charlie' }),
-  });
-  assert.equal((await initial.json()).user.displayName, 'Charlie');
-  const restored = await fetch(`${baseUrl}/api/auth/join`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ classCode: '0000', visitorId }),
-  });
-  assert.equal((await restored.json()).user.displayName, 'Charlie');
-});
-
 // Runs last because it deliberately locks this test client's address out of joining.
-test('repeated wrong codes lock the address out briefly, even for the right code', async () => {
+test('repeated wrong invite keys lock the address out briefly, even for the right code', async () => {
   // Earlier tests already spent some of this minute's wrong attempts.
   const statuses = [];
   for (let attempt = 0; attempt < 10 && statuses.at(-1) !== 429; attempt++) {
-    statuses.push((await joinRequest({ classCode: `wrong-${attempt}`, visitorId: nextVisitorId(), displayName: 'Guesser' })).status);
+    statuses.push((await joinRequest({ inviteKey: `wrong-${attempt}`, visitorId: nextVisitorId(), displayName: 'Guesser' })).status);
   }
   assert.equal(statuses.at(-1), 429);
   assert.ok(statuses.slice(0, -1).every(status => status === 401));
-  const lockedOut = await joinRequest({ classCode: '0000', visitorId: nextVisitorId(), displayName: 'Guesser' });
+  const lockedOut = await joinRequest({ inviteKey: '0000', visitorId: nextVisitorId(), displayName: 'Guesser' });
   assert.equal(lockedOut.status, 429);
   assert.ok(Number(lockedOut.headers.get('retry-after')) > 0);
 });

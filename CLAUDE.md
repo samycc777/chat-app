@@ -1,6 +1,6 @@
 # Hangout
 
-A Discord-style server for a group of friends: text channels, and voice channels that work like a Zoom call (anyone can talk, show their camera and share their screen). It began as a copy of the Arabic class app in `~/dev/chat-app`, which is a separate project and still in use by the class; changes here never go there. The README describes every feature from the friends' point of view; read it before changing behaviour.
+A Discord-style server for a group of friends: text channels, and voice channels that work like a Zoom call (anyone can talk, show their camera and share their screen). It began as a copy of the Arabic class app in `~/dev/chat-app` and is meant to **replace** it: one app, at the class's existing address, used both for lessons (the teacher shares his Android tablet's screen) and for hanging out. Until the switch, the class still uses chat-app, which is not edited for Hangout work. The README describes every feature from the friends' point of view; read it before changing behaviour.
 
 The friends are not all tech-savvy. Keep every flow simple: people join by opening an invite link and typing their name, and nothing else; no admin roles, no settings that aren't needed, plain-language wording.
 
@@ -16,10 +16,10 @@ The friends are not all tech-savvy. Keep every flow simple: people join by openi
   - `livekit.ts` is the LiveKit server client.
 - `client/` — Vue 3 + Vite + TypeScript web app, `<script setup>` components.
   - `App.vue` is the shell: `components/ServerSidebar.vue` (channels, who is in calls, voice panel, settings), then `ChatView.vue` for a text channel or `CallView.vue` for a voice channel, then `MemberList.vue`. `CallView` (and LiveKit) is lazy-loaded and stays mounted while a text channel is open, so the call keeps going. `CallTile.vue` is one camera or screen tile.
-  - `api.ts` (REST), `socket.ts` (Socket.IO), `types.ts` (shared types), `warmVoice.ts` (microphone shaping).
+  - `api.ts` (REST), `socket.ts` (Socket.IO), `types.ts` (shared types), `warmVoice.ts` (microphone shaping), `nativeScreenShare.ts` (the bridge to the Android app's screen sharing).
   - `i18n.ts` holds every user-facing string, in English and Arabic.
   - Each component's styles are in its own `<style scoped>` block. `styles.css` holds only what several components share: theme colours (`[data-theme]` variables, Discord's dark and light palettes), base elements, and common classes such as `.display-popover` and `.message-content`. Scoped rules are one attribute more specific than global ones; put overrides next to the rule they override.
-- `mobile/` — Capacitor wrapper that turns the deployed website into the iPhone and Android apps. It has its own `package.json` and README; the apps load the live site, so web changes reach them without a rebuild.
+- `mobile/` — Capacitor wrapper that turns the deployed website into the iPhone and Android apps. It has its own `package.json` and README; the apps load the live site, so web changes reach them without a rebuild. The Android app's only native code is screen sharing (`ScreenSharePlugin.kt`, `ScreenShareService.kt`): it joins the call as `<userId>:screen` with a pass from `/api/livekit/screen-token`, and the call screen shows that participant as its owner's screen. Changes there need a new APK; build with `cd mobile && HANGOUT_URL=... npm run build:android` (Gradle 9.3, run on Android Studio's Java).
 - `tests/security.test.mjs` — end-to-end server tests: a real server on a temporary database, with a fake LiveKit.
 
 Never touch `chat.db*` or `uploads/`: they are the local development data.

@@ -171,10 +171,19 @@ rejects the upload.
 On phones, people can chat, talk and listen in voice channels, turn on their camera and **watch** other
 people's shared screens.
 
-**Sharing your own screen from a phone doesn't work in the app yet.** The phone's web view can't capture
-the screen. It would need extra native code: a "broadcast upload extension" on iPhone and Android's
-MediaProjection screen capture, which is a separate project. Screen sharing works from a computer's
-browser.
+**Sharing your own screen works in the Android app.** A web page inside an app can't capture the screen,
+so the Android app does it with its own code: `ScreenSharePlugin.kt` shows Android's "Share your screen
+with Hangout?" prompt, then joins the call a second time with a screen-only pass from the server and sends
+the screen with LiveKit's Android library. `ScreenShareService.kt` keeps a notification with a **Stop
+sharing** button while it lasts; Android needs it to keep the microphone on while another app is in front.
+Everyone sees it as that person's screen, not as an extra person.
+
+**The iPhone app can't share its screen yet.** It needs a "broadcast upload extension", which needs the
+paid Apple developer account first. Phone browsers can't share either; computers can.
+
+The Android project builds with Gradle 9.3, because the Java inside Android Studio is now version 25, which
+older Gradle versions can't run on. An app installed before screen sharing existed still shows "this device
+can't share its screen" until it is updated.
 
 Calls keep going when the iPhone screen locks (the app is allowed to play audio in the background). On
 Android, check this on a real phone: some phones pause apps in the background to save battery.

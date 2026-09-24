@@ -10,7 +10,7 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
 - **Text channels.** Messages, replies, edits, links, images and PDFs, in channels such as #general. Everyone can delete their own messages. Earlier history loads a page at a time.
 - **Voice channels.** Tap a voice channel to join its call; your microphone starts on, and one tap mutes it. Everyone in the server sees who is in each voice channel, under its name in the channel list. In a call, anyone can:
   - turn their camera on,
-  - share their screen (from a computer; phones cannot share their screen yet), and a shared browser tab can bring its sound along,
+  - share their screen from a computer or the Android app (Android first asks "Share your screen with Hangout?"; a notification with a Stop sharing button stays while it lasts, and the voice keeps going while another app is shown). A shared browser tab on a computer can bring its sound along. iPhones and phone browsers cannot share their screen yet,
   - raise a hand and send reactions,
   - tap any tile to make it big, and tap it again to see everyone. A screen someone starts sharing is made big for everyone automatically,
   - turn the whole call down under More, or turn one person down with the slider under their name in Participants. This changes the sound only on their own device and is remembered.

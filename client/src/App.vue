@@ -192,3 +192,101 @@ function endSession(notice = '') {
   </main>
   </div>
 </template>
+
+<style scoped>
+.app-shell {
+  width: 100%;
+  min-width: 0;
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  color: var(--text-primary);
+  background:
+    radial-gradient(circle at 14% 8%, color-mix(in srgb, var(--text-accent) 13%, transparent), transparent 38%),
+    var(--bg-chat);
+}
+
+.app-shell.classroom-open {
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 2.2vw, 28px);
+}
+
+/* Shown while a saved session is restored, or when the class cannot be reached. */
+.boot-state {
+  width: 100%;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.boot-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 17px;
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.boot-spinner {
+  color: var(--text-accent);
+  animation: spin 1s linear infinite;
+}
+
+/* Authenticated classroom shell */
+.classroom-layout {
+  width: min(1180px, 100%);
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 24px;
+  background: var(--bg-primary);
+  box-shadow: 0 24px 70px var(--shadow-color);
+}
+
+/* Appears only after a short delay, so a brief network blip does not flash it. */
+.connection-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 22%, var(--border-color));
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-size: 12px;
+  font-weight: 700;
+  animation: connection-banner-in 200ms ease-out 1.5s both;
+}
+
+@keyframes connection-banner-in {
+  from { opacity: 0; }
+}
+
+@media (max-width: 768px) {
+  .app-shell.classroom-open {
+    padding: 0;
+  }
+
+  .classroom-layout {
+    width: 100%;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+</style>

@@ -94,3 +94,136 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Attachments: images load as they scroll into view, files when tapped. */
+.message-image-button {
+  display: block;
+  padding: 0;
+  border-radius: 11px;
+  cursor: zoom-in;
+}
+
+.message-image {
+  display: block;
+  width: min(330px, 100%);
+  max-height: 360px;
+  border-radius: 11px;
+  object-fit: cover;
+}
+
+.message-image-placeholder {
+  width: min(330px, 62vw);
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--text-secondary);
+  background: var(--reply-overlay);
+}
+
+.message-image-placeholder button {
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 10px;
+  color: var(--text-accent);
+  background: var(--accent-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.message-file {
+  min-width: min(280px, 64vw);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  color: var(--text-primary);
+  background: var(--reply-overlay);
+}
+
+.message-file-icon {
+  flex: 0 0 auto;
+  display: grid;
+  color: var(--text-accent);
+}
+
+.message-file-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-file-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.message-file-action {
+  min-height: 32px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border-radius: 9px;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+
+.message-file-action:disabled {
+  opacity: 0.75;
+}
+
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.image-viewer img {
+  max-width: 100%;
+  max-height: calc(100dvh - 120px);
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.image-viewer-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.image-viewer-button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border-radius: 12px;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.image-viewer-button:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+</style>

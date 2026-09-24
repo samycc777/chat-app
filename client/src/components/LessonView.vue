@@ -720,3 +720,744 @@ onBeforeUnmount(cleanup);
     </template>
   </section>
 </template>
+
+<style scoped>
+.lesson-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Live lesson: the teacher's screen fills the viewport and the header and controls float over it. */
+.lesson-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  min-width: 320px;
+  overflow: hidden;
+  color: #edf3ef;
+  background: #000000;
+}
+
+.lesson-overlay.chrome-hidden {
+  cursor: none;
+}
+
+.lesson-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  /* A definite cell lets the video's 100% height resolve, so portrait screens are fitted instead of cropped. */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+}
+
+.lesson-screen {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000000;
+  object-fit: contain;
+}
+
+.lesson-header,
+.lesson-controls {
+  position: absolute;
+  inset-inline: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.lesson-header {
+  top: 0;
+  padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 28px max(16px, env(safe-area-inset-left));
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.72), transparent);
+}
+
+.lesson-controls {
+  bottom: 0;
+  justify-content: center;
+  gap: 6px;
+  padding: 30px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.78), transparent);
+}
+
+.chrome-hidden .lesson-header {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-100%);
+}
+
+.chrome-hidden .lesson-controls {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(100%);
+}
+
+.lesson-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lesson-title-icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: #59cda0;
+  background: rgba(89, 205, 160, 0.16);
+}
+
+.lesson-title strong {
+  font-size: 14px;
+}
+
+.lesson-title p {
+  overflow: hidden;
+  color: rgba(237, 243, 239, 0.7);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lesson-state-card {
+  max-width: min(390px, calc(100% - 32px));
+  position: absolute;
+  inset: 50% auto auto 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 22px 24px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  color: #edf3ef;
+  background: rgba(21, 33, 30, 0.9);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  text-align: center;
+  transform: translate(-50%, -50%);
+  backdrop-filter: blur(14px);
+}
+
+.lesson-state-card p {
+  color: #9eaca4;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.lesson-state-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 2px;
+  border-radius: 14px;
+  color: #59cda0;
+  background: rgba(89, 205, 160, 0.13);
+}
+
+.lesson-state-card.error .lesson-state-icon {
+  color: #f0776e;
+  background: rgba(240, 119, 110, 0.13);
+}
+
+.lesson-state-action {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+  padding: 0 16px;
+  border-radius: 12px;
+  color: #0b1a14;
+  background: #59cda0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.lesson-control:disabled {
+  opacity: 0.45;
+}
+
+.lesson-control.share.active > svg {
+  color: #59cda0;
+}
+
+.lesson-mute-all {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0 2px;
+  border-radius: 12px;
+  color: #edf3ef;
+  background: rgba(240, 119, 110, 0.16);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.lesson-mute-all:hover {
+  background: rgba(240, 119, 110, 0.26);
+}
+
+/* The teacher taps a student's open microphone to mute it. */
+button.lesson-person-mute {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border-radius: 10px;
+  background: rgba(89, 205, 160, 0.14);
+}
+
+button.lesson-person-mute:hover {
+  background: rgba(240, 119, 110, 0.22);
+}
+
+.lesson-control {
+  min-width: 0;
+  min-height: 58px;
+  flex: 0 1 80px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 4px;
+  border-radius: 12px;
+  color: #edf3ef;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.lesson-control:hover,
+.lesson-control[aria-pressed='true'] {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.lesson-control.active > svg {
+  color: #59cda0;
+}
+
+.lesson-control.muted > svg {
+  color: #f0776e;
+}
+
+.lesson-control-icon {
+  position: relative;
+  display: inline-grid;
+}
+
+.lesson-count {
+  position: absolute;
+  top: -7px;
+  inset-inline-end: -11px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.lesson-badge {
+  min-width: 17px;
+  height: 17px;
+  position: absolute;
+  top: -6px;
+  inset-inline-end: -10px;
+  display: grid;
+  place-items: center;
+  padding-inline: 4px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #e0453b;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.lesson-badge.hand {
+  top: auto;
+  bottom: -6px;
+  background: transparent;
+  font-size: 12px;
+}
+
+.lesson-leave-icon {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #f0776e;
+  border-radius: 8px;
+  color: #f0776e;
+  transform: rotate(45deg);
+}
+
+.lesson-leave-icon svg {
+  transform: rotate(-45deg);
+}
+
+.lesson-header {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lesson-header-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+}
+
+.lesson-round-btn {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #edf3ef;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.lesson-round-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.lesson-round-btn.small {
+  width: 36px;
+  height: 36px;
+}
+
+.lesson-clock {
+  margin-inline-start: 6px;
+  color: rgba(237, 243, 239, 0.75);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Floating notices stay put while the header and controls fade. */
+.lesson-pill {
+  position: absolute;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 15px;
+  border-radius: 999px;
+  color: #edf3ef;
+  background: rgba(28, 36, 33, 0.92);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+}
+
+.lesson-sound-pill {
+  top: calc(env(safe-area-inset-top) + 86px);
+  left: 50%;
+  color: #0b1a14;
+  background: #59cda0;
+  transform: translateX(-50%);
+}
+
+.lesson-toast {
+  top: calc(env(safe-area-inset-top) + 136px);
+  left: 50%;
+  max-width: calc(100% - 32px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform: translateX(-50%);
+}
+
+.lesson-hand-pill {
+  bottom: calc(env(safe-area-inset-bottom) + 108px);
+  inset-inline-start: 16px;
+}
+
+.lesson-reactions {
+  width: 1px;
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom) + 108px);
+  inset-inline-end: 56px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.lesson-reaction {
+  position: absolute;
+  bottom: 0;
+  inset-inline-end: var(--drift);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  animation: lesson-reaction-float 3.2s ease-out forwards;
+}
+
+.lesson-reaction-emoji {
+  font-size: 34px;
+  line-height: 1;
+}
+
+.lesson-reaction-name {
+  max-width: 110px;
+  overflow: hidden;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: #edf3ef;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes lesson-reaction-float {
+  0% { opacity: 0; transform: translateY(0) scale(0.6); }
+  12% { opacity: 1; transform: translateY(-20px) scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-38dvh); }
+}
+
+/* Sheets: bottom sheets on phones, the participants and chat panels dock to the side on wide screens. */
+.lesson-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.lesson-sheet {
+  width: min(520px, 100%);
+  max-height: 85dvh;
+  position: absolute;
+  bottom: 0;
+  inset-inline: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 10px 16px max(18px, env(safe-area-inset-bottom));
+  border-radius: 22px 22px 0 0;
+  color: #edf3ef;
+  background: #1d2421;
+  margin-inline: auto;
+  box-shadow: 0 -16px 50px rgba(0, 0, 0, 0.45);
+  animation: lesson-sheet-in 220ms ease-out;
+}
+
+.lesson-sheet.side {
+  height: 85dvh;
+  padding-top: 14px;
+}
+
+.lesson-sheet.chat {
+  overflow: hidden;
+  padding-inline: 0;
+  padding-bottom: 0;
+}
+
+@keyframes lesson-sheet-in {
+  from { opacity: 0; translate: 0 40px; }
+}
+
+.lesson-sheet-handle {
+  width: 38px;
+  height: 4px;
+  flex: 0 0 auto;
+  margin: 0 auto 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.lesson-sheet-head {
+  display: grid;
+  grid-template-columns: 36px 1fr 36px;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 16px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lesson-sheet.side:not(.chat) .lesson-sheet-head {
+  margin-inline: -16px;
+}
+
+.lesson-sheet-head strong {
+  font-size: 16px;
+  text-align: center;
+}
+
+.lesson-sheet-title {
+  margin-bottom: 8px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.lesson-chat-body {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+}
+
+.lesson-people {
+  margin: 0 -16px;
+  padding: 6px 0;
+  list-style: none;
+}
+
+.lesson-people li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px;
+}
+
+.lesson-people li.speaking .avatar {
+  box-shadow: 0 0 0 2px #1d2421, 0 0 0 4px #59cda0;
+}
+
+.lesson-person-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.lesson-person-name {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.lesson-person-name bdi {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lesson-person-name small {
+  color: rgba(237, 243, 239, 0.6);
+  font-size: 13px;
+}
+
+.lesson-person-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lesson-person-volume svg {
+  flex: none;
+  color: #a9b6af;
+}
+
+.lesson-person-volume input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  margin: 0;
+  accent-color: #59cda0;
+}
+
+.lesson-person-hand {
+  font-size: 18px;
+}
+
+button.lesson-person-hand {
+  padding: 4px 6px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.lesson-person-mic {
+  flex: 0 0 auto;
+  color: rgba(237, 243, 239, 0.6);
+}
+
+.lesson-person-mic.on {
+  color: #59cda0;
+}
+
+.lesson-person-mic.off {
+  color: #f0776e;
+}
+
+.lesson-reaction-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lesson-volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: #edf3ef;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lesson-volume svg {
+  flex: none;
+  color: #a9b6af;
+}
+
+.lesson-volume input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  accent-color: #59cda0;
+}
+
+.lesson-hand-btn {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border-radius: 999px;
+  color: #edf3ef;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lesson-hand-btn.raised {
+  color: #0b1a14;
+  background: #59cda0;
+}
+
+.lesson-emoji-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.lesson-emoji-btn:hover,
+.lesson-more-grid button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.lesson-more-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding-top: 12px;
+}
+
+.lesson-more-grid button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 4px;
+  border-radius: 14px;
+  color: #edf3ef;
+  font-size: 13px;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.lesson-info {
+  margin: 0;
+}
+
+.lesson-info dt {
+  color: rgba(237, 243, 239, 0.6);
+}
+
+.lesson-info dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.lesson-sheet-prompt {
+  margin-bottom: 14px;
+  color: rgba(237, 243, 239, 0.8);
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.lesson-leave-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.lesson-leave-actions button {
+  min-height: 48px;
+  border-radius: 14px;
+  color: #edf3ef;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lesson-leave-actions button.danger {
+  color: #ffffff;
+  background: #e0453b;
+}
+
+@media (min-width: 900px) {
+  .lesson-sheet.side {
+    width: 380px;
+    height: auto;
+    max-height: none;
+    top: 0;
+    inset-inline-start: auto;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .lesson-sheet-backdrop:has(+ .lesson-sheet.side) {
+    background: transparent;
+  }
+}
+
+@media (max-width: 768px) {
+  .lesson-state-card {
+    padding: 18px;
+  }
+}
+
+@media (max-width: 460px) {
+  .lesson-controls {
+    gap: 2px;
+    padding-inline: 6px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .lesson-header {
+    padding-bottom: 18px;
+  }
+
+  .lesson-controls {
+    padding-top: 18px;
+  }
+
+  .lesson-control {
+    min-height: 48px;
+  }
+}
+</style>

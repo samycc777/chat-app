@@ -100,3 +100,112 @@ function allowBack(userId: string) {
     </template>
   </div>
 </template>
+
+<style scoped>
+/* People in class, with the teacher's remove and allow-back actions. */
+.people-menu {
+  position: relative;
+}
+
+.header-action.people-trigger {
+  width: auto;
+  min-width: 42px;
+  gap: 5px;
+  padding: 0 10px;
+}
+
+.people-count {
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.people-popover {
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(70dvh, 520px);
+  overflow: auto;
+}
+
+.people-list {
+  margin: 0 0 10px;
+  list-style: none;
+}
+
+.people-list li {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 2px;
+}
+
+.people-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people-name small {
+  margin-inline-start: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.people-action {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--text-secondary);
+}
+
+.people-action:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.people-action.text {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  color: var(--text-accent);
+  background: var(--accent-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.people-confirm {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.people-confirm button {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 9px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.people-confirm button.danger {
+  color: #ffffff;
+  background: var(--danger);
+}
+
+.people-warning {
+  margin: -4px 2px 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+</style>

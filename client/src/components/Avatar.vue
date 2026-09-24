@@ -31,3 +31,46 @@ const initials = computed(() => {
     <div v-if="online" class="online-dot" />
   </div>
 </template>
+
+<style scoped>
+/* Shared avatar */
+.avatar {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.avatar.small {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+
+.online-dot {
+  width: 9px;
+  height: 9px;
+  position: absolute;
+  inset-inline-end: -1px;
+  bottom: -1px;
+  border: 2px solid var(--bg-chat);
+  border-radius: 50%;
+  background: #38b878;
+}
+
+@media (max-width: 768px) {
+  .avatar.small {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
+  }
+}
+</style>

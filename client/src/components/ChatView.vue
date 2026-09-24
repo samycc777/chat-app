@@ -797,3 +797,645 @@ function endsGroup(index: number) {
     </template>
   </div>
 </template>
+
+<style scoped>
+/* Chat */
+.chat-area {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--text-accent) 7%, transparent), transparent 36%),
+    var(--bg-chat);
+}
+
+.lesson-banner {
+  width: calc(100% - 32px);
+  max-width: 800px;
+  min-height: 58px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 14px auto 0;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--text-accent) 26%, var(--border-color));
+  border-radius: 17px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-primary) 90%, var(--accent-soft));
+  box-shadow: 0 7px 22px color-mix(in srgb, var(--shadow-color) 68%, transparent);
+}
+
+.lesson-banner-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--text-accent);
+  background: var(--accent-soft);
+}
+
+.lesson-banner-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.lesson-banner-copy strong {
+  font-size: 13px;
+}
+
+.lesson-join-btn {
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 12px;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
+  font-size: 12px;
+  font-weight: 700;
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.lesson-join-btn:hover {
+  background: var(--accent-strong);
+  transform: translateY(-1px);
+}
+
+.messages-container {
+  width: 100%;
+  max-width: 800px;
+  min-height: 0;
+  flex: 1;
+  align-self: center;
+  overflow-y: auto;
+  padding: 18px 20px 28px;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+}
+
+.conversation-state {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.conversation-state strong {
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+.conversation-state p {
+  max-width: 320px;
+  font-size: 13px;
+}
+
+.state-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 2px;
+  border-radius: 15px;
+  color: var(--text-accent);
+  background: var(--accent-soft);
+}
+
+.conversation-state.error .state-icon {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.date-separator {
+  display: flex;
+  justify-content: center;
+  padding: 13px 0 17px;
+}
+
+.message-row {
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-block: 2px;
+  direction: ltr;
+}
+
+.message-row.starts-group {
+  margin-top: 11px;
+}
+
+.message-row.out {
+  justify-content: flex-end;
+}
+
+.message-avatar-slot {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+}
+
+.message-bubble {
+  min-width: 0;
+  max-width: min(72%, 560px);
+  position: relative;
+  padding: 9px 11px 7px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 74%, transparent);
+  border-radius: 17px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--shadow-color) 56%, transparent);
+}
+
+.message-bubble.in {
+  border-start-start-radius: 6px;
+  background: var(--bg-message-in);
+}
+
+.message-bubble.out {
+  border-start-end-radius: 6px;
+  background: var(--bg-message-out);
+}
+
+.message-row:not(.starts-group) .message-bubble {
+  border-start-start-radius: 14px;
+  border-start-end-radius: 14px;
+}
+
+.message-row:not(.ends-group) .message-bubble {
+  border-end-start-radius: 14px;
+  border-end-end-radius: 14px;
+}
+
+.message-sender {
+  margin-bottom: 3px;
+  color: var(--text-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.message-reply {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  overflow: hidden;
+  border-inline-start: 3px solid var(--text-accent);
+  border-radius: 7px;
+  background: var(--reply-overlay);
+}
+
+.reply-sender {
+  color: var(--text-accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.reply-text {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-text.deleted {
+  font-style: italic;
+}
+
+.message-content.mixed {
+  line-height: 1.8;
+}
+
+.reply-text.arabic {
+  font-size: 14px;
+}
+
+.deleted-message {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.message-meta {
+  min-height: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-top: 2px;
+  color: var(--message-meta);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.message-edited {
+  font-style: italic;
+}
+
+.load-earlier {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 10px;
+}
+
+@media (pointer: coarse) {
+  .message-bubble {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+.message-actions {
+  position: absolute;
+  z-index: 2;
+  inset-block-start: 4px;
+  inset-inline-end: 4px;
+  display: none;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--bg-primary);
+  box-shadow: 0 5px 14px var(--shadow-color);
+}
+
+.message-bubble:hover .message-actions,
+.message-bubble:focus-within .message-actions {
+  display: flex;
+}
+
+.messages-end {
+  height: 1px;
+}
+
+/* Composer and feedback */
+.chat-bottom {
+  position: relative;
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+
+.typing-indicator,
+.chat-feedback,
+.reply-preview,
+.chat-input-area {
+  width: 100%;
+  max-width: 800px;
+  margin-inline: auto;
+}
+
+.new-messages-pill {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  z-index: 3;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border-radius: 999px;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
+  box-shadow: 0 8px 22px var(--shadow-color);
+  font-size: 12px;
+  font-weight: 700;
+  transform: translateX(-50%);
+}
+
+.typing-indicator {
+  padding: 6px 18px 0;
+  color: var(--text-accent);
+  font-size: 11px;
+}
+
+.chat-feedback {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.chat-feedback.success {
+  color: var(--text-accent);
+}
+
+.chat-feedback.error {
+  color: var(--danger);
+}
+
+.feedback-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.upload-progress {
+  width: 100%;
+  height: 3px;
+  margin-top: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+
+.reply-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px 0;
+}
+
+.reply-preview-content {
+  min-width: 0;
+  flex: 1;
+  padding: 3px 10px;
+  border-inline-start: 3px solid var(--text-accent);
+}
+
+.reply-preview-sender {
+  color: var(--text-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.reply-preview-text {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icon-btn {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  color: var(--text-secondary);
+  transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.icon-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.chat-input-area {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 14px max(10px, env(safe-area-inset-bottom));
+}
+
+.attach-btn {
+  color: var(--text-accent);
+  background: var(--bg-secondary);
+}
+
+.message-input-wrap {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  padding: 3px 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--bg-secondary);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.message-input-wrap:focus-within {
+  border-color: color-mix(in srgb, var(--text-accent) 70%, var(--border-color));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.message-input-wrap textarea {
+  width: 100%;
+  min-height: 38px;
+  max-height: 150px;
+  padding: 8px 0;
+  resize: none;
+  color: var(--text-primary);
+  background: transparent;
+  /* Never below 16px, which stops iPhones from zooming into the box. */
+  font-size: max(16px, var(--message-text-size, 16px));
+  line-height: 1.75;
+}
+
+/* The surrounding box already shows focus. */
+.message-input-wrap textarea:focus-visible {
+  outline: none;
+}
+
+.message-input-wrap textarea::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.82;
+}
+
+.keyboard-btn {
+  color: var(--text-accent);
+  background: var(--bg-secondary);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.keyboard-btn.active {
+  color: var(--text-on-accent);
+  background: var(--text-accent);
+}
+
+.keyboard-btn.active:hover {
+  color: var(--text-on-accent);
+  background: var(--accent-strong);
+}
+
+/* On-screen Arabic keyboard, for students without one on their device. */
+.chat-bottom:has(.arabic-keyboard) .chat-input-area {
+  padding-bottom: 8px;
+}
+
+.send-btn {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
+  transition: transform 160ms ease, background 160ms ease, opacity 160ms ease;
+}
+
+.send-btn:hover:not(:disabled) {
+  background: var(--accent-strong);
+  transform: translateY(-1px);
+}
+
+.send-btn:disabled {
+  opacity: 0.38;
+}
+
+/* Message context menu */
+.context-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+}
+
+.context-menu {
+  min-width: 190px;
+  position: fixed;
+  z-index: 100;
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 13px;
+  background: var(--bg-primary);
+  box-shadow: 0 16px 42px var(--shadow-color);
+}
+
+.context-menu button.danger {
+  color: var(--danger);
+}
+
+@media (max-width: 768px) {
+  .lesson-banner {
+    width: calc(100% - 20px);
+    min-height: 54px;
+    margin-top: 10px;
+    border-radius: 15px;
+  }
+
+  .lesson-banner-icon {
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
+  }
+
+  .lesson-join-btn {
+    min-height: 36px;
+    padding-inline: 12px;
+  }
+
+  .messages-container {
+    padding: 10px 11px 20px;
+  }
+
+  .message-row {
+    gap: 6px;
+  }
+
+  .message-avatar-slot {
+    width: 28px;
+    min-width: 28px;
+  }
+
+  .message-bubble {
+    max-width: 86%;
+    padding: 8px 10px 6px;
+  }
+
+  .message-actions {
+    display: none !important;
+  }
+
+  .chat-input-area {
+    gap: 7px;
+    padding: 8px 9px max(9px, env(safe-area-inset-bottom));
+  }
+
+  .typing-indicator,
+  .chat-feedback,
+  .reply-preview {
+    padding-inline: 11px;
+  }
+
+  .icon-btn,
+  .attach-btn {
+    width: 42px;
+    height: 42px;
+    flex-basis: 42px;
+  }
+
+  .send-btn {
+    width: 43px;
+    height: 43px;
+    flex-basis: 43px;
+  }
+
+  .message-input-wrap textarea {
+    min-height: 36px;
+    padding-block: 7px;
+  }
+
+  .context-menu {
+    width: 100%;
+    min-width: 0;
+    top: auto !important;
+    right: 0;
+    bottom: 0;
+    left: 0 !important;
+    padding: 12px 14px max(16px, env(safe-area-inset-bottom));
+    border-radius: 22px 22px 0 0;
+    box-shadow: 0 -14px 44px var(--shadow-color);
+  }
+
+  .context-menu::before {
+    content: '';
+    display: block;
+    width: 38px;
+    height: 4px;
+    margin: 0 auto 8px;
+    border-radius: 999px;
+    background: var(--text-secondary);
+    opacity: 0.42;
+  }
+}
+
+@media (max-width: 460px) {
+  .message-bubble {
+    max-width: 88%;
+  }
+}
+
+@media (max-width: 360px) {
+  .chat-input-area {
+    gap: 5px;
+    padding-inline: 7px;
+  }
+
+  .attach-btn {
+    width: 39px;
+    flex-basis: 39px;
+  }
+
+  .send-btn {
+    width: 41px;
+    flex-basis: 41px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .lesson-banner {
+    min-height: 48px;
+    margin-top: 7px;
+  }
+}
+</style>

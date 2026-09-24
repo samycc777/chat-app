@@ -137,3 +137,204 @@ onBeforeUnmount(() => document.removeEventListener('keydown', closeOnEscape));
     </div>
   </header>
 </template>
+
+<style scoped>
+.classroom-mark {
+  display: grid;
+  place-items: center;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
+  font-weight: 800;
+}
+
+.classroom-header {
+  min-height: 68px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
+}
+
+.classroom-identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.classroom-mark {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border-radius: 15px;
+  font-size: 20px;
+}
+
+.classroom-identity-copy {
+  min-width: 0;
+}
+
+.classroom-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.classroom-title-line h1 {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.classroom-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.classroom-live-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+}
+
+.classroom-header-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.header-action.compact-action {
+  min-width: 42px;
+}
+
+.lesson-action {
+  color: var(--text-accent);
+  background: var(--accent-soft);
+}
+
+.lesson-action.active {
+  color: var(--text-on-accent);
+  background: var(--text-accent);
+}
+
+/* Display menu: text size and light or dark theme. */
+.display-menu {
+  position: relative;
+}
+
+.segmented {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+
+.segmented button.selected {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  box-shadow: 0 1px 4px var(--shadow-color);
+}
+
+.display-preview {
+  margin: 10px 2px 14px;
+  text-align: center;
+}
+
+.leave-action:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 24%, var(--border-color));
+  background: var(--danger-soft);
+}
+
+@media (max-width: 980px) {
+  .header-action-label {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .classroom-header {
+    min-height: 60px;
+    gap: 8px;
+    padding: max(7px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 7px max(10px, env(safe-area-inset-left));
+  }
+
+  .classroom-identity {
+    gap: 9px;
+  }
+
+  .classroom-mark {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+    border-radius: 13px;
+    font-size: 18px;
+  }
+
+  .classroom-title-line h1 {
+    font-size: 15px;
+  }
+
+  .classroom-live-badge {
+    padding: 2px 6px;
+    font-size: 9px;
+  }
+
+  .classroom-header-actions {
+    gap: 3px;
+  }
+}
+
+@media (max-width: 460px) {
+  .classroom-live-badge {
+    display: none;
+  }
+
+  .classroom-header-actions {
+    gap: 2px;
+  }
+}
+
+@media (max-width: 360px) {
+  .classroom-header {
+    padding-inline: 7px;
+  }
+
+  .classroom-mark {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+    border-radius: 12px;
+  }
+
+  .classroom-title-line h1 {
+    max-width: 72px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .classroom-header {
+    min-height: 52px;
+  }
+
+  .classroom-mark {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+}
+</style>

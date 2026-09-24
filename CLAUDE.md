@@ -16,7 +16,7 @@ The teacher and students are not tech-savvy. Keep every flow simple for them: sh
   - `App.vue` is the shell; `components/ChatView.vue` and `components/LessonView.vue` are the two big screens. `LessonView` (and LiveKit) is lazy-loaded.
   - `api.ts` (REST), `socket.ts` (Socket.IO), `types.ts` (shared types), `warmVoice.ts` (microphone shaping).
   - `i18n.ts` holds every user-facing string, in English and Arabic.
-  - All styles are in `styles.css`; components have no `<style>` blocks.
+  - Each component's styles are in its own `<style scoped>` block. `styles.css` holds only what several components share: theme colours (`[data-theme]` variables), base elements, and common classes such as `.header-action`, `.display-popover`, `.role-badge` and `.message-content`. Scoped rules are one attribute more specific than global ones, so a global rule no longer overrides a component's rule for the same element; put overrides next to the rule they override.
 - `android-teacher/` — Kotlin teacher app, Arabic only, plus C voice processing in `app/src/main/cpp/`. It cannot be built from here; it needs Android Studio with the NDK.
 - `tests/security.test.mjs` — end-to-end server tests: a real server on a temporary database, with a fake LiveKit.
 

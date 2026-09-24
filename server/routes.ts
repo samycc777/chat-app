@@ -5,7 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import db from './database';
 import { AuthRequest, authMiddleware } from './auth';
-import { getCall } from './voice';
+import { getCall, screenIdentity } from './voice';
 import { isTextChannel, isVoiceChannel } from './channels';
 import { MAX_UPLOAD_BYTES, UPLOADS_DIR } from './config';
 import { detectMime } from './attachments';
@@ -61,6 +61,37 @@ router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
   });
   res.setHeader('Cache-Control', 'no-store');
   res.json({ url: config.url, token: await token.toJwt(), roomName: call.roomName, startedAt: call.startedAt });
+});
+
+// The phone apps share the screen from their Android code, which joins the call as a second,
+// screen-only participant. It may publish nothing but the screen and receives nobody, so it adds
+// no extra download to the phone that is already in the call.
+router.post('/livekit/screen-token', async (req: AuthRequest, res: Response) => {
+  const channelId = req.body?.channelId;
+  if (!isVoiceChannel(channelId)) { res.status(404).json({ error: 'Unknown channel' }); return; }
+  const call = getCall(channelId);
+  if (!call?.members.has(req.userId!)) { res.status(409).json({ error: 'Not in this voice channel' }); return; }
+
+  const config = liveKitConfig();
+  if (!config) { res.status(503).json({ error: 'Calls are not configured' }); return; }
+
+  const user = db.prepare('SELECT display_name FROM users WHERE id = ?').get(req.userId!) as { display_name?: string } | undefined;
+  const token = new AccessToken(config.apiKey, config.apiSecret, {
+    identity: screenIdentity(req.userId!),
+    name: user?.display_name || 'Friend',
+    ttl: '6h',
+  });
+  token.addGrant({
+    roomJoin: true,
+    room: call.roomName,
+    canSubscribe: false,
+    canPublish: true,
+    canPublishData: false,
+    canPublishSources: [TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO],
+  });
+  call.phoneScreens.add(req.userId!);
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ url: config.url, token: await token.toJwt() });
 });
 
 router.get('/me', (req: AuthRequest, res: Response) => {

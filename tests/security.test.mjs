@@ -71,6 +71,9 @@ const firstChannel = kind => db.prepare('SELECT id FROM channels WHERE kind = ? 
 const callToken = (token, channelId) => fetch(`${baseUrl}/api/livekit/token`, {
   method: 'POST', headers: jsonAuth(token), body: JSON.stringify({ channelId }),
 });
+const screenToken = (token, channelId) => fetch(`${baseUrl}/api/livekit/screen-token`, {
+  method: 'POST', headers: jsonAuth(token), body: JSON.stringify({ channelId }),
+});
 const emitWithAck = (socket, event, data) => new Promise(resolve => socket.emit(event, data, resolve));
 const nextEvent = (socket, event) => new Promise(resolve => socket.once(event, resolve));
 // Resolves with the first event that passes the check, skipping updates that were already on their way.
@@ -218,6 +221,37 @@ test('joining a voice channel shows everyone who is in it, and anyone in it can 
   const afterDrop = eventWhere(danSocket, 'voice_state', state => !membersIn(state, voice).includes('Erin'));
   erinSocket.disconnect();
   assert.equal((await afterDrop).calls.some(listed => listed.channelId === voice), false);
+});
+
+test('a phone shares its screen through a screen-only pass that ends when its owner leaves', async () => {
+  const voice = firstChannel('voice');
+  const gina = await join('Gina');
+  const outsider = await join('Screen outsider');
+  const socket = await connect(gina.token);
+
+  assert.equal((await screenToken(outsider.token, voice)).status, 409);
+  assert.equal((await screenToken(gina.token, 'nowhere')).status, 404);
+  await emitWithAck(socket, 'voice_join', { channelId: voice });
+  assert.equal((await withoutLiveKit(() => screenToken(gina.token, voice))).status, 503);
+
+  const response = await screenToken(gina.token, voice);
+  assert.equal(response.status, 200);
+  const credentials = await response.json();
+  assert.equal(credentials.url, process.env.LIVEKIT_URL);
+  const claims = jwt.decode(credentials.token);
+  // The screen joins as its owner's name with its own identity, and can only show the screen.
+  assert.equal(claims.sub, `${gina.user.id}:screen`);
+  assert.equal(claims.name, 'Gina');
+  assert.equal(claims.video.room, `voice-${voice}`);
+  assert.equal(claims.video.canSubscribe, false);
+  assert.equal(claims.video.canPublishData, false);
+  assert.deepEqual(claims.video.canPublishSources.sort(), ['screen_share', 'screen_share_audio']);
+
+  const removed = () => liveKitCalls('RemoveParticipant').some(call => call.data.identity === `${gina.user.id}:screen`);
+  assert.equal(removed(), false);
+  socket.emit('voice_leave');
+  assert.ok(await eventually(removed));
+  assert.equal((await screenToken(gina.token, voice)).status, 409);
 });
 
 test('a person is in one voice channel at a time, and deleting a voice channel closes its call', async () => {

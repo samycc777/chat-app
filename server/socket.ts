@@ -5,7 +5,7 @@ import db from './database';
 import { verifyToken } from './auth';
 import { removeAttachmentIfUnused } from './attachments';
 import { ChannelKind, cleanChannelName, createChannel, deleteChannel, getChannel, isTextChannel, listChannels, renameChannel } from './channels';
-import { addToCall, allCalls, callOf, endCall, removeFromCall, VoiceCall } from './voice';
+import { addToCall, allCalls, callOf, endCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
 import { roomService } from './livekit';
 
 const onlineUsers = new Map<string, Set<string>>();
@@ -73,8 +73,17 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
   const broadcastVoice = () => io.to(EVERYONE).emit('voice_state', voiceState());
   const broadcastChannels = () => io.to(EVERYONE).emit('channels', { channels: listChannels() });
 
+  // A phone's screen connection is separate from its owner's, so it is closed on the server's side
+  // too: otherwise a phone whose app was killed would keep showing its screen to the call.
+  function takeOutOfCall(userId: string) {
+    const call = removeFromCall(userId);
+    if (call?.phoneScreens.delete(userId)) {
+      roomService()?.removeParticipant(call.roomName, screenIdentity(userId)).catch(() => { /* It had already stopped sharing. */ });
+    }
+    return call;
+  }
   function leaveCall(userId: string) {
-    if (removeFromCall(userId)) broadcastVoice();
+    if (takeOutOfCall(userId)) broadcastVoice();
   }
 
   io.on('connection', (socket) => {
@@ -223,7 +232,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       const channel = getChannel(data?.channelId);
       if (channel?.kind !== 'voice') return reply({ error: 'Unknown channel' });
       const previous = callOf(userId);
-      if (previous && previous.channelId !== channel.id) removeFromCall(userId);
+      if (previous && previous.channelId !== channel.id) takeOutOfCall(userId);
       const call = addToCall(channel.id, userId, socket.id);
       broadcastVoice();
       reply({ startedAt: call.startedAt });

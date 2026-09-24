@@ -6,7 +6,15 @@ export interface VoiceCall {
   members: Map<string, string>;
   /** Raised hands, by user ID, with the time each was raised. */
   hands: Map<string, number>;
+  /** People who were given a pass for sharing their phone's screen, by user ID. */
+  phoneScreens: Set<string>;
 }
+
+// The phone apps cannot share the screen from their web page, so the app's own Android code joins
+// the call a second time just for the screen. That connection has its own identity, which every
+// call screen recognises and shows as its owner's screen rather than as another person.
+export const SCREEN_SUFFIX = ':screen';
+export const screenIdentity = (userId: string) => `${userId}${SCREEN_SUFFIX}`;
 
 // Calls live only in memory: a voice channel's call starts when the first person joins and ends
 // when the last one leaves, and a server restart simply empties every channel.
@@ -28,7 +36,7 @@ export function addToCall(channelId: string, userId: string, socketId: string): 
   let call = calls.get(channelId);
   if (!call) {
     // The room name is fixed per channel, so everyone who joins the channel meets in one LiveKit room.
-    call = { channelId, roomName: `voice-${channelId}`, startedAt: Date.now(), members: new Map(), hands: new Map() };
+    call = { channelId, roomName: `voice-${channelId}`, startedAt: Date.now(), members: new Map(), hands: new Map(), phoneScreens: new Set() };
     calls.set(channelId, call);
   }
   call.members.set(userId, socketId);

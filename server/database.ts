@@ -92,10 +92,16 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 `);
+// Hangout replaced the Arabic class app on the class's own server, where the whole class chat was
+// one conversation with this ID. That chat becomes #general, so every message, reply and file stays
+// where it is, and each person is still recognised by their browser's visitor ID.
+const CLASS_CHAT_ID = 'classroom';
 if (!db.prepare('SELECT 1 FROM channels LIMIT 1').get()) {
   const now = Date.now();
-  const general = uuid();
-  db.prepare("INSERT INTO conversations (id, type, name) VALUES (?, 'group', ?)").run(general, 'general');
+  const classChat = db.prepare('SELECT 1 FROM conversations WHERE id = ?').get(CLASS_CHAT_ID);
+  const general = classChat ? CLASS_CHAT_ID : uuid();
+  if (classChat) db.prepare("UPDATE conversations SET name = 'general' WHERE id = ?").run(general);
+  else db.prepare("INSERT INTO conversations (id, type, name) VALUES (?, 'group', ?)").run(general, 'general');
   const addChannel = db.prepare('INSERT INTO channels (id, name, kind, position, created_at) VALUES (?, ?, ?, ?, ?)');
   addChannel.run(general, 'general', 'text', 0, now);
   addChannel.run(uuid(), 'General', 'voice', 1, now);

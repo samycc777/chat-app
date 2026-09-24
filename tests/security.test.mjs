@@ -332,6 +332,52 @@ test('changing the invite key signs out everyone who does not have the new link'
   }
 });
 
+test("the class app's chat becomes #general with its messages when Hangout first starts on its server", () => {
+  const classDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hangout-class-'));
+  try {
+    // The parts of the class app's database that matter: its one class conversation, a student
+    // with the role column Hangout no longer uses, and a message.
+    const requireFromRoot = createRequire(path.join(root, 'package.json'));
+    const Database = requireFromRoot('better-sqlite3');
+    const classDb = new Database(path.join(classDir, 'chat.db'));
+    classDb.exec(`
+      CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
+        avatar_color TEXT NOT NULL DEFAULT '#6366f1', status TEXT, last_seen INTEGER, created_at INTEGER, visitor_id TEXT,
+        role TEXT NOT NULL DEFAULT 'student', removed_at INTEGER);
+      CREATE TABLE conversations (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT, created_by TEXT, created_at INTEGER);
+      CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        sender_id TEXT NOT NULL REFERENCES users(id), content TEXT, type TEXT NOT NULL DEFAULT 'text', file_url TEXT, file_name TEXT,
+        attachment_id TEXT, reply_to TEXT, edited_at INTEGER, deleted INTEGER DEFAULT 0, created_at INTEGER);
+      INSERT INTO conversations (id, type, name) VALUES ('classroom', 'group', 'Classroom');
+      INSERT INTO users (id, username, display_name, password_hash, visitor_id) VALUES ('u1', 'amina', 'Amina', 'disabled', '00000000-0000-4000-8000-000000000999');
+      INSERT INTO messages (id, conversation_id, sender_id, content, created_at) VALUES ('m1', 'classroom', 'u1', 'السلام عليكم', 1);
+    `);
+    classDb.close();
+
+    const script = `const loaded = (await import('./server/database.ts')).default; const db = loaded.default ?? loaded;
+      console.log(JSON.stringify({
+        channels: db.prepare('SELECT id, name, kind FROM channels ORDER BY position').all(),
+        messages: db.prepare('SELECT id, conversation_id, content FROM messages').all(),
+      }));`;
+    const run = () => spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'test', DATA_DIR: classDir },
+    });
+    const first = run();
+    assert.equal(first.status, 0, first.stderr);
+    const result = JSON.parse(first.stdout.trim().split('\n').pop());
+    assert.deepEqual(result.channels.map(channel => [channel.name, channel.kind]), [['general', 'text'], ['General', 'voice']]);
+    assert.equal(result.channels[0].id, 'classroom');
+    assert.deepEqual(result.messages, [{ id: 'm1', conversation_id: 'classroom', content: 'السلام عليكم' }]);
+
+    // Starting again changes nothing: the channels exist now.
+    const second = run();
+    assert.equal(second.status, 0, second.stderr);
+    assert.deepEqual(JSON.parse(second.stdout.trim().split('\n').pop()).channels, result.channels);
+  } finally {
+    fs.rmSync(classDir, { recursive: true, force: true });
+  }
+});
+
 test('production needs a long invite key', () => {
   const loadConfig = env => spawnSync(process.execPath, ['--import', 'tsx', '--eval', "require('./server/config.ts')"], {
     cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'production', DATA_DIR: tempDir, ...env },

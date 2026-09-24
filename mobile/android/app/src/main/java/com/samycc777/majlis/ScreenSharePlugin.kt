@@ -1,4 +1,4 @@
-package com.samycc777.hangout
+package com.samycc777.majlis
 
 import android.Manifest
 import android.app.Activity

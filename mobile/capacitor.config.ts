@@ -33,8 +33,8 @@ writeFileSync(
 );
 
 const config: CapacitorConfig = {
-  appId: 'com.samycc777.hangout',
-  appName: 'Hangout',
+  appId: 'com.samycc777.majlis',
+  appName: 'Majlis',
   // Only shown when the server can't be reached (see www/index.html).
   webDir: 'www',
   backgroundColor: '#313338',

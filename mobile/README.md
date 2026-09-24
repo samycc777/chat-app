@@ -18,7 +18,7 @@ reached, the app shows "Can't reach the server. Check your internet connection."
 
 What's where:
 
-- `capacitor.config.ts`: app name (`Hangout`), app id (`com.samycc777.hangout`) and the server address.
+- `capacitor.config.ts`: app name (`Majlis`), app id (`com.samycc777.majlis`) and the server address.
 - `www/index.html`: the "can't reach the server" page. It is the only web page inside the app itself.
 - `ios/`: the Xcode project for iPhone. `android/`: the Android Studio project.
 - `scripts/icons.mjs`: makes the app icons and launch screens from `client/public/icon.svg`.
@@ -171,10 +171,10 @@ app for testing apps before they're in the App Store. It needs a paid Apple deve
 
 4. In Xcode, click **App** at the top of the file list on the left, pick the **App** target, open the
    **Signing & Capabilities** tab and choose your **Team**. Leave "Automatically manage signing" on.
-   The bundle identifier must stay `com.samycc777.hangout`.
+   The bundle identifier must stay `com.samycc777.majlis`.
 5. Go to <https://appstoreconnect.apple.com> → **Apps** → **+** → **New App**. Platform iOS, name
    "Hangout" (if the name is taken, add something, e.g. "Hangout Friends"; the name on the phone stays
-   "Hangout"), any language, bundle ID `com.samycc777.hangout` (if it isn't in the list, Xcode creates
+   "Majlis"), any language, bundle ID `com.samycc777.majlis` (if it isn't in the list, Xcode creates
    it after step 4; refresh the page), SKU anything, e.g. `hangout`.
 6. In Xcode, choose **Any iOS Device (arm64)** as the destination at the top of the window, then
    **Product → Archive**. This takes a few minutes.

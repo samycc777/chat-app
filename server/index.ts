@@ -59,7 +59,7 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 // Named after the server, so someone who adds the app to their home screen sees its name.
 app.get('/manifest.webmanifest', (_req, res) => {
-  const name = serverName() || 'Hangout';
+  const name = serverName() || 'Majlis';
   res.setHeader('Content-Type', 'application/manifest+json');
   res.json({
     name, short_name: name, start_url: '/', scope: '/', display: 'standalone',

@@ -1,4 +1,4 @@
-package com.samycc777.hangout
+package com.samycc777.majlis
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -19,7 +19,7 @@ class ScreenShareService : Service() {
   companion object {
     const val NOTIFICATION_ID = 301
     private const val CHANNEL_ID = "screen_share"
-    private const val ACTION_STOP = "com.samycc777.hangout.STOP_SHARING"
+    private const val ACTION_STOP = "com.samycc777.majlis.STOP_SHARING"
     var onStopRequested: (() -> Unit)? = null
 
     fun notification(context: Context): Notification {

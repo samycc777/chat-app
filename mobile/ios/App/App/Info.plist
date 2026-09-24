@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Hangout</string>
+	<string>Majlis</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,9 +25,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Hangout uses the camera so your friends can see you in voice channels.</string>
+	<string>Majlis uses the camera so your friends can see you in voice channels.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Hangout uses the microphone so your friends can hear you in voice channels.</string>
+	<string>Majlis uses the microphone so your friends can hear you in voice channels.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -1,6 +1,6 @@
-# Hangout
+# Majlis (Hangout)
 
-A Discord-style server for a group of friends: text channels, and voice channels that work like a Zoom call (anyone can talk, show their camera and share their screen). It began as a copy of the Arabic class app in `~/dev/chat-app` and is meant to **replace** it: one app, at the class's existing address, used both for lessons (the teacher shares his Android tablet's screen) and for hanging out. Until the switch, the class still uses chat-app, which is not edited for Hangout work. The README describes every feature from the friends' point of view; read it before changing behaviour.
+A Discord-style server for a group of friends: text channels, and voice channels that work like a Zoom call (anyone can talk, show their camera and share their screen). It replaced the Arabic class app at the class's own address: one app, used both for lessons (the teacher shares his Android tablet's screen) and for hanging out, and the class chat became #general. People see it as **Majlis** (the app name, the Android package `com.samycc777.majlis`); the code and docs still call the project Hangout. The README describes every feature from the friends' point of view; read it before changing behaviour.
 
 The friends are not all tech-savvy. Keep every flow simple: people join by opening an invite link and typing their name, and nothing else; no admin roles, no settings that aren't needed, plain-language wording.
 

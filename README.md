@@ -1,6 +1,6 @@
-# Hangout
+# Majlis (Hangout)
 
-Hangout is a small Discord-style server for a group of friends: text channels to chat and share pictures and PDFs, and voice channels that work like a Zoom call, where anyone can talk, turn on their camera and share their screen. There are no admins: everyone can do everything. The interface is in English and Arabic, Arabic is set in Noto Naskh Arabic with room for the vowel marks, and the ع button opens an on-screen Arabic keyboard.
+Majlis (called Hangout in the code) is a small Discord-style server for a group of friends: text channels to chat and share pictures and PDFs, and voice channels that work like a Zoom call, where anyone can talk, turn on their camera and share their screen. There are no admins: everyone can do everything. The interface is in English and Arabic, Arabic is set in Noto Naskh Arabic with room for the vowel marks, and the ع button opens an on-screen Arabic keyboard.
 
 It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web app, with calls carried by [LiveKit](https://livekit.io). The same web app is wrapped as an iPhone app and an Android app in `mobile/`, so all three look and work the same.
 

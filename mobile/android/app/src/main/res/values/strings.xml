@@ -4,4 +4,8 @@
     <string name="title_activity_main">Hangout</string>
     <string name="package_name">com.samycc777.hangout</string>
     <string name="custom_url_scheme">com.samycc777.hangout</string>
+    <string name="screen_share_channel">Screen sharing</string>
+    <string name="screen_share_title">You are sharing your screen</string>
+    <string name="screen_share_text">Everyone in the call can see your screen.</string>
+    <string name="screen_share_stop">Stop sharing</string>
 </resources>

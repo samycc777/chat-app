@@ -45,6 +45,8 @@ export const api = {
   getServerInfo: (): Promise<{ name: string | null }> => request('/api/server'),
   getLiveKitToken: (channelId: string): Promise<LiveKitCredentials> =>
     request('/api/livekit/token', { method: 'POST', body: JSON.stringify({ channelId }) }),
+  getScreenToken: (channelId: string): Promise<{ url: string; token: string }> =>
+    request('/api/livekit/screen-token', { method: 'POST', body: JSON.stringify({ channelId }) }),
   getUploadLimit: (): Promise<number> => {
     if (cachedUploadLimit !== null) return Promise.resolve(cachedUploadLimit);
     if (pendingUploadLimit) return pendingUploadLimit;

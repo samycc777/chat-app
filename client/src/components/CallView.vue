@@ -6,12 +6,15 @@ import {
 } from 'lucide-vue-next';
 import {
   DisconnectReason, Room, RoomEvent, Track, VideoPresets, type Participant, type RemoteAudioTrack, type RemoteParticipant,
-  type RemoteTrack, type VideoTrack,
+  type RemoteTrack, type RemoteTrackPublication, type VideoTrack,
 } from 'livekit-client';
 import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import { warmVoice } from '../warmVoice';
+import {
+  onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
+} from '../nativeScreenShare';
 import type { OnlineUser } from '../types';
 import Avatar from './Avatar.vue';
 import CallTile, { type Tile } from './CallTile.vue';
@@ -35,8 +38,9 @@ const volumeAdjustable = (() => {
 // does not hear the mixer, and someone on speaker would send everyone's voices back to the call.
 const webAudioVolume = !volumeAdjustable && typeof AudioContext === 'function';
 const canAdjustVolume = volumeAdjustable || webAudioVolume;
-// Phones cannot share their screen from a browser or from the phone apps; computers can.
-const canShareScreen = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
+// Computers share their screen from the browser, and the Android app from its own code; phone
+// browsers and the iPhone app cannot share yet.
+const canShareScreen = typeof navigator.mediaDevices?.getDisplayMedia === 'function' || phoneScreenShareAvailable;
 const FALLBACK_COLORS = ['#5865f2', '#3ba55c', '#faa61a', '#ed4245', '#eb459e', '#9b84ee'];
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -57,6 +61,8 @@ const error = ref('');
 const micOn = ref(false);
 const cameraOn = ref(false);
 const sharingScreen = ref(false);
+let phoneShareStarting = false;
+const phoneShareListener = onPhoneScreenShareStopped(() => refresh());
 const audioBlocked = ref(false);
 const soundOn = ref(true);
 const volume = ref(savedVolume());
@@ -126,23 +132,34 @@ function showToast(message: string) {
   toastTimer = setTimeout(() => { toast.value = ''; }, 3500);
 }
 
+const myPhoneScreen = () => `${props.userId}${SCREEN_SUFFIX}`;
+// A phone's screen arrives as a participant of its own, which stands for its owner's screen rather
+// than for another person.
+const ownerOf = (identity: string) => identity.endsWith(SCREEN_SUFFIX) ? identity.slice(0, -SCREEN_SUFFIX.length) : identity;
+
 // Tiles are rebuilt from LiveKit's view of the room after every change: one per person, showing
 // their camera or their initials, and one more for each shared screen.
 function refresh() {
   if (!room || disposed) return;
   const everyone: [Participant, boolean][] = [[room.localParticipant, true], ...[...room.remoteParticipants.values()].map(p => [p, false] as [Participant, boolean])];
-  participants.value = everyone.map(([participant, local]) => ({
+  participants.value = everyone.filter(([participant]) => !participant.identity.endsWith(SCREEN_SUFFIX)).map(([participant, local]) => ({
     identity: participant.identity, name: participant.name || participant.identity, local,
     micOn: participant.isMicrophoneEnabled, speaking: participant.isSpeaking,
   }));
   const next: Tile[] = [];
-  for (const [participant, local] of everyone) {
+  for (const [participant, remoteOrLocal] of everyone) {
+    const owner = ownerOf(participant.identity);
+    const phoneScreen = owner !== participant.identity;
+    const local = remoteOrLocal || owner === props.userId;
     const base = {
-      identity: participant.identity, name: participant.name || participant.identity, color: colorOf(participant.identity), local,
-      micOn: participant.isMicrophoneEnabled, speaking: participant.isSpeaking, hand: raisedHands.value.has(participant.identity),
+      identity: owner, name: participant.name || owner, color: colorOf(owner), local,
+      micOn: participant.isMicrophoneEnabled, speaking: participant.isSpeaking, hand: raisedHands.value.has(owner),
     };
     const screen = participant.getTrackPublication(Track.Source.ScreenShare);
-    if (screen?.track && !screen.isMuted) next.push({ ...base, key: `${participant.identity}:screen`, kind: 'screen', track: markRaw(screen.track as VideoTrack) });
+    // This phone's own screen is never downloaded (see onTrackPublished), so it has no track here.
+    if (phoneScreen && local && screen && !screen.isMuted) next.push({ ...base, key: `${participant.identity}:screen`, kind: 'screen', track: null });
+    else if (screen?.track && !screen.isMuted) next.push({ ...base, key: `${participant.identity}:screen`, kind: 'screen', track: markRaw(screen.track as VideoTrack) });
+    if (phoneScreen) continue;
     const camera = participant.getTrackPublication(Track.Source.Camera);
     const cameraTrack = camera?.track && !camera.isMuted ? markRaw(camera.track as VideoTrack) : null;
     next.push({ ...base, key: `${participant.identity}:camera`, kind: 'camera', track: cameraTrack });
@@ -156,7 +173,7 @@ function refresh() {
   tiles.value = next;
   micOn.value = room.localParticipant.isMicrophoneEnabled;
   cameraOn.value = room.localParticipant.isCameraEnabled;
-  sharingScreen.value = room.localParticipant.isScreenShareEnabled;
+  sharingScreen.value = room.localParticipant.isScreenShareEnabled || room.remoteParticipants.has(myPhoneScreen());
   emit('state', {
     micOn: micOn.value, cameraOn: cameraOn.value, sharing: sharingScreen.value,
     speaking: participants.value.filter(person => person.speaking).map(person => person.identity),
@@ -326,9 +343,27 @@ async function toggleCamera() {
   }
   refresh();
 }
+async function togglePhoneScreenShare() {
+  if (phoneShareStarting) return;
+  phoneShareStarting = true;
+  try {
+    if (sharingScreen.value) await stopPhoneScreenShare();
+    else await startPhoneScreenShare(await api.getScreenToken(props.channelId));
+  } catch (cause) {
+    if (!wasCancelled(cause)) showToast(cause instanceof ApiError ? translateError(cause.message) : t('screenShareFailed'));
+  } finally {
+    phoneShareStarting = false;
+  }
+  refresh();
+}
+// Downloading your own phone's screen would only use data to show it back to you.
+function onTrackPublished(publication: RemoteTrackPublication, participant: RemoteParticipant) {
+  if (participant.identity === myPhoneScreen()) publication.setSubscribed(false);
+}
 async function toggleScreenShare() {
   if (!room) return;
   if (!canShareScreen) { showToast(t('screenShareUnsupported')); return; }
+  if (phoneScreenShareAvailable) { await togglePhoneScreenShare(); return; }
   try {
     // A shared browser tab can bring its sound along, for watching a video together.
     await room.localParticipant.setScreenShareEnabled(!sharingScreen.value, {
@@ -402,6 +437,7 @@ async function connect() {
       else rejoinWhenVisible = true;
     });
     connectingRoom.on(RoomEvent.DataReceived, onData);
+    connectingRoom.on(RoomEvent.TrackPublished, (publication, participant) => { if (current()) onTrackPublished(publication, participant); });
     for (const event of [
       RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected, RoomEvent.ParticipantNameChanged,
       RoomEvent.TrackPublished, RoomEvent.TrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
@@ -411,7 +447,10 @@ async function connect() {
     if (!current()) { connectingRoom.disconnect(); return; }
     status.value = 'connected';
     for (const participant of connectingRoom.remoteParticipants.values()) {
-      for (const publication of participant.trackPublications.values()) if (publication.track) attachAudio(publication.track, participant);
+      for (const publication of participant.trackPublications.values()) {
+        onTrackPublished(publication, participant);
+        if (publication.track) attachAudio(publication.track, participant);
+      }
     }
     refresh();
     // Like Discord, you join a voice channel with your microphone on; one tap mutes it.
@@ -447,6 +486,9 @@ function cleanup() {
   window.removeEventListener('resize', onResize);
   void wakeLock?.release().catch(() => {});
   if (document.fullscreenElement === root.value) void document.exitFullscreen().catch(() => {});
+  // The phone's screen is a separate connection, so it would keep going after the call closes.
+  if (sharingScreen.value && phoneScreenShareAvailable) void stopPhoneScreenShare().catch(() => {});
+  void phoneShareListener?.remove();
   room?.disconnect(); room = null;
   detachedAudio.splice(0).forEach(element => element.remove());
   audioContext?.removeEventListener('statechange', onMixerStateChange);

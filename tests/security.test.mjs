@@ -151,7 +151,8 @@ test('everyone can read and post in text channels, see files, and nobody gets in
 test('anyone can create, rename and delete channels, and the last text channel stays', async () => {
   const carol = await join('Carol');
   const socket = await connect(carol.token);
-  const updated = nextEvent(socket, 'channels');
+  // The list sent on connecting may still be on its way, so wait for one that has the new channel.
+  const updated = eventWhere(socket, 'channels', ({ channels }) => channels.some(listed => listed.name === 'Homework'));
   const { channel } = await emitWithAck(socket, 'create_channel', { name: '  Homework‮ ', kind: 'text' });
   assert.equal(channel.name, 'Homework');
   assert.equal(channel.kind, 'text');

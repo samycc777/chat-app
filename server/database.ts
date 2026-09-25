@@ -68,7 +68,7 @@ db.exec(`
     uploader_id TEXT NOT NULL REFERENCES users(id),
     disk_name TEXT NOT NULL UNIQUE,
     original_name TEXT NOT NULL,
-    mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg','image/png','image/gif','image/webp','application/pdf')),
+    mime_type TEXT NOT NULL,
     size INTEGER NOT NULL,
     created_at INTEGER NOT NULL
   );
@@ -138,6 +138,85 @@ if (fs.existsSync(uploadsDir)) {
       String(message.file_name || diskName).slice(0, 180), mime, bytes.length, createdAt);
     connectMessage.run(attachmentId, message.id);
   }
+}
+
+// Voice messages and lesson recordings are sound and video files, which the original attachments
+// table refused by name. SQLite cannot change a CHECK, so the table is rebuilt once without it; the
+// upload route decides what may be stored instead.
+const attachmentsSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'attachments'").get() as { sql: string }).sql;
+if (attachmentsSql.includes('CHECK(mime_type')) {
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE attachments_new (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        uploader_id TEXT NOT NULL REFERENCES users(id),
+        disk_name TEXT NOT NULL UNIQUE,
+        original_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      INSERT INTO attachments_new SELECT id, conversation_id, uploader_id, disk_name, original_name, mime_type, size, created_at FROM attachments;
+      DROP TABLE attachments;
+      ALTER TABLE attachments_new RENAME TO attachments;
+      CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
+    `);
+  })();
+}
+const attachmentColumns = db.pragma('table_info(attachments)') as { name: string }[];
+// Recorded sound often has no length in its own header, so the recorder's measurement is kept.
+if (!attachmentColumns.some(column => column.name === 'duration_ms')) {
+  db.exec('ALTER TABLE attachments ADD COLUMN duration_ms INTEGER');
+}
+
+// Pinned messages stay on the message itself, so a deleted message leaves the pins with it.
+if (!messageColumns.some(column => column.name === 'pinned_at')) {
+  db.exec('ALTER TABLE messages ADD COLUMN pinned_at INTEGER');
+  db.exec('ALTER TABLE messages ADD COLUMN pinned_by TEXT REFERENCES users(id)');
+}
+
+// How much of each channel a person has read, kept on the server so every device agrees. The
+// position is a message's row number, which is its order of arrival.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS channel_reads (
+    user_id TEXT NOT NULL REFERENCES users(id),
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    last_read_seq INTEGER NOT NULL,
+    PRIMARY KEY (user_id, channel_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS message_reactions (
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    emoji TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (message_id, user_id, emoji)
+  );
+
+  -- One row per device that asked for notifications: a browser's Web Push subscription, or an
+  -- Android (Firebase) or iPhone (Apple) app's device token.
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    kind TEXT NOT NULL CHECK(kind IN ('web', 'fcm', 'apns')),
+    endpoint TEXT NOT NULL UNIQUE,
+    keys TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
+
+  -- Values the server makes for itself once and keeps, such as its Web Push keys.
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+`);
+
+// Which notifications a person wants: 'all', 'mentions' (mentions and calls only) or 'off'.
+const userColumnsNow = db.pragma('table_info(users)') as { name: string }[];
+if (!userColumnsNow.some(column => column.name === 'notify_level')) {
+  db.exec("ALTER TABLE users ADD COLUMN notify_level TEXT NOT NULL DEFAULT 'all'");
 }
 
 export default db;

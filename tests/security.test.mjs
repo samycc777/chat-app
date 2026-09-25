@@ -151,6 +151,36 @@ test('everyone can read and post in text channels, see files, and nobody gets in
   assert.equal((await fetch(`${baseUrl}/api/conversations/${voice}/messages`, { headers: auth(alice.token) })).status, 404);
 });
 
+test('sound and video can be shared, with their type and length, while other files are refused', async () => {
+  const general = firstChannel('text');
+  const dana = await join('Dana');
+  const upload = async (bytes, type, name, durationMs) => {
+    const form = new FormData();
+    form.append('conversationId', general);
+    if (durationMs !== undefined) form.append('durationMs', String(durationMs));
+    form.append('file', new Blob([bytes], { type }), name);
+    return fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth(dana.token), body: form });
+  };
+  const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(60)]);
+  const voice = await upload(webm, 'audio/webm;codecs=opus', 'voice.webm', 4200);
+  assert.equal(voice.status, 200);
+  const voiceResult = await voice.json();
+  assert.deepEqual([voiceResult.type, voiceResult.mimeType, voiceResult.durationMs], ['file', 'audio/webm', 4200]);
+  const video = await (await upload(webm, 'video/webm', 'lesson.webm', 'nonsense')).json();
+  assert.deepEqual([video.mimeType, video.durationMs], ['video/webm', null]);
+  const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(40)]);
+  assert.equal((await (await upload(mp4, 'audio/mp4', 'voice.m4a', 1000)).json()).mimeType, 'audio/mp4');
+  assert.equal((await upload(Buffer.from('#!/bin/sh\necho hi'), 'audio/webm', 'trick.webm')).status, 415);
+
+  const socket = await connect(dana.token);
+  const heard = nextEvent(socket, 'new_message');
+  await emitWithAck(socket, 'send_message', { conversationId: general, type: 'file', attachmentId: voiceResult.attachmentId });
+  const message = await heard;
+  assert.deepEqual([message.mimeType, message.durationMs], ['audio/webm', 4200]);
+  const history = await (await fetch(`${baseUrl}/api/conversations/${general}/messages`, { headers: auth(dana.token) })).json();
+  assert.equal(history.find(entry => entry.id === message.id).mimeType, 'audio/webm');
+});
+
 test('anyone can create, rename and delete channels, and the last text channel stays', async () => {
   const carol = await join('Carol');
   const socket = await connect(carol.token);
@@ -351,6 +381,11 @@ test("the class app's chat becomes #general with its messages when Hangout first
       INSERT INTO conversations (id, type, name) VALUES ('classroom', 'group', 'Classroom');
       INSERT INTO users (id, username, display_name, password_hash, visitor_id) VALUES ('u1', 'amina', 'Amina', 'disabled', '00000000-0000-4000-8000-000000000999');
       INSERT INTO messages (id, conversation_id, sender_id, content, created_at) VALUES ('m1', 'classroom', 'u1', 'السلام عليكم', 1);
+      CREATE TABLE attachments (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        uploader_id TEXT NOT NULL REFERENCES users(id), disk_name TEXT NOT NULL UNIQUE, original_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg','image/png','image/gif','image/webp','application/pdf')),
+        size INTEGER NOT NULL, created_at INTEGER NOT NULL);
+      INSERT INTO attachments VALUES ('a1', 'classroom', 'u1', 'sheet.pdf', 'Lesson 1.pdf', 'application/pdf', 10, 1);
     `);
     classDb.close();
 
@@ -358,6 +393,8 @@ test("the class app's chat becomes #general with its messages when Hangout first
       console.log(JSON.stringify({
         channels: db.prepare('SELECT id, name, kind FROM channels ORDER BY position').all(),
         messages: db.prepare('SELECT id, conversation_id, content FROM messages').all(),
+        attachments: db.prepare('SELECT id, original_name FROM attachments').all(),
+        acceptsSound: !db.prepare("SELECT sql FROM sqlite_master WHERE name = 'attachments'").get().sql.includes('CHECK'),
       }));`;
     const run = () => spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
       cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'test', DATA_DIR: classDir },
@@ -368,6 +405,9 @@ test("the class app's chat becomes #general with its messages when Hangout first
     assert.deepEqual(result.channels.map(channel => [channel.name, channel.kind]), [['general', 'text'], ['General', 'voice']]);
     assert.equal(result.channels[0].id, 'classroom');
     assert.deepEqual(result.messages, [{ id: 'm1', conversation_id: 'classroom', content: 'السلام عليكم' }]);
+    // The class's files are kept when the attachments table is rebuilt to take sound and video.
+    assert.deepEqual(result.attachments, [{ id: 'a1', original_name: 'Lesson 1.pdf' }]);
+    assert.equal(result.acceptsSound, true);
 
     // Starting again changes nothing: the channels exist now.
     const second = run();

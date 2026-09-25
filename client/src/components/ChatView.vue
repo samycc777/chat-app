@@ -639,6 +639,8 @@ function timeLabel(timestamp: number) {
               v-else-if="message.type === 'file' && message.attachmentId"
               :attachment-id="message.attachmentId"
               :name="message.fileName || t('file')"
+              :mime-type="message.mimeType"
+              :duration-ms="message.durationMs"
             />
             <div v-else class="message-content" :class="scriptClass(message.content)" dir="auto"><template v-for="(part, partIndex) in linkParts(message.content ?? '')" :key="partIndex"><a v-if="part.href" :href="part.href" target="_blank" rel="noopener noreferrer" dir="ltr">{{ part.text }}</a><template v-else>{{ part.text }}</template></template></div>
 
@@ -727,7 +729,7 @@ function timeLabel(timestamp: number) {
         <input
           ref="fileInput"
           type="file"
-          accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+          accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,audio/*,video/*"
           hidden
           @change="upload"
         />

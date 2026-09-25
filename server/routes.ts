@@ -9,6 +9,7 @@ import { getCall, screenIdentity } from './voice';
 import { isTextChannel, isVoiceChannel } from './channels';
 import { MAX_UPLOAD_BYTES, UPLOADS_DIR } from './config';
 import { detectMime } from './attachments';
+import { MESSAGE_SELECT, toMessage } from './messages';
 import { AccessToken, TrackSource } from 'livekit-server-sdk';
 import { liveKitConfig } from './livekit';
 import { rateLimit } from './rateLimit';
@@ -124,14 +125,7 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
 
   if (!isTextChannel(id)) { res.status(404).json({ error: 'Unknown channel' }); return; }
 
-  let query = `
-    SELECT m.rowid AS seq, m.id, m.conversation_id, m.sender_id, m.content, m.type, m.file_url, m.file_name, m.attachment_id,
-      m.reply_to, m.edited_at, m.deleted, m.created_at,
-      u.username as sender_username, u.display_name as sender_display_name, u.avatar_color as sender_avatar_color
-    FROM messages m
-    JOIN users u ON u.id = m.sender_id
-    WHERE m.conversation_id = ?
-  `;
+  let query = `${MESSAGE_SELECT} WHERE m.conversation_id = ?`;
   const params: any[] = [id];
 
   // Messages sent in the same millisecond keep the order they arrived in (their row number), so
@@ -147,33 +141,7 @@ router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   query += ' ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?';
   params.push(limit);
 
-  const messages = (db.prepare(query).all(...params) as any[]).reverse();
-
-  const result = messages.map(m => {
-    let replyTo = null;
-    if (m.reply_to) {
-      const replied = db.prepare(
-        `SELECT m.id, m.content, m.type, m.deleted, m.sender_id, u.display_name as sender_display_name
-         FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`
-      ).get(m.reply_to) as any;
-      if (replied) {
-        replyTo = {
-          id: replied.id, content: replied.deleted ? null : replied.content, type: replied.type, deleted: !!replied.deleted,
-          senderId: replied.sender_id, senderDisplayName: replied.sender_display_name,
-        };
-      }
-    }
-    return {
-      id: m.id, seq: m.seq, conversationId: m.conversation_id, senderId: m.sender_id,
-      content: m.deleted ? null : m.content, type: m.type,
-      fileUrl: null, attachmentId: m.deleted ? null : m.attachment_id, fileName: m.deleted ? null : m.file_name,
-      replyTo, editedAt: m.edited_at, deleted: !!m.deleted, createdAt: m.created_at,
-      sender: {
-        username: m.sender_username, displayName: m.sender_display_name,
-        avatarColor: m.sender_avatar_color,
-      },
-    };
-  });
+  const result = (db.prepare(query).all(...params) as any[]).reverse().map(toMessage);
 
   res.json(result);
 });
@@ -185,16 +153,22 @@ router.post('/upload', rateLimit<AuthRequest>(20, 60_000, req => req.userId!), u
   if (!isTextChannel(conversationId)) {
     fs.unlinkSync(storedPath); res.status(404).json({ error: 'Unknown channel' }); return;
   }
-  const mimeType = detectMime(fs.readFileSync(storedPath).subarray(0, 16));
-  if (!mimeType) { fs.unlinkSync(storedPath); res.status(415).json({ error: 'Only images and PDFs are allowed' }); return; }
+  const mimeType = detectMime(fs.readFileSync(storedPath).subarray(0, 16), req.file.mimetype);
+  if (!mimeType) { fs.unlinkSync(storedPath); res.status(415).json({ error: 'Only images, PDFs, sound and video are allowed' }); return; }
+  // Only sound and video have a length, measured by the device that recorded it.
+  const duration = Number(req.body.durationMs);
+  const durationMs = /^(audio|video)\//.test(mimeType) && Number.isSafeInteger(duration) && duration > 0 && duration <= 12 * 3600_000 ? duration : null;
   const id = uuid();
   const originalName = path.basename(req.file.originalname.replace(/[\\/]/g, '_')).slice(0, 180) || 'attachment';
-  db.prepare('INSERT INTO attachments (id, conversation_id, uploader_id, disk_name, original_name, mime_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, conversationId, req.userId!, req.file.filename, originalName, mimeType, req.file.size, Date.now());
+  db.prepare('INSERT INTO attachments (id, conversation_id, uploader_id, disk_name, original_name, mime_type, size, created_at, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, conversationId, req.userId!, req.file.filename, originalName, mimeType, req.file.size, Date.now(), durationMs);
+  // Sound and video are sent as file messages; the app shows them by their type.
   res.json({
     attachmentId: id,
     name: originalName,
-    type: mimeType === 'application/pdf' ? 'file' : 'image',
+    type: mimeType.startsWith('image/') ? 'image' : 'file',
+    mimeType,
+    durationMs,
   });
 });
 

@@ -24,6 +24,11 @@ export interface Message {
   fileUrl?: string;
   attachmentId?: string | null;
   fileName?: string;
+  /** The attachment's type, such as audio/webm for a voice message. */
+  mimeType?: string | null;
+  /** Length of a sound or video attachment, measured when it was recorded. */
+  durationMs?: number | null;
+  pinnedAt?: number | null;
   replyTo?: {
     id: string;
     content: string | null;

@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Download, ExternalLink, FileText, LoaderCircle, X } from 'lucide-vue-next';
 import { api } from '../api';
 import { useI18n } from '../i18n';
 
-const props = defineProps<{ attachmentId: string; name: string; image?: boolean }>();
+const props = defineProps<{
+  attachmentId: string;
+  name: string;
+  image?: boolean;
+  /** Sound and video play inside the chat once downloaded; other files open or save. */
+  mimeType?: string | null;
+  durationMs?: number | null;
+}>();
+const media = computed(() => props.mimeType?.startsWith('audio/') ? 'audio' : props.mimeType?.startsWith('video/') ? 'video' : null);
 const emit = defineEmits<{ loaded: [] }>();
 const { t } = useI18n();
 const root = ref<HTMLElement | null>(null);
@@ -80,6 +88,10 @@ onBeforeUnmount(() => {
         </div>
       </Teleport>
     </template>
+    <div v-else-if="media && url" class="message-media">
+      <audio v-if="media === 'audio'" :src="url" controls autoplay />
+      <video v-else :src="url" controls autoplay playsinline />
+    </div>
     <div v-else class="message-file">
       <span class="message-file-icon"><FileText :size="20" /></span>
       <span class="message-file-name" dir="auto">{{ name }}</span>
@@ -97,6 +109,18 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /* Attachments: images load as they scroll into view, files when tapped. */
+.message-media audio {
+  width: min(330px, 100%);
+}
+
+.message-media video {
+  display: block;
+  width: min(480px, 100%);
+  max-height: 360px;
+  border-radius: 11px;
+  background: #000000;
+}
+
 .message-image-button {
   display: block;
   padding: 0;

@@ -1,6 +1,6 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
-type UploadResult = { attachmentId: string; name: string; type: 'image' | 'file' };
+type UploadResult = { attachmentId: string; name: string; type: 'image' | 'file'; mimeType: string; durationMs: number | null };
 export type LiveKitCredentials = { url: string; token: string; roomName: string; startedAt: number };
 let cachedUploadLimit: number | null = null;
 let pendingUploadLimit: Promise<number> | null = null;
@@ -69,11 +69,12 @@ export const api = {
   getMessages: (conversationId: string, before?: { createdAt: number; id: string }) =>
     request(`/api/conversations/${conversationId}/messages${before ? `?before=${before.createdAt}&beforeId=${encodeURIComponent(before.id)}` : ''}`),
 
-  uploadFile: async (file: File, conversationId: string, onProgress?: (progress: number) => void) => {
+  uploadFile: async (file: File, conversationId: string, onProgress?: (progress: number) => void, durationMs?: number) => {
     const maxUploadBytes = await api.getUploadLimit();
     if (file.size > maxUploadBytes) throw new Error(`File exceeds the upload size limit (${(maxUploadBytes / 1024 / 1024).toFixed(1)} MB).`);
     const formData = new FormData();
     formData.append('conversationId', conversationId);
+    if (durationMs) formData.append('durationMs', String(Math.round(durationMs)));
     formData.append('file', file);
     const token = getToken();
     return new Promise<UploadResult>((resolve, reject) => {

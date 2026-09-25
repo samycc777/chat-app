@@ -7,6 +7,7 @@ import { removeAttachmentIfUnused } from './attachments';
 import { ChannelKind, cleanChannelName, createChannel, deleteChannel, getChannel, isTextChannel, listChannels, renameChannel } from './channels';
 import { addToCall, allCalls, callOf, endCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
 import { roomService } from './livekit';
+import { messageById } from './messages';
 
 const onlineUsers = new Map<string, Set<string>>();
 // Everyone is in every channel, so every connection joins this one Socket.IO room.
@@ -37,17 +38,6 @@ function callPayload(call: VoiceCall) {
   };
 }
 const voiceState = () => ({ calls: allCalls().map(callPayload) });
-
-function replySummary(replyTo: string) {
-  const replied = db.prepare(
-    `SELECT m.id, m.content, m.type, m.deleted, m.sender_id, u.display_name as sender_display_name
-     FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`
-  ).get(replyTo) as any;
-  return replied ? {
-    id: replied.id, content: replied.deleted ? null : replied.content, type: replied.type, deleted: !!replied.deleted,
-    senderId: replied.sender_id, senderDisplayName: replied.sender_display_name,
-  } : null;
-}
 
 export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = []) {
   const io = new Server(httpServer, {
@@ -135,21 +125,12 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       const id = uuid();
       const createdAt = Date.now();
 
-      const { lastInsertRowid } = db.prepare(`
+      db.prepare(`
         INSERT INTO messages (id, conversation_id, sender_id, content, type, file_url, file_name, reply_to, created_at, attachment_id)
         VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
       `).run(id, conversationId, userId, safeType === 'text' ? content : (safeType === 'file' ? attachment.original_name : null), safeType, attachment?.original_name || null, replyTo || null, createdAt, attachment?.id || null);
 
-      const sender = db.prepare('SELECT username, display_name, avatar_color FROM users WHERE id = ?').get(userId) as any;
-
-      const message = {
-        id, seq: Number(lastInsertRowid), conversationId, senderId: userId,
-        content: safeType === 'text' ? content : (safeType === 'file' ? attachment.original_name : null), type: safeType,
-        fileUrl: null, attachmentId: attachment?.id || null, fileName: attachment?.original_name || null,
-        replyTo: replyTo ? replySummary(replyTo) : null, editedAt: null, deleted: false, createdAt,
-        sender: { username: sender.username, displayName: sender.display_name, avatarColor: sender.avatar_color },
-      };
-
+      const message = messageById(id)!;
       io.to(EVERYONE).emit('new_message', message);
       callback?.({ id });
     });

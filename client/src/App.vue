@@ -10,6 +10,7 @@ import Auth from './components/Auth.vue';
 import ChatView from './components/ChatView.vue';
 import MemberList from './components/MemberList.vue';
 import ServerSidebar from './components/ServerSidebar.vue';
+import RecordingDialog from './components/RecordingDialog.vue';
 
 // LiveKit makes up most of the app's code, so the call screen loads only when someone joins a voice
 // channel. A page left open across a deploy asks for files the new version no longer has, so it
@@ -58,6 +59,7 @@ const selectedChannel = computed(() => channels.value.find(channel => channel.id
   ?? channels.value.find(channel => channel.kind === 'text') ?? null);
 const callChannel = computed(() => channels.value.find(channel => channel.id === callChannelId.value) ?? null);
 const handsInCall = computed(() => calls.value.find(call => call.channelId === callChannelId.value)?.hands ?? []);
+const recordingInCall = computed(() => calls.value.find(call => call.channelId === callChannelId.value)?.recording ?? null);
 const selectedCall = computed(() => calls.value.find(call => call.channelId === selectedChannel.value?.id) ?? null);
 let lastTextChannelId: string | null = null;
 watch(selectedChannel, channel => {
@@ -228,6 +230,7 @@ function signOut() {
         :visible="selectedChannel?.id === callChannel.id"
         :people="onlineUsers"
         :hands="handsInCall"
+        :recording="recordingInCall"
         @state="callState = $event"
         @leave="leftCall"
         @menu="sidebarOpen = true"
@@ -247,6 +250,8 @@ function signOut() {
       </section>
     </div>
     <MemberList v-if="membersOpen && selectedChannel?.kind === 'text'" :people="[...onlineUsers.values()]" :current-user-id="currentUser.id" />
+    <!-- Outside the call, because a recording is posted after its recorder has left the call. -->
+    <RecordingDialog :channels="channels" />
   </main>
   </div>
 </template>

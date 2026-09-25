@@ -73,4 +73,6 @@ export interface VoiceCall {
   startedAt: number;
   members: OnlineUser[];
   hands: { userId: string; displayName: string }[];
+  /** Who is recording the call and since when, so everyone in it can see. */
+  recording?: { userId: string; displayName: string; startedAt: number } | null;
 }

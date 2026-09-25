@@ -115,6 +115,34 @@ export const api = {
     xhr.addEventListener('error', () => reject(new Error('Attachment unavailable')));
     xhr.send();
   }),
+
+  // A link the video player opens by itself, carrying a pass for this one file, so a long
+  // recording plays and seeks without being downloaded first.
+  getStreamUrl: async (attachmentId: string): Promise<string> => {
+    const { url } = await request(`/api/attachments/${encodeURIComponent(attachmentId)}/stream-url`);
+    return `${API_URL}${url}`;
+  },
+
+  // Call recordings are uploaded piece by piece while they are made.
+  startRecording: (voiceChannelId: string): Promise<{ id: string; startedAt: number }> =>
+    request('/api/recordings', { method: 'POST', body: JSON.stringify({ voiceChannelId }) }),
+  uploadRecordingPiece: async (id: string, index: number, piece: Blob) => {
+    const token = getToken();
+    const res = await fetch(`${API_URL}/api/recordings/${encodeURIComponent(id)}/chunks/${index}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: piece,
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new ApiError(data.error || `Request failed: ${res.status}`, res.status);
+    }
+  },
+  resumeRecording: (id: string) => request(`/api/recordings/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
+  stopRecording: (id: string) => request(`/api/recordings/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
+  finishRecording: (id: string, textChannelId: string, durationMs: number, name: string) =>
+    request(`/api/recordings/${encodeURIComponent(id)}/finish`, { method: 'POST', body: JSON.stringify({ textChannelId, durationMs: Math.round(durationMs), name }) }),
+  discardRecording: (id: string) => request(`/api/recordings/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
 
 export { API_URL };

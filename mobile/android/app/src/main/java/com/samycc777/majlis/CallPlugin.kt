@@ -2,13 +2,18 @@ package com.samycc777.majlis
 
 import android.app.PictureInPictureParams
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Rational
+import androidx.activity.OnBackPressedCallback
 import androidx.annotation.RequiresApi
 import androidx.core.app.PictureInPictureModeChangedInfo
 import androidx.core.content.ContextCompat
 import androidx.core.util.Consumer
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -19,6 +24,7 @@ import com.getcapacitor.annotation.CapacitorPlugin
 // while its owner is in another app (see CallService). While there is someone's camera or screen
 // to watch, it also asks for the small window: leaving the app then shrinks it into a small window
 // on top of the other apps, as in a WhatsApp video call, and the page shows just that video.
+// When someone shows a video full screen, it hides the phone's own bars and can turn the app sideways.
 @CapacitorPlugin(name = "Call")
 class CallPlugin : Plugin() {
   companion object {
@@ -33,10 +39,17 @@ class CallPlugin : Plugin() {
   private val onMiniWindowChanged = Consumer<PictureInPictureModeChangedInfo> { info ->
     notifyListeners("miniWindow", JSObject().put("active", info.isInPictureInPictureMode))
   }
+  // During full screen, Back only leaves full screen, as in a video app, instead of closing the app.
+  private val leaveFullScreen = object : OnBackPressedCallback(false) {
+    override fun handleOnBackPressed() {
+      notifyListeners("fullScreenExit", JSObject())
+    }
+  }
 
   override fun load() {
     activity.addOnUserLeaveHintListener(onLeaveApp)
     activity.addOnPictureInPictureModeChangedListener(onMiniWindowChanged)
+    activity.onBackPressedDispatcher.addCallback(activity, leaveFullScreen)
   }
 
   @PluginMethod
@@ -68,6 +81,32 @@ class CallPlugin : Plugin() {
       updateMiniWindow()
       call.resolve()
     }
+  }
+
+  @PluginMethod
+  fun setFullScreen(call: PluginCall) {
+    val on = call.getBoolean("on") ?: false
+    val landscape = call.getBoolean("landscape") ?: false
+    activity.runOnUiThread {
+      showFullScreen(on, landscape)
+      call.resolve()
+    }
+  }
+
+  // The phone's status and navigation bars are hidden; a swipe from the edge shows them for a moment.
+  // A wide video, such as a computer's screen, turns the app sideways even when the phone's own
+  // rotation is locked, as YouTube does.
+  private fun showFullScreen(on: Boolean, landscape: Boolean) {
+    val bars = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+    if (on) {
+      bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+      bars.hide(WindowInsetsCompat.Type.systemBars())
+    } else {
+      bars.show(WindowInsetsCompat.Type.systemBars())
+    }
+    activity.requestedOrientation =
+      if (on && landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    leaveFullScreen.isEnabled = on
   }
 
   // Phones with little memory, and Android before 8, have no small windows.
@@ -110,6 +149,7 @@ class CallPlugin : Plugin() {
     CallService.onLeaveRequested = null
     context.stopService(Intent(context, CallService::class.java))
     activity.runOnUiThread {
+      showFullScreen(false, false)
       miniWindow = null
       updateMiniWindow()
       // Leaving the call from the notification would otherwise leave a tiny copy of the chat on
@@ -121,6 +161,7 @@ class CallPlugin : Plugin() {
   override fun handleOnDestroy() {
     activity.removeOnUserLeaveHintListener(onLeaveApp)
     activity.removeOnPictureInPictureModeChangedListener(onMiniWindowChanged)
+    leaveFullScreen.remove()
     finish()
   }
 }

@@ -233,6 +233,14 @@ screen, or when nobody's video is on. Closing the small window keeps the call go
 An app installed before this existed goes to the background as before until it is updated. People can
 turn small windows off for Majlis in Android's settings (Apps → Special app access → Picture-in-picture).
 
+**Full screen hides the phone's own bars on Android.** A page inside the app cannot use the browser's
+full screen (Capacitor cancels it), so when someone shows a video full screen, the call screen covers the
+app itself and asks `CallPlugin.kt` (`setFullScreen` in `client/src/nativeCall.ts`) to hide the status
+and navigation bars; a swipe from the edge shows them for a moment. A wide video, such as a computer's
+screen, also turns the app sideways, even with the phone's rotation locked. While full screen is on, the
+Back button only leaves it. The first time, Android shows its own "Viewing full screen" tip. An app
+installed before this existed shows full screen between the phone's bars until it is updated.
+
 ## Changing things
 
 - **The website**: just deploy it. Apps pick it up next time they open.

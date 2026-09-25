@@ -28,6 +28,8 @@ const LIMIT_DB = -3;
 export type CleanVoice = TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> & {
   /** Whether the noise filter is running, rather than only the tone and loudness shaping. */
   readonly denoising: boolean;
+  /** The microphone as recorded; LiveKit's own track for it is this processor's output. */
+  readonly recordedTrack: MediaStreamTrack | undefined;
 };
 
 let filterBinary: Promise<ArrayBuffer | null> | undefined;
@@ -68,12 +70,14 @@ export function cleanVoice(): CleanVoice {
   let localTrack: LocalTrack | undefined;
   let nodes: AudioNode[] = [];
   let denoising = false;
+  let recordedTrack: MediaStreamTrack | undefined;
   const paused = () => context.state !== 'running' && context.state !== 'closed';
   const sendAsRecorded = () => { void localTrack?.stopProcessor().catch(() => {}); };
   const onStateChange = () => { if (processor.processedTrack && paused()) sendAsRecorded(); };
 
   function shape(track: MediaStreamTrack) {
     release();
+    recordedTrack = track;
     const source = context.createMediaStreamSource(new MediaStream([track]));
     // Some microphones record in stereo; the voice is mixed down to one channel here, because the
     // noise filter only cleans one, and Opus sends one anyway.
@@ -106,6 +110,7 @@ export function cleanVoice(): CleanVoice {
   const processor: CleanVoice = {
     name: 'clean-voice',
     get denoising() { return denoising; },
+    get recordedTrack() { return recordedTrack; },
     async init(options) {
       localTrack = options.localTrack;
       context = options.audioContext;

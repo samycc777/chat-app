@@ -2,16 +2,16 @@
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import {
   Ellipsis, Hand, Maximize, Menu, Mic, MicOff, Minimize, PhoneOff, RotateCcw, ScreenShare, ScreenShareOff,
-  Users, Video, VideoOff, Volume1, Volume2, VolumeX, X, ZoomOut,
+  Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
-  DisconnectReason, Room, RoomEvent, Track, VideoPresets, type AudioCaptureOptions, type Participant, type RemoteAudioTrack, type RemoteParticipant,
+  ConnectionQuality, DisconnectReason, Room, RoomEvent, Track, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
   type RemoteTrack, type RemoteTrackPublication, type VideoTrack,
 } from 'livekit-client';
 import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
-import { cleanVoice, prepareCleanVoice } from '../cleanVoice';
+import { cleanVoice, prepareCleanVoice, type CleanVoice } from '../cleanVoice';
 import {
   bridge, onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
 } from '../nativeScreenShare';
@@ -32,6 +32,9 @@ const REACTIONS = ['👍', '❤️', '😂', '👏', '🎉', '😮'];
 const VOLUME_KEY = 'callVolume';
 const PERSON_VOLUMES_KEY = 'callVolumes';
 const ZOOM_HINT_KEY = 'zoomHintSeen';
+// Louder than this on the muted microphone, for most of a second, is someone talking.
+const MUTED_SPEECH_DB = -40;
+const MUTED_HINT_EVERY_MS = 20_000;
 // The sliders stop short of silence, so a call never starts inaudible because of last week's
 // setting; the speaker button is there for turning the sound off.
 const MIN_VOLUME = 0.1;
@@ -83,6 +86,7 @@ const lastSpeakerKey = ref('');
 const raisedHands = computed(() => new Set(props.hands.map(hand => hand.userId)));
 const reactions = ref<{ id: number; emoji: string; name: string; drift: number }[]>([]);
 const toast = ref('');
+const weakConnection = ref(false);
 const startedAt = ref(0);
 const now = ref(Date.now());
 // The tile shown full screen, alone over everything else, and whether its bar of buttons is showing.
@@ -100,6 +104,10 @@ let audioContext: AudioContext | undefined;
 let wakeLock: WakeLockSentinel | null = null;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let fullBarTimer: ReturnType<typeof setTimeout> | undefined;
+let weakTimer: ReturnType<typeof setTimeout> | undefined;
+let stopListeningWhileMuted: (() => void) | undefined;
+let listeningContext: AudioContext | undefined;
+let lastMutedHintAt = 0;
 let clockTimer: ReturnType<typeof setInterval> | undefined;
 let reactionId = 0;
 let lastReactionAt = 0;
@@ -383,8 +391,12 @@ async function cleanMicrophone() {
   try { await microphone.setProcessor(voice); } catch { /* Friends still hear the voice, just not cleaned. */ }
   // The microphone was opened without the browser's own noise filter, because ours was going to
   // replace it; if ours could not start after all, the browser's is brought back.
-  if (voice.denoising || microphone.mediaStreamTrack.getSettings().noiseSuppression !== false) return;
+  if (voice.denoising || recorded(microphone).getSettings().noiseSuppression !== false) return;
   try { await microphone.restartTrack({ noiseSuppression: true, voiceIsolation: true }); } catch { /* It keeps the voice as it was. */ }
+}
+// With the voice cleaned, LiveKit's track is the cleaned one, which is silent while muted.
+function recorded(microphone: LocalAudioTrack) {
+  return (microphone.getProcessor() as CleanVoice | undefined)?.recordedTrack ?? microphone.mediaStreamTrack;
 }
 // Our noise filter replaces the browser's own: two filters in a row make voices sound watery. The
 // browser still takes out the echo of the call's own sound and evens out the level. This only
@@ -406,6 +418,50 @@ async function setMicrophone(enabled: boolean) {
     refresh();
   }
 }
+// Talking while muted gets a reminder, as in Zoom. A copy of the microphone is listened to on this
+// device only; it is never sent, and it is let go as soon as the microphone is turned back on.
+function listenWhileMuted() {
+  const microphone = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack;
+  if (!microphone || recorded(microphone).readyState !== 'live') return;
+  // On an iPhone, where a page gets few audio contexts, the call's mixer does the listening.
+  let context = audioContext;
+  try { context ??= listeningContext ??= new AudioContext(); } catch { return; }
+  const copy = recorded(microphone).clone();
+  copy.enabled = true;
+  const source = context.createMediaStreamSource(new MediaStream([copy]));
+  const lowCut = new BiquadFilterNode(context, { type: 'highpass', frequency: 150 });
+  const analyser = new AnalyserNode(context, { fftSize: 2048 });
+  // Some browsers only listen to what reaches the speakers, so the copy goes there, silenced.
+  const silent = new GainNode(context, { gain: 0 });
+  source.connect(lowCut).connect(analyser).connect(silent).connect(context.destination);
+  const samples = new Float32Array(analyser.fftSize);
+  const recent: boolean[] = [];
+  const timer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    analyser.getFloatTimeDomainData(samples);
+    let power = 0;
+    for (const sample of samples) power += sample * sample;
+    recent.push(10 * Math.log10(power / samples.length || 1e-12) > MUTED_SPEECH_DB);
+    if (recent.length > 15) recent.shift();
+    // A cough or a door is shorter than this; talking fills most of the last second and a half.
+    if (recent.filter(Boolean).length < 7 || Date.now() - lastMutedHintAt < MUTED_HINT_EVERY_MS) return;
+    lastMutedHintAt = Date.now();
+    recent.length = 0;
+    showToast(t('youAreMuted'));
+  }, 100);
+  stopListeningWhileMuted = () => {
+    clearInterval(timer);
+    [source, lowCut, analyser, silent].forEach(node => node.disconnect());
+    copy.stop();
+    stopListeningWhileMuted = undefined;
+  };
+}
+// Only while the call is on screen: someone reading a text channel may well be talking to someone at home.
+watch(() => [micOn.value, status.value, props.visible, inMiniWindow.value] as const, ([on, state, visible, mini]) => {
+  const wanted = !on && state === 'connected' && visible && !mini;
+  if (!wanted) stopListeningWhileMuted?.();
+  else if (!stopListeningWhileMuted) listenWhileMuted();
+});
 async function toggleCamera() {
   if (!room) return;
   try {
@@ -566,6 +622,14 @@ async function connect() {
       else rejoinWhenVisible = true;
     });
     connectingRoom.on(RoomEvent.DataReceived, onData);
+    // A weak connection for more than a moment is worth knowing about: it explains a voice that cuts
+    // out, and that the problem is here rather than with the others.
+    connectingRoom.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
+      if (!current() || participant !== connectingRoom.localParticipant) return;
+      clearTimeout(weakTimer);
+      if (quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost) weakTimer = setTimeout(() => { weakConnection.value = true; }, 3000);
+      else weakConnection.value = false;
+    });
     connectingRoom.on(RoomEvent.TrackPublished, (publication, participant) => { if (current()) onTrackPublished(publication, participant); });
     for (const event of [
       RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected, RoomEvent.ParticipantNameChanged,
@@ -595,6 +659,9 @@ async function rejoin() {
   rejoinWhenVisible = false;
   const previous = room;
   room = null;
+  stopListeningWhileMuted?.();
+  clearTimeout(weakTimer);
+  weakConnection.value = false;
   previous?.disconnect();
   detachedAudio.splice(0).forEach(element => element.remove());
   error.value = '';
@@ -609,6 +676,9 @@ function cleanup() {
   if (disposed) return;
   disposed = true;
   exitFullScreen();
+  stopListeningWhileMuted?.();
+  void listeningContext?.close().catch(() => {});
+  clearTimeout(weakTimer);
   clearTimeout(toastTimer);
   clearInterval(clockTimer);
   document.removeEventListener('fullscreenchange', onFullscreenChange);
@@ -726,6 +796,7 @@ onBeforeUnmount(cleanup);
           <CallTile v-for="tile in tiles" :key="tile.key" :tile="tile" :focused="false" @focus="toggleFocus(tile.key)" @fullscreen="enterFullScreen(tile.key)" @click="toggleFocus(tile.key)" />
         </div>
         <p v-if="status === 'reconnecting'" class="call-pill call-reconnecting" role="status">{{ t('callReconnecting') }}</p>
+        <p v-else-if="weakConnection && status === 'connected'" class="call-pill call-weak" role="status"><WifiOff :size="16" aria-hidden="true" />{{ t('weakConnection') }}</p>
       </main>
 
       <button v-if="audioBlocked" class="call-pill call-sound-pill" type="button" @click="enableAudio">
@@ -1172,6 +1243,13 @@ onBeforeUnmount(cleanup);
 
 .call-reconnecting {
   top: 12px;
+}
+
+/* Just above the buttons, where it stays clear of full screen's bar too. */
+.call-weak {
+  bottom: calc(env(safe-area-inset-bottom) + 84px);
+  white-space: normal;
+  text-align: center;
 }
 
 .call-reactions {

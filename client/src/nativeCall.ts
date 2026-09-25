@@ -7,7 +7,13 @@ import { bridge } from './nativeScreenShare';
 
 // An app installed before this existed has the bridge but not the plugin; its calls still stop in
 // the background until the new app is installed.
-const available = Boolean(bridge?.PluginHeaders?.some(plugin => plugin.name === 'Call'));
+const plugin = bridge?.PluginHeaders?.find(header => header.name === 'Call');
+const available = Boolean(plugin);
+/**
+ * Whether the app can hide the phone's own bars and turn sideways for full screen. Apps from before
+ * that still show full screen, just between the phone's bars.
+ */
+export const phoneFullScreenAvailable = Boolean(plugin?.methods?.some(method => method.name === 'setFullScreen'));
 
 /** True while the app is shrunk into the small window over other apps. */
 export const inMiniWindow = ref(false);
@@ -34,4 +40,12 @@ export function setMiniWindow(video: { width: number; height: number } | null) {
   if (!available) return;
   const shape = video ? { width: Math.round(video.width), height: Math.round(video.height) } : {};
   void bridge!.nativePromise('Call', 'setMiniWindow', shape).catch(() => {});
+}
+/** Hides or brings back the phone's bars; `landscape` also turns the app sideways, for a wide video. */
+export function setPhoneFullScreen(on: boolean, landscape: boolean) {
+  if (phoneFullScreenAvailable) void bridge!.nativePromise('Call', 'setFullScreen', { on, landscape }).catch(() => {});
+}
+/** Called when the phone's Back button is pressed during full screen, which then only leaves it. */
+export function onPhoneFullScreenExit(callback: () => void) {
+  return phoneFullScreenAvailable ? bridge!.addListener('Call', 'fullScreenExit', callback) : undefined;
 }

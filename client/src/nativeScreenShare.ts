@@ -8,7 +8,7 @@ export const SCREEN_SUFFIX = ':screen';
 
 type NativeError = { message?: string; code?: string };
 type Bridge = {
-  PluginHeaders?: { name: string }[];
+  PluginHeaders?: { name: string; methods?: { name: string }[] }[];
   nativePromise: (plugin: string, method: string, options?: object) => Promise<unknown>;
   addListener: (plugin: string, event: string, callback: (data: Record<string, unknown>) => void) => { remove: () => Promise<void> };
 };

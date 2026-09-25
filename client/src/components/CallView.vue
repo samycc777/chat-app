@@ -2,7 +2,7 @@
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import {
   Ellipsis, Hand, Maximize, Menu, Mic, MicOff, Minimize, PhoneOff, RotateCcw, ScreenShare, ScreenShareOff,
-  Users, Video, VideoOff, Volume1, Volume2, VolumeX, X,
+  Users, Video, VideoOff, Volume1, Volume2, VolumeX, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
   DisconnectReason, Room, RoomEvent, Track, VideoPresets, type AudioCaptureOptions, type Participant, type RemoteAudioTrack, type RemoteParticipant,
@@ -13,9 +13,12 @@ import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import { cleanVoice, prepareCleanVoice } from '../cleanVoice';
 import {
-  onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
+  bridge, onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
 } from '../nativeScreenShare';
-import { endPhoneCall, inMiniWindow, keepPhoneCallGoing, onPhoneCallLeave, setMiniWindow } from '../nativeCall';
+import {
+  endPhoneCall, inMiniWindow, keepPhoneCallGoing, onPhoneCallLeave, onPhoneFullScreenExit, phoneFullScreenAvailable, setMiniWindow,
+  setPhoneFullScreen,
+} from '../nativeCall';
 import type { OnlineUser } from '../types';
 import Avatar from './Avatar.vue';
 import CallTile, { type Tile } from './CallTile.vue';
@@ -28,6 +31,7 @@ type CallParticipant = { identity: string; name: string; local: boolean; micOn: 
 const REACTIONS = ['👍', '❤️', '😂', '👏', '🎉', '😮'];
 const VOLUME_KEY = 'callVolume';
 const PERSON_VOLUMES_KEY = 'callVolumes';
+const ZOOM_HINT_KEY = 'zoomHintSeen';
 // The sliders stop short of silence, so a call never starts inaudible because of last week's
 // setting; the speaker button is there for turning the sound off.
 const MIN_VOLUME = 0.1;
@@ -65,6 +69,7 @@ const sharingScreen = ref(false);
 let phoneShareStarting = false;
 const phoneShareListener = onPhoneScreenShareStopped(() => refresh());
 const phoneLeaveListener = onPhoneCallLeave(() => leave());
+const phoneFullScreenListener = onPhoneFullScreenExit(() => exitFullScreen());
 const audioBlocked = ref(false);
 const soundOn = ref(true);
 const volume = ref(savedVolume());
@@ -80,14 +85,21 @@ const reactions = ref<{ id: number; emoji: string; name: string; drift: number }
 const toast = ref('');
 const startedAt = ref(0);
 const now = ref(Date.now());
-const fullscreen = ref(false);
-const fullscreenSupported = typeof document !== 'undefined' && document.fullscreenEnabled;
+// The tile shown full screen, alone over everything else, and whether its bar of buttons is showing.
+const fullKey = ref<string | null>(null);
+const fullBarShown = ref(true);
+const fullTileView = ref<InstanceType<typeof CallTile>>();
+// Inside the phone apps, Capacitor cancels a page's full screen as soon as it starts, so there the
+// call fills the app itself, and the Android app hides the phone's bars.
+const browserFullscreen = typeof document !== 'undefined' && document.fullscreenEnabled && !bridge;
+const landscapeQuery = window.matchMedia('(orientation: landscape)');
 let room: Room | null = null;
 // Only on iPhones and iPads. The call keeps it across rejoins and resumes it itself, because
 // LiveKit only resumes a suspended mixer and an iPhone back from another app can leave it interrupted.
 let audioContext: AudioContext | undefined;
 let wakeLock: WakeLockSentinel | null = null;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
+let fullBarTimer: ReturnType<typeof setTimeout> | undefined;
 let clockTimer: ReturnType<typeof setInterval> | undefined;
 let reactionId = 0;
 let lastReactionAt = 0;
@@ -107,6 +119,16 @@ const elapsed = computed(() => {
 });
 const focusedTile = computed(() => tiles.value.find(tile => tile.key === focusedKey.value) ?? null);
 const otherTiles = computed(() => tiles.value.filter(tile => tile.key !== focusedKey.value));
+const fullTile = computed(() => tiles.value.find(tile => tile.key === fullKey.value) ?? null);
+const fullZoomed = computed(() => Boolean(fullTileView.value?.zoomed));
+// A tile with a video to look at; your own shared screen is never shown back to you.
+const watchable = (tile: Tile) => Boolean(tile.track) && !(tile.local && tile.kind === 'screen');
+// What Full screen in the More menu shows: the big tile, else a shared screen, else a camera.
+const fullScreenChoice = computed(() => {
+  const videos = tiles.value.filter(watchable);
+  return videos.find(tile => tile.key === focusedKey.value) ?? videos.find(tile => tile.kind === 'screen')
+    ?? videos.find(tile => !tile.local) ?? videos[0] ?? null;
+});
 // The one video the Android app shows in its small window over other apps: the one made big, else
 // a shared screen, else whoever spoke last with their camera on. Never your own video, and nothing
 // while you share your screen, because the small window would then appear in what you share.
@@ -139,7 +161,11 @@ function nameOf(identity: string) {
 }
 
 function openSheet(next: Sheet) { sheet.value = sheet.value === next ? null : next; }
-function onKeydown(event: KeyboardEvent) { if (event.key === 'Escape' && sheet.value) sheet.value = null; }
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return;
+  if (sheet.value) sheet.value = null;
+  else exitFullScreen();
+}
 function showToast(message: string) {
   toast.value = message;
   clearTimeout(toastTimer);
@@ -186,6 +212,8 @@ function refresh() {
   const newScreen = screens.find(tile => !tiles.value.some(old => old.key === tile.key));
   if (newScreen && !focusedTile.value) focusedKey.value = newScreen.key;
   if (focusedKey.value && !next.some(tile => tile.key === focusedKey.value)) focusedKey.value = null;
+  // A screen that stops being shared, or a camera turned off, leaves full screen.
+  if (fullKey.value && !next.some(tile => tile.key === fullKey.value && watchable(tile))) exitFullScreen();
   tiles.value = next;
   micOn.value = room.localParticipant.isMicrophoneEnabled;
   cameraOn.value = room.localParticipant.isCameraEnabled;
@@ -416,14 +444,71 @@ async function toggleScreenShare() {
   } catch { /* The browser's screen picker was closed. */ }
   refresh();
 }
-async function toggleFullscreen() {
-  sheet.value = null;
-  try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await root.value?.requestFullscreen();
-  } catch { /* Some mobile browsers only allow video elements to go full screen. */ }
+// Full screen shows one video alone on the whole screen, with a bar of buttons that comes back with
+// a tap. On a phone, a wide video also turns the screen sideways, as YouTube does.
+const onPhone = () => Math.min(window.screen.width, window.screen.height) < 600;
+function wantsLandscape() {
+  const size = fullTile.value?.dimensions;
+  return onPhone() && Boolean(size && size.width > size.height);
 }
-function onFullscreenChange() { fullscreen.value = Boolean(document.fullscreenElement); }
+async function enterFullScreen(key: string) {
+  sheet.value = null;
+  focusedKey.value = key;
+  fullKey.value = key;
+  showFullBar();
+  showZoomHint();
+  if (phoneFullScreenAvailable) { setPhoneFullScreen(true, wantsLandscape()); return; }
+  if (!browserFullscreen || document.fullscreenElement) return;
+  // Without a tap, as when the phone is turned sideways, the browser refuses; the call still fills the page.
+  try { await root.value?.requestFullscreen(); } catch { return; }
+  turnSideways();
+}
+function exitFullScreen() {
+  if (!fullKey.value) return;
+  fullKey.value = null;
+  clearTimeout(fullBarTimer);
+  if (phoneFullScreenAvailable) setPhoneFullScreen(false, false);
+  if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+  try { screen.orientation?.unlock(); } catch { /* Nothing was locked. */ }
+}
+// Only phone browsers in full screen can be turned sideways, and Chrome on Android is the one that does.
+function turnSideways() {
+  const orientation = screen.orientation as ScreenOrientation & { lock?: (to: string) => Promise<void> };
+  if (wantsLandscape()) orientation?.lock?.('landscape').catch(() => {});
+  else try { orientation?.unlock(); } catch { /* Nothing was locked. */ }
+}
+// The teacher may turn the tablet while it is shown full screen.
+watch(wantsLandscape, () => {
+  if (!fullKey.value) return;
+  if (phoneFullScreenAvailable) setPhoneFullScreen(true, wantsLandscape());
+  else if (document.fullscreenElement) turnSideways();
+});
+// Leaving the browser's full screen, for example with Escape or the Back gesture, leaves the call's too.
+function onFullscreenChange() { if (!document.fullscreenElement) exitFullScreen(); }
+// Turning a phone sideways while a video is big shows it full screen.
+function onOrientationChange() {
+  if (!landscapeQuery.matches || fullKey.value || inMiniWindow.value || !props.visible || sheet.value || !onPhone()) return;
+  if (focusedTile.value && watchable(focusedTile.value)) void enterFullScreen(focusedTile.value.key);
+}
+watch(() => props.visible, visible => { if (!visible) exitFullScreen(); });
+function showFullBar() {
+  fullBarShown.value = true;
+  clearTimeout(fullBarTimer);
+  fullBarTimer = setTimeout(() => { fullBarShown.value = false; }, 3000);
+}
+function toggleFullBar() {
+  if (!fullBarShown.value) { showFullBar(); return; }
+  fullBarShown.value = false;
+  clearTimeout(fullBarTimer);
+}
+// Once per device, the first time, so everyone learns that the teacher's writing can be made bigger.
+function showZoomHint() {
+  try {
+    if (localStorage.getItem(ZOOM_HINT_KEY)) return;
+    localStorage.setItem(ZOOM_HINT_KEY, '1');
+  } catch { return; }
+  showToast(t(window.matchMedia('(pointer: coarse)').matches ? 'pinchToZoom' : 'scrollToZoom'));
+}
 
 // Keeps a phone from dimming and locking during a call. Browsers release the lock whenever the
 // page is hidden, so it is requested again when the page returns.
@@ -523,19 +608,21 @@ async function rejoin() {
 function cleanup() {
   if (disposed) return;
   disposed = true;
+  exitFullScreen();
   clearTimeout(toastTimer);
   clearInterval(clockTimer);
   document.removeEventListener('fullscreenchange', onFullscreenChange);
+  landscapeQuery.removeEventListener('change', onOrientationChange);
   document.removeEventListener('keydown', onKeydown);
   document.removeEventListener('visibilitychange', onVisibilityChange);
   window.removeEventListener('pageshow', onVisibilityChange);
   window.removeEventListener('resize', onResize);
   void wakeLock?.release().catch(() => {});
-  if (document.fullscreenElement === root.value) void document.exitFullscreen().catch(() => {});
   // The phone's screen is a separate connection, so it would keep going after the call closes.
   if (sharingScreen.value && phoneScreenShareAvailable) void stopPhoneScreenShare().catch(() => {});
   void phoneShareListener?.remove();
   void phoneLeaveListener?.remove();
+  void phoneFullScreenListener?.remove();
   endPhoneCall();
   room?.disconnect(); room = null;
   detachedAudio.splice(0).forEach(element => element.remove());
@@ -547,6 +634,7 @@ function leave() { cleanup(); emit('leave'); }
 defineExpose({ toggleMicrophone: () => setMicrophone(!micOn.value), leave });
 onMounted(() => {
   document.addEventListener('fullscreenchange', onFullscreenChange);
+  landscapeQuery.addEventListener('change', onOrientationChange);
   // Escape closes an open panel wherever keyboard focus happens to be.
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('visibilitychange', onVisibilityChange);
@@ -609,16 +697,33 @@ onBeforeUnmount(cleanup);
         <div v-else-if="status === 'joining'" class="call-state-card" role="status">
           <strong>{{ t('joiningCall') }}</strong>
         </div>
+        <div v-else-if="fullTile" class="call-full" :class="{ idle: !fullBarShown }" @pointermove="$event.pointerType === 'mouse' && showFullBar()">
+          <CallTile ref="fullTileView" :tile="fullTile" focused full @click="toggleFullBar" />
+          <div class="call-full-bar top" :class="{ hidden: !fullBarShown }">
+            <span class="call-full-name">
+              <ScreenShare v-if="fullTile.kind === 'screen'" :size="16" aria-hidden="true" />
+              <bdi>{{ fullTile.kind === 'screen' ? t('screenOf', { name: fullTile.name }) : fullTile.name }}</bdi>
+            </span>
+            <button class="call-full-btn" type="button" @click="exitFullScreen"><Minimize :size="18" />{{ t('exitFullscreen') }}</button>
+          </div>
+          <div class="call-full-bar bottom" :class="{ hidden: !fullBarShown }">
+            <!-- A student can answer the teacher without leaving full screen. -->
+            <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="micOn ? t('mute') : t('unmute')" :aria-label="micOn ? t('mute') : t('unmute')" @click="setMicrophone(!micOn); showFullBar()">
+              <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
+            </button>
+            <button v-if="fullZoomed" class="call-full-btn" type="button" @click="fullTileView?.resetZoom(); showFullBar()"><ZoomOut :size="18" />{{ t('zoomOut') }}</button>
+          </div>
+        </div>
         <template v-else-if="focusedTile">
           <div class="call-focus">
-            <CallTile :tile="focusedTile" focused @focus="toggleFocus(focusedTile.key)" @click="toggleFocus(focusedTile.key)" />
+            <CallTile :tile="focusedTile" focused @focus="toggleFocus(focusedTile.key)" @fullscreen="enterFullScreen(focusedTile.key)" @click="toggleFocus(focusedTile.key)" />
           </div>
           <div v-if="otherTiles.length" class="call-strip">
             <CallTile v-for="tile in otherTiles" :key="tile.key" :tile="tile" :focused="false" small @click="toggleFocus(tile.key)" />
           </div>
         </template>
         <div v-else class="call-grid" :style="gridStyle">
-          <CallTile v-for="tile in tiles" :key="tile.key" :tile="tile" :focused="false" @focus="toggleFocus(tile.key)" @click="toggleFocus(tile.key)" />
+          <CallTile v-for="tile in tiles" :key="tile.key" :tile="tile" :focused="false" @focus="toggleFocus(tile.key)" @fullscreen="enterFullScreen(tile.key)" @click="toggleFocus(tile.key)" />
         </div>
         <p v-if="status === 'reconnecting'" class="call-pill call-reconnecting" role="status">{{ t('callReconnecting') }}</p>
       </main>
@@ -704,8 +809,8 @@ onBeforeUnmount(cleanup);
             <input v-model.number="volume" type="range" :min="MIN_VOLUME" max="1" step="0.05">
             <Volume2 :size="20" aria-hidden="true" />
           </label>
-          <button v-if="fullscreenSupported" class="call-sheet-row" type="button" @click="toggleFullscreen">
-            <Minimize v-if="fullscreen" :size="20" /><Maximize v-else :size="20" />{{ fullscreen ? t('exitFullscreen') : t('fullscreen') }}
+          <button v-if="fullScreenChoice" class="call-sheet-row" type="button" @click="enterFullScreen(fullScreenChoice.key)">
+            <Maximize :size="20" />{{ t('fullscreen') }}
           </button>
         </section>
       </template>
@@ -944,10 +1049,99 @@ onBeforeUnmount(cleanup);
   background: #a12828;
 }
 
-/* Floating notices. */
+/* Full screen: one video over the whole app, with bars that fade away and come back with a tap. */
+.call-full {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  background: #000000;
+}
+
+.call-full.idle,
+.call-full.idle .call-tile {
+  cursor: none;
+}
+
+.call-full-bar {
+  position: absolute;
+  inset-inline: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px max(12px, env(safe-area-inset-right)) 12px max(12px, env(safe-area-inset-left));
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+.call-full-bar > * {
+  pointer-events: auto;
+}
+
+.call-full-bar.hidden {
+  opacity: 0;
+}
+
+.call-full-bar.hidden > * {
+  pointer-events: none;
+}
+
+.call-full-bar.top {
+  top: 0;
+  justify-content: space-between;
+  padding-top: max(12px, env(safe-area-inset-top));
+  background: linear-gradient(rgba(0, 0, 0, 0.55), transparent);
+}
+
+.call-full-bar.bottom {
+  bottom: 0;
+  justify-content: center;
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+}
+
+.call-full-name {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.call-full-name bdi {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.call-full-btn {
+  min-height: 42px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.call-full-btn:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+/* Floating notices, shown over full screen too. */
 .call-pill {
   position: absolute;
-  z-index: 2;
+  z-index: 6;
   left: 50%;
   max-width: calc(100% - 32px);
   display: inline-flex;
@@ -985,7 +1179,7 @@ onBeforeUnmount(cleanup);
   position: absolute;
   bottom: calc(env(safe-area-inset-bottom) + 90px);
   inset-inline-end: 56px;
-  z-index: 2;
+  z-index: 6;
   pointer-events: none;
 }
 

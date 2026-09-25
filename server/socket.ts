@@ -9,6 +9,7 @@ import { addToCall, allCalls, callOf, endCall, getCall, removeFromCall, screenId
 import { roomService } from './livekit';
 import { messageById } from './messages';
 import { forgetSocket, notifyCallStarted, notifyNewMessage, setAppActive } from './push';
+import { registerChatEvents } from './chat';
 
 const onlineUsers = new Map<string, Set<string>>();
 // Everyone is in every channel, so every connection joins this one Socket.IO room.
@@ -106,6 +107,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     socket.emit('channels', { channels: listChannels() });
     socket.emit('voice_state', voiceState());
     socket.to(EVERYONE).emit('presence', { userId, online: true, user: me });
+    registerChatEvents(io, socket, userId);
 
     socket.on('send_message', (data, callback) => {
       if (!data || !isTextChannel(data.conversationId)) return callback?.({ error: 'Unknown channel' });

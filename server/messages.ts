@@ -28,6 +28,16 @@ export function replySummary(replyTo: string) {
   } : null;
 }
 
+const reactionsQuery = db.prepare('SELECT emoji, user_id FROM message_reactions WHERE message_id = ? ORDER BY created_at');
+// Reactions are grouped by emoji, in the order each emoji was first used.
+export function reactionsOf(messageId: string) {
+  const grouped = new Map<string, string[]>();
+  for (const row of reactionsQuery.all(messageId) as { emoji: string; user_id: string }[]) {
+    grouped.set(row.emoji, [...grouped.get(row.emoji) ?? [], row.user_id]);
+  }
+  return [...grouped].map(([emoji, userIds]) => ({ emoji, userIds }));
+}
+
 export function toMessage(m: any) {
   const deleted = !!m.deleted;
   return {
@@ -37,6 +47,7 @@ export function toMessage(m: any) {
     mimeType: deleted ? null : m.attachment_mime ?? null, durationMs: deleted ? null : m.attachment_duration ?? null,
     replyTo: m.reply_to ? replySummary(m.reply_to) : null, editedAt: m.edited_at, deleted, createdAt: m.created_at,
     pinnedAt: deleted ? null : m.pinned_at ?? null,
+    reactions: deleted ? [] : reactionsOf(m.id),
     sender: { username: m.sender_username, displayName: m.sender_display_name, avatarColor: m.sender_avatar_color },
   };
 }

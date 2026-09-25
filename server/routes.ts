@@ -10,6 +10,7 @@ import { isTextChannel, isVoiceChannel } from './channels';
 import { MAX_UPLOAD_BYTES, UPLOADS_DIR } from './config';
 import { detectMime } from './attachments';
 import { MESSAGE_SELECT, toMessage } from './messages';
+import { pinnedMessages, searchMessages } from './chat';
 import { AccessToken, TrackSource } from 'livekit-server-sdk';
 import { liveKitConfig } from './livekit';
 import { rateLimit } from './rateLimit';
@@ -113,41 +114,64 @@ router.get('/me', (req: AuthRequest, res: Response) => {
 
 router.use('/push', pushRouter);
 
+const MESSAGE_ID = /^[0-9a-f-]{36}$/i;
+const TIMESTAMP = /^\d+$/;
+
 router.get('/conversations/:id/messages', (req: AuthRequest, res: Response) => {
   const { id } = req.params;
-  const before = req.query.before as string | undefined;
-  const beforeId = req.query.beforeId as string | undefined;
+  const { before, beforeId, after, afterId, around } = req.query;
   const parsedLimit = req.query.limit === undefined ? 50 : (typeof req.query.limit === 'string' ? Number(req.query.limit) : Number.NaN);
   if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) { res.status(400).json({ error: 'Invalid message limit' }); return; }
   const limit = parsedLimit;
-  if (before !== undefined && (typeof before !== 'string' || !/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) {
-    res.status(400).json({ error: 'Invalid message cursor' }); return;
-  }
-  if (beforeId !== undefined && (typeof beforeId !== 'string' || !/^[0-9a-f-]{36}$/i.test(beforeId))) {
+  const badTimestamp = (value: unknown) => value !== undefined && (typeof value !== 'string' || !TIMESTAMP.test(value) || !Number.isSafeInteger(Number(value)));
+  const badId = (value: unknown) => value !== undefined && (typeof value !== 'string' || !MESSAGE_ID.test(value));
+  if (badTimestamp(before) || badTimestamp(after) || badId(beforeId) || badId(afterId) || badId(around)) {
     res.status(400).json({ error: 'Invalid message cursor' }); return;
   }
 
   if (!isTextChannel(id)) { res.status(404).json({ error: 'Unknown channel' }); return; }
 
-  let query = `${MESSAGE_SELECT} WHERE m.conversation_id = ?`;
-  const params: any[] = [id];
-
   // Messages sent in the same millisecond keep the order they arrived in (their row number), so
   // paging from a given message never skips or repeats one of them.
-  if (before && beforeId) {
-    query += ' AND (m.created_at < ? OR (m.created_at = ? AND m.rowid < (SELECT rowid FROM messages WHERE id = ?)))';
-    params.push(Number(before), Number(before), beforeId);
-  } else if (before) {
-    query += ' AND m.created_at < ?';
-    params.push(Number(before));
+  const page = (direction: 'older' | 'newer', createdAt?: number, messageId?: string, count = limit, inclusive = false) => {
+    let query = `${MESSAGE_SELECT} WHERE m.conversation_id = ?`;
+    const params: any[] = [id];
+    const [compare, order] = direction === 'older' ? ['<', 'DESC'] : ['>', 'ASC'];
+    if (createdAt !== undefined && messageId) {
+      query += ` AND (m.created_at ${compare} ? OR (m.created_at = ? AND m.rowid ${compare}${inclusive ? '=' : ''} (SELECT rowid FROM messages WHERE id = ?)))`;
+      params.push(createdAt, createdAt, messageId);
+    } else if (createdAt !== undefined) {
+      query += ` AND m.created_at ${compare} ?`;
+      params.push(createdAt);
+    }
+    query += ` ORDER BY m.created_at ${order}, m.rowid ${order} LIMIT ?`;
+    params.push(count);
+    const rows = (db.prepare(query).all(...params) as any[]).map(toMessage);
+    return direction === 'older' ? rows.reverse() : rows;
+  };
+
+  // Opening a search result or a pin shows the conversation around that message.
+  if (typeof around === 'string') {
+    const target = db.prepare('SELECT created_at FROM messages WHERE id = ? AND conversation_id = ?').get(around, id) as { created_at: number } | undefined;
+    if (!target) { res.status(404).json({ error: 'Message not found' }); return; }
+    const half = Math.floor(limit / 2);
+    res.json([...page('older', target.created_at, around, half), ...page('newer', target.created_at, around, limit - half, true)]);
+    return;
   }
+  if (after !== undefined) { res.json(page('newer', Number(after), afterId as string | undefined)); return; }
+  res.json(page('older', before === undefined ? undefined : Number(before), beforeId as string | undefined));
+});
 
-  query += ' ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?';
-  params.push(limit);
+router.get('/conversations/:id/pins', (req: AuthRequest, res: Response) => {
+  if (!isTextChannel(req.params.id)) { res.status(404).json({ error: 'Unknown channel' }); return; }
+  res.json(pinnedMessages(req.params.id as string));
+});
 
-  const result = (db.prepare(query).all(...params) as any[]).reverse().map(toMessage);
-
-  res.json(result);
+router.get('/search', (req: AuthRequest, res: Response) => {
+  const { q, channelId } = req.query;
+  if (typeof q !== 'string' || q.trim().length < 2 || q.length > 100) { res.status(400).json({ error: 'Invalid search' }); return; }
+  if (channelId !== undefined && !isTextChannel(channelId)) { res.status(404).json({ error: 'Unknown channel' }); return; }
+  res.json(searchMessages(q, typeof channelId === 'string' ? channelId : null));
 });
 
 router.post('/upload', rateLimit<AuthRequest>(20, 60_000, req => req.userId!), upload.single('file'), (req: AuthRequest, res: Response) => {

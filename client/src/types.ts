@@ -29,6 +29,7 @@ export interface Message {
   /** Length of a sound or video attachment, measured when it was recorded. */
   durationMs?: number | null;
   pinnedAt?: number | null;
+  reactions?: Reaction[];
   replyTo?: {
     id: string;
     content: string | null;
@@ -45,6 +46,27 @@ export interface Message {
     displayName: string;
     avatarColor: string;
   };
+}
+
+export interface Reaction {
+  emoji: string;
+  userIds: string[];
+}
+
+/** Everyone who has joined the server, online or not. */
+export interface Member {
+  id: string;
+  displayName: string;
+  avatarColor: string;
+  lastSeen?: number;
+}
+
+/** How much of a text channel someone has read. */
+export interface ReadState {
+  channelId: string;
+  lastReadSeq: number;
+  unread: number;
+  mentions: number;
 }
 
 export interface Conversation {

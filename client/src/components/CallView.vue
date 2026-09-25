@@ -5,13 +5,13 @@ import {
   Users, Video, VideoOff, Volume1, Volume2, VolumeX, X,
 } from 'lucide-vue-next';
 import {
-  DisconnectReason, Room, RoomEvent, Track, VideoPresets, type Participant, type RemoteAudioTrack, type RemoteParticipant,
+  DisconnectReason, Room, RoomEvent, Track, VideoPresets, type AudioCaptureOptions, type Participant, type RemoteAudioTrack, type RemoteParticipant,
   type RemoteTrack, type RemoteTrackPublication, type VideoTrack,
 } from 'livekit-client';
 import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
-import { warmVoice } from '../warmVoice';
+import { cleanVoice, prepareCleanVoice } from '../cleanVoice';
 import {
   onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
 } from '../nativeScreenShare';
@@ -308,10 +308,11 @@ function onMixerStateChange() {
   if (!disposed && audioContext) audioBlocked.value = audioContext.state !== 'running';
 }
 // Made as the call opens, still within the tap on the voice channel, which is when an iPhone is
-// most likely to let it start without asking for another tap.
+// most likely to let it start without asking for another tap. It runs at 48 kHz, the only rate the
+// noise filter on the microphone understands, since that filter runs in the same mixer.
 function createMixer() {
   if (!webAudioVolume) return;
-  try { audioContext = new AudioContext({ latencyHint: 'interactive' }); } catch { return; }
+  try { audioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: 48_000 }); } catch { return; }
   audioContext.addEventListener('statechange', onMixerStateChange);
   resumeMixer();
 }
@@ -342,21 +343,33 @@ async function enableAudio() {
   // An iPhone only lets the mixer start from within the tap itself.
   resumeMixer();
   try { await room?.startAudio(); audioBlocked.value = false; soundOn.value = true; applySound(); } catch { showToast(t('voicePlaybackBlocked')); return; }
-  // The page's audio is running again, so a microphone that was sent as recorded can be warmed again.
-  await warmMicrophone();
+  // The page's audio is running again, so a microphone that was sent as recorded can be cleaned again.
+  await cleanMicrophone();
 }
-// Every voice sent from the website gets a warmer tone; if that is not possible, it goes out as recorded.
-async function warmMicrophone() {
+// Every voice sent from the website is cleaned of noise, warmed and made a little louder; if that is not
+// possible, it goes out as recorded.
+async function cleanMicrophone() {
   const microphone = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack;
   if (!microphone || microphone.getProcessor()) return;
-  try { await microphone.setProcessor(warmVoice()); } catch { /* Friends still hear the voice, just not warmed. */ }
+  const voice = cleanVoice();
+  try { await microphone.setProcessor(voice); } catch { /* Friends still hear the voice, just not cleaned. */ }
+  // The microphone was opened without the browser's own noise filter, because ours was going to
+  // replace it; if ours could not start after all, the browser's is brought back.
+  if (voice.denoising || microphone.mediaStreamTrack.getSettings().noiseSuppression !== false) return;
+  try { await microphone.restartTrack({ noiseSuppression: true, voiceIsolation: true }); } catch { /* It keeps the voice as it was. */ }
+}
+// Our noise filter replaces the browser's own: two filters in a row make voices sound watery. The
+// browser still takes out the echo of the call's own sound and evens out the level. This only
+// counts the first time, when the microphone is opened; later, turning it on just unmutes it.
+async function microphoneOptions(): Promise<AudioCaptureOptions | undefined> {
+  return await prepareCleanVoice() ? { noiseSuppression: false, voiceIsolation: false } : undefined;
 }
 async function setMicrophone(enabled: boolean) {
   if (!room) return;
   try {
     if (enabled && audioBlocked.value) await enableAudio();
-    await room.localParticipant.setMicrophoneEnabled(enabled);
-    if (enabled) await warmMicrophone();
+    await room.localParticipant.setMicrophoneEnabled(enabled, enabled ? await microphoneOptions() : undefined);
+    if (enabled) await cleanMicrophone();
     // The first time, the phone has only just been allowed to use the microphone.
     if (enabled) keepPhoneCallGoing();
   } catch {
@@ -543,6 +556,8 @@ onMounted(() => {
   clockTimer = setInterval(() => { now.value = Date.now(); }, 1000);
   void keepScreenOn();
   createMixer();
+  // Fetched while the call connects, so the microphone does not wait for it.
+  void prepareCleanVoice();
   void connect();
 });
 onBeforeUnmount(cleanup);

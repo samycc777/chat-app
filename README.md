@@ -14,6 +14,7 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
   - raise a hand and send reactions,
   - tap any tile to make it big, and tap it again to see everyone. A screen someone starts sharing is made big for everyone automatically,
   - turn the whole call down under More, or turn one person down with the slider under their name in Participants. This changes the sound only on their own device and is remembered.
+- **Clear voices.** Every microphone is cleaned before it reaches the others: a noise filter on the device (RNNoise) takes out fans, traffic and keyboards, the voice is made a little warmer without muffling letters such as س, ص, ث and ش, and a little louder. There is nothing to set.
 - **Keep talking while you read.** Like Discord, the call keeps going when you open a text channel. The "Voice connected" panel at the bottom of the channel list mutes you or hangs up.
 - **Make channels.** The + next to Text channels or Voice channels creates one. The gear next to a channel renames or deletes it. Deleting a text channel deletes its messages and files for everyone; the last text channel cannot be deleted.
 - **Settings.** The gear next to your name at the bottom changes the text size, dark or light theme and language, and signs you out.

@@ -36,6 +36,15 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Friends' messages and calls arrive through Firebase (see PushSetupPlugin.kt), shown in
+             this channel with this small icon. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="messages" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -60,6 +69,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- Voice calls keep playing the other people's voices while another app is on screen. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Android 13 and newer ask before an app may show notifications of friends' messages. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The camera is optional, so phones without one can still install the app. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

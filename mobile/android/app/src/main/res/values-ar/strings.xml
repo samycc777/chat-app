@@ -8,4 +8,5 @@
     <string name="call_title">أنت في مكالمة صوتية</string>
     <string name="call_text">يظل أصدقاؤك يسمعونك وأنت تستخدم تطبيقات أخرى.</string>
     <string name="call_leave">مغادرة المكالمة</string>
+    <string name="notification_channel">الرسائل والمكالمات</string>
 </resources>

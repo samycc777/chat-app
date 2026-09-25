@@ -108,7 +108,7 @@ function vapidAuthorization(endpoint: string) {
 
 // Browsers only hand out addresses at these push services. Accepting no others keeps anyone from
 // making the server send requests to addresses of their choosing.
-const PUSH_SERVICE_HOSTS = ['googleapis.com', 'push.services.mozilla.com', 'push.apple.com', 'notify.windows.com'];
+const PUSH_SERVICE_HOSTS = ['googleapis.com', 'google.com', 'push.services.mozilla.com', 'push.apple.com', 'notify.windows.com'];
 function validWebEndpoint(value: string) {
   let url: URL;
   try { url = new URL(value); } catch { return false; }

@@ -156,6 +156,8 @@ before(async () => {
   process.env.NODE_ENV = 'test';
   process.env.DATA_DIR = tempDir;
   process.env.JWT_SECRET = 'test-only-signing-secret-that-is-long-enough';
+  // The site's address signs its Web Push notifications.
+  process.env.ALLOWED_ORIGINS = 'https://majlis.test';
   await startFakeLiveKit();
   await startFakePushService();
   Object.assign(process.env, {
@@ -583,7 +585,8 @@ test('friends who are away are notified of messages, mentions and calls, as each
   const amalRequest = pushService.received.find(entry => entry.name === 'levels-amal');
   assert.equal(amalRequest.headers.topic.length, 32);
   assert.equal(amalRequest.headers.urgency, 'high');
-  assert.match(amalRequest.headers.authorization, /^vapid t=.+, k=.+/);
+  const [, vapidPass] = /^vapid t=([^,]+), k=.+/.exec(amalRequest.headers.authorization);
+  assert.equal(jwt.decode(vapidPass).sub, 'https://majlis.test');
 
   // A mention reaches Qasim, who only wants mentions, in the language his device uses.
   await emitWithAck(salmaSocket, 'send_message', { conversationId: general, content: `Lesson at five, <@${qasim.user.id}>`, type: 'text' });

@@ -78,7 +78,7 @@ app.use('/assets', express.static(path.join(clientDist, 'assets'), { immutable: 
 // The notification service worker must always be the newest one, and it caches nothing itself.
 app.get('/sw.js', (_req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
-  res.sendFile(path.join(clientDist, 'sw.js'), error => { if (error && !res.headersSent) res.status(404).end(); });
+  res.sendFile('sw.js', { root: clientDist }, error => { if (error && !res.headersSent) res.status(404).end(); });
 });
 app.use(express.static(clientDist));
 app.get('/{*path}', (_req, res) => {

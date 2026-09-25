@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { Download, ExternalLink, FileText, LoaderCircle, X } from 'lucide-vue-next';
+import { Download, ExternalLink, FileText, LoaderCircle, Play, X } from 'lucide-vue-next';
 import { api } from '../api';
 import { useI18n } from '../i18n';
 
@@ -54,6 +54,38 @@ onMounted(() => {
   observer.observe(root.value);
 });
 
+// A video, such as an hour-long lesson, plays straight from the server through a link with its own
+// pass, so it starts at once and can be skipped through without downloading all of it first.
+const streamUrl = ref('');
+const streamLoading = ref(false);
+const streamFailed = ref(false);
+async function playVideo() {
+  if (streamLoading.value) return;
+  streamLoading.value = true;
+  streamFailed.value = false;
+  try {
+    const link = await api.getStreamUrl(props.attachmentId);
+    if (live) streamUrl.value = link;
+  } catch {
+    streamFailed.value = true;
+  } finally {
+    streamLoading.value = false;
+  }
+}
+// The link's pass lasts a few hours, so a video left open longer than that asks for a new one.
+function onStreamError() {
+  streamUrl.value = '';
+  streamFailed.value = true;
+}
+const videoLength = computed(() => {
+  if (!props.durationMs) return '';
+  const seconds = Math.max(1, Math.round(props.durationMs / 1000));
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const hours = Math.floor(seconds / 3600);
+  const clock = `${hours ? pad(Math.floor(seconds / 60) % 60) : Math.floor(seconds / 60)}:${pad(seconds % 60)}`;
+  return hours ? `${hours}:${clock}` : clock;
+});
+
 function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') viewing.value = false; }
 watch(viewing, open => {
   if (open) document.addEventListener('keydown', closeOnEscape);
@@ -88,6 +120,19 @@ onBeforeUnmount(() => {
         </div>
       </Teleport>
     </template>
+    <div v-else-if="media === 'video'" class="message-video">
+      <video v-if="streamUrl" :src="streamUrl" controls autoplay playsinline preload="metadata" @error="onStreamError" />
+      <button v-else class="message-video-poster" type="button" :disabled="streamLoading" :aria-label="t('playVideo')" @click="playVideo">
+        <LoaderCircle v-if="streamLoading" class="spin" :size="30" aria-hidden="true" />
+        <span v-else class="message-video-play"><Play :size="26" aria-hidden="true" /></span>
+        <bdi v-if="videoLength" class="message-video-length">{{ videoLength }}</bdi>
+      </button>
+      <div class="message-video-bar">
+        <span class="message-file-name" dir="auto">{{ name }}</span>
+        <button v-if="streamFailed" class="message-file-action" type="button" @click="playVideo">{{ t('retry') }}</button>
+        <a v-else-if="streamUrl" class="message-file-action" :href="`${streamUrl}&download=1`" :download="name">{{ t('save') }}<Download :size="14" /></a>
+      </div>
+    </div>
     <div v-else-if="media && url" class="message-media">
       <audio v-if="media === 'audio'" :src="url" controls autoplay />
       <video v-else :src="url" controls autoplay playsinline />
@@ -119,6 +164,62 @@ onBeforeUnmount(() => {
   max-height: 360px;
   border-radius: 11px;
   background: #000000;
+}
+
+.message-video {
+  width: min(480px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message-video video,
+.message-video-poster {
+  width: 100%;
+  max-height: 360px;
+  aspect-ratio: 16 / 9;
+  border-radius: 11px;
+  background: #000000;
+}
+
+.message-video-poster {
+  position: relative;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+}
+
+.message-video-play {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  /* The triangle points right in both languages, so it is nudged right to look centred. */
+  padding-left: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.message-video-poster:hover .message-video-play {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.message-video-length {
+  position: absolute;
+  bottom: 8px;
+  inset-inline-end: 8px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.message-video-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .message-image-button {

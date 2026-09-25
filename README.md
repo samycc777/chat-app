@@ -20,12 +20,13 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
 - **Clear voices.** Every microphone is cleaned before it reaches the others: a noise filter on the device (RNNoise) takes out fans, traffic and keyboards, the voice is made a little warmer without muffling letters such as س, ص, ث and ش, and a little louder. There is nothing to set.
 - **Keep talking while you read.** Like Discord, the call keeps going when you open a text channel. The "Voice connected" panel at the bottom of the channel list mutes you or hangs up.
 - **Make channels.** The + next to Text channels or Voice channels creates one. The gear next to a channel renames or deletes it. Deleting a text channel deletes its messages and files for everyone; the last text channel cannot be deleted.
-- **Settings.** The gear next to your name at the bottom changes the text size, dark or light theme and language, and signs you out.
+- **Notifications.** When the app is not in front of you, your phone or computer tells you about new messages ("Salma in #general"), about messages that mention you or @everyone ("Salma mentioned you in #general"), and when someone starts a call in an empty voice channel ("Salma started a call in 🔊 Lesson", at most once every 5 minutes per channel). Photos, voice messages, videos and files are described in words. Notifications of the same channel replace each other instead of piling up, and tapping one opens that channel. Nobody is notified about their own messages, and nothing arrives while you are looking at the app. The first time, a small card asks "Get a notification when friends write or start a call?"; **Turn on** asks the device for permission, and **Not now** is remembered on that device. The app has no sound of its own: the phone's usual notification behaviour applies. It works in browsers on computers and Android, on iPhone once the site is added to the Home Screen (iOS 16.4 and newer), and in the phone apps once they are set up (see below). Signing out stops notifications on that device.
+- **Settings.** The gear next to your name at the bottom changes the text size, dark or light theme and language, chooses your notifications (**Everything**, **Only mentions and calls**, or **Off**, for all your devices), turns notifications on for this device or explains why it can't, and signs you out.
 - **Phones.** On a phone the channel list slides in from the ☰ button. Screens stay awake during a call, and the app reconnects by itself after a network drop. In the Android app, a call keeps going while you use another app: a "You are in a voice call" notification stays while you're in a call, with a Leave call button. If someone's camera or shared screen is showing when you leave the app, the call shrinks into a small window on top of your other apps, as in a WhatsApp video call: it shows the shared screen, or else whoever spoke last with their camera on. Tap it to go back to the call, or close it with its ✕ to keep only the sound. There is no small window while you share your own screen, because it would show up in what you share. In a phone browser, the sound may stop while you're in another app and comes back by itself when you return; if it ever stays silent, tap the speaker button at the top of the call.
 
 ## A message you can send to your friends
 
-> Here is our server: `<invite link>`. Open it and type your name. On iPhone, install the TestFlight invite I send you, or open the link in Safari and choose Share → Add to Home Screen. On Android, install the APK I send you. Tap a 🔊 voice channel to join the call.
+> Here is our server: `<invite link>`. Open it and type your name. On iPhone, install the TestFlight invite I send you, or open the link in Safari and choose Share → Add to Home Screen. On Android, install the APK I send you. Tap a 🔊 voice channel to join the call. When the app asks about notifications, tap Turn on to hear when we write or start a call.
 
 ## Setting up the server
 
@@ -41,6 +42,12 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
 | `SERVER_NAME` | no | Name shown at the top of the channel list, on the join screen, in the browser tab and under the home-screen icon. |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | for calls | Credentials of a LiveKit Cloud project. Without them the text channels work but calls cannot start. |
 | `MAX_UPLOAD_BYTES` | no | Largest upload in bytes; 100 MB by default. |
+| `FCM_SERVICE_ACCOUNT` | for Android app notifications | The Firebase service account JSON file, pasted whole or in base64 (see below). |
+| `APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID` | for iPhone app notifications | Apple's push key: the `.p8` file's contents (or base64), its Key ID, and your Team ID (see below). |
+| `APNS_BUNDLE_ID` | no | The iPhone app's bundle ID; `com.samycc777.majlis` by default. |
+| `APNS_PRODUCTION` | no | Set to `false` only for an iPhone app run straight from Xcode; TestFlight and App Store apps use Apple's normal service. |
+
+Browser notifications need no configuration: the server makes its own Web Push keys the first time and keeps them in the database. They are signed with the first `https://` address in `ALLOWED_ORIGINS`.
 
 In production the server refuses to start if a required variable is missing or too short. After ten wrong invite keys in a minute, a network address must wait a minute before trying again.
 
@@ -55,9 +62,30 @@ In production the server refuses to start if a required variable is missing or t
 
 The app keeps its database and uploads on the one volume, so it must run as a single instance. Who is online and who is in each call are held in memory, so a restart disconnects every call; everyone rejoins by tapping the voice channel again. Back up the volume if the chat history matters to you.
 
+### Setting up notifications for the phone apps
+
+Browsers get notifications straight away. The phone apps need two one-time setups, because Google and Apple only deliver notifications to apps whose owner has a key. Until then, the apps work normally and Settings says notifications aren't set up yet.
+
+**Android (Firebase, free):**
+
+1. Go to <https://console.firebase.google.com>, **Create a project** (any name, e.g. "Majlis"; Google Analytics can be off).
+2. In the project, click the Android icon to **add an Android app** with the package name `com.samycc777.majlis`. Download `google-services.json` and put it in `mobile/android/app/`. Skip the other steps Firebase suggests; they are already done.
+3. **Project settings → Service accounts → Generate new private key**. This downloads a JSON file. Keep it secret: it lets anyone send notifications as your app.
+4. On Railway, add the variable `FCM_SERVICE_ACCOUNT` and paste the whole content of that file (or its base64, from `base64 -i file.json`).
+5. Build a new Android app (`google-services.json` is read at build time) and send it out through Google Play as usual.
+
+**iPhone (needs the paid Apple developer account):**
+
+1. At <https://developer.apple.com/account/resources/authkeys/list>, click **+**, name the key "Majlis push", tick **Apple Push Notifications service (APNs)**, continue and **Download** the `.p8` file. Apple lets you download it only once, so keep it safe.
+2. Note the **Key ID** shown for the key, and your **Team ID** (top right of the developer site, or under Membership).
+3. On Railway, set `APNS_KEY` to the content of the `.p8` file (or its base64), `APNS_KEY_ID` to the Key ID and `APNS_TEAM_ID` to the Team ID.
+4. In Xcode, the App target's **Signing & Capabilities** already lists Push Notifications; archive and upload a new TestFlight build as usual.
+
+The server turns each route on by itself once its variables are set; redeploy (outside call times) after adding them.
+
 ### Privacy
 
-Uploaded files are only served to signed-in members, and their contents are checked to be real images or PDFs. Call audio and video pass through LiveKit Cloud, encrypted in transit; LiveKit's end-to-end encryption is turned off. Nothing is recorded. Deleting a message removes its text and file from the server.
+Uploaded files are only served to signed-in members, and their contents are checked to be real images or PDFs. Call audio and video pass through LiveKit Cloud, encrypted in transit; LiveKit's end-to-end encryption is turned off. Nothing is recorded. Deleting a message removes its text and file from the server. For notifications, the server keeps each device's notification address (from the browser, Google or Apple) until the person signs out or the service says it is no longer valid; a notification's text passes through the browser's push service (encrypted), or through Google's or Apple's service for the phone apps.
 
 ## Development
 

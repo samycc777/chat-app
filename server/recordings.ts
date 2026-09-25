@@ -3,12 +3,13 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuid } from 'uuid';
 import db from './database';
-import { AuthRequest } from './auth';
+import { AuthRequest, cleanDisplayName } from './auth';
 import { detectMime } from './attachments';
 import { getChannel, isTextChannel, listChannels } from './channels';
 import { maxRecordingBytes, UPLOADS_DIR } from './config';
 import { messageById } from './messages';
 import { allCalls, getCall } from './voice';
+import { indexWebm } from './webm';
 
 // A call is recorded in the browser of whoever pressed Record (LiveKit's own recording stays off),
 // and uploaded in pieces while it is made, so a browser that crashes loses at most the last piece.
@@ -36,14 +37,14 @@ export function connectRecordings(next: Hooks) {
   // Recordings left unfinished by a server restart are picked up here: those already quiet for long
   // enough are posted now, and the rest once they have been quiet for as long, unless their
   // recorder carries on uploading.
-  sweepIdleRecordings();
+  void sweepIdleRecordings();
   clearInterval(sweepTimer);
-  sweepTimer = setInterval(() => sweepIdleRecordings(), SWEEP_EVERY_MS);
+  sweepTimer = setInterval(() => void sweepIdleRecordings(), SWEEP_EVERY_MS);
   sweepTimer.unref();
 }
 
 const recordingQuery = db.prepare('SELECT * FROM recordings WHERE id = ?');
-const findRecording = (id: unknown) => (typeof id === 'string' ? recordingQuery.get(id) as RecordingRow | undefined : undefined);
+const findRecording = (id: unknown) => (typeof id === 'string' && !finishing.has(id) ? recordingQuery.get(id) as RecordingRow | undefined : undefined);
 const diskPath = (recording: RecordingRow) => path.join(UPLOADS_DIR, recording.disk_name);
 
 /** Takes the red Recording badge off the call that shows this recording. */
@@ -59,25 +60,45 @@ function clearBadge(recordingId: string) {
 function fileNameFor(recording: RecordingRow, requested: unknown) {
   const extension = recording.mime_type === 'video/mp4' ? '.mp4' : '.webm';
   const cleaned = typeof requested === 'string'
-    ? path.basename(requested.replace(/[\\/]/g, '_')).replace(/[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/g, '').replace(/\.(webm|mp4)$/i, '').trim().slice(0, 170)
+    ? path.basename(cleanDisplayName(requested).replace(/[\\/]/g, '_')).replace(/\.(webm|mp4)$/i, '').trim().slice(0, 170)
     : '';
   const date = new Date(recording.started_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   return `${cleaned || `Recording of ${recording.channel_name} – ${date}`}${extension}`;
 }
 
-function finish(recording: RecordingRow, textChannelId: string, durationMs: unknown, requestedName?: unknown) {
+// Posting takes a moment for a long recording, while its index is written; meanwhile nothing else
+// may change it, so it is never posted twice or deleted halfway.
+const finishing = new Set<string>();
+
+async function finish(recording: RecordingRow, textChannelId: string, durationMs: unknown, requestedName?: unknown) {
   const measured = Number(durationMs);
   const duration = Number.isSafeInteger(measured) && measured > 0 && measured <= MAX_DURATION_MS
     ? measured
     : Math.min(MAX_DURATION_MS, Math.max(1, recording.updated_at - recording.started_at));
   const name = fileNameFor(recording, requestedName);
+  finishing.add(recording.id);
+  try {
+    if (recording.mime_type === 'video/webm') {
+      // A recording without its index still plays, so a failure here only costs skipping ahead.
+      try { await indexWebm(diskPath(recording), duration); } catch (cause) {
+        console.error('Could not index a recording:', (cause as Error)?.message || 'unknown error');
+      }
+    }
+    return post(recording, textChannelId, duration, name);
+  } finally {
+    finishing.delete(recording.id);
+  }
+}
+
+function post(recording: RecordingRow, textChannelId: string, duration: number, name: string) {
+  const size = fs.statSync(diskPath(recording)).size;
   const attachmentId = uuid();
   const messageId = uuid();
   const now = Date.now();
   // Posted like any file shared in the chat, from the person who recorded it.
   db.transaction(() => {
     db.prepare('INSERT INTO attachments (id, conversation_id, uploader_id, disk_name, original_name, mime_type, size, created_at, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(attachmentId, textChannelId, recording.user_id, recording.disk_name, name, recording.mime_type, recording.size, now, duration);
+      .run(attachmentId, textChannelId, recording.user_id, recording.disk_name, name, recording.mime_type, size, now, duration);
     db.prepare(`
       INSERT INTO messages (id, conversation_id, sender_id, content, type, file_url, file_name, reply_to, created_at, attachment_id)
       VALUES (?, ?, ?, ?, 'file', NULL, ?, NULL, ?, ?)
@@ -97,12 +118,13 @@ function discard(recording: RecordingRow) {
 }
 
 /** Posts every recording that has been quiet too long into the first text channel. */
-export function sweepIdleRecordings(now = Date.now()) {
+export async function sweepIdleRecordings(now = Date.now()) {
   const idle = db.prepare('SELECT * FROM recordings WHERE updated_at <= ?').all(now - IDLE_RECORDING_MS) as RecordingRow[];
   for (const recording of idle) {
+    if (finishing.has(recording.id)) continue;
     const firstText = listChannels().find(channel => channel.kind === 'text');
     try {
-      if (recording.size > 0 && recording.mime_type && firstText) finish(recording, firstText.id, null);
+      if (recording.size > 0 && recording.mime_type && firstText) await finish(recording, firstText.id, null);
       else discard(recording);
     } catch (cause) {
       console.error('Could not post a quiet recording:', (cause as Error)?.message || 'unknown error');
@@ -180,14 +202,14 @@ router.post('/:id/stop', (req: AuthRequest, res: Response) => {
   res.json({ ok: true });
 });
 
-router.post('/:id/finish', (req: AuthRequest, res: Response) => {
+router.post('/:id/finish', async (req: AuthRequest, res: Response) => {
   const recording = findRecording(req.params.id);
   if (!recording) { res.status(404).json({ error: 'Recording not found' }); return; }
   if (recording.user_id !== req.userId) { res.status(403).json({ error: 'Not your recording' }); return; }
   const textChannelId = req.body?.textChannelId;
   if (!isTextChannel(textChannelId)) { res.status(404).json({ error: 'Unknown channel' }); return; }
   if (!recording.size || !recording.mime_type) { res.status(400).json({ error: 'Empty recording' }); return; }
-  res.json(finish(recording, textChannelId, req.body?.durationMs, req.body?.name));
+  res.json(await finish(recording, textChannelId, req.body?.durationMs, req.body?.name));
 });
 
 router.delete('/:id', (req: AuthRequest, res: Response) => {

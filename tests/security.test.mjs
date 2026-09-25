@@ -260,6 +260,59 @@ test('anyone in a call can record it, everyone sees it, and it is posted as a vi
   await leaveCall(voice, teacherSocket, studentSocket);
 });
 
+// A tiny WebM laid out as a browser records it: no length, no index, clusters of unknown size.
+const ebmlElement = (id, body) => {
+  const size = Buffer.alloc(8);
+  size.writeBigUInt64BE(BigInt(body.length));
+  size[0] = 0x01;
+  return Buffer.concat([Buffer.from(id), size, body]);
+};
+function liveWebm() {
+  const unknownSize = Buffer.from([0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+  const cluster = (timecode, key) => Buffer.concat([
+    Buffer.from([0x1f, 0x43, 0xb6, 0x75]), unknownSize,
+    Buffer.from([0xe7, 0x82, timecode >> 8, timecode & 0xff]),
+    Buffer.from([0xa3, 0x88, 0x81, 0x00, 0x00, key ? 0x80 : 0x00, 1, 2, 3, 4]),
+  ]);
+  return Buffer.concat([
+    ebmlElement([0x1a, 0x45, 0xdf, 0xa3], Buffer.from([0x42, 0x82, 0x84, ...Buffer.from('webm')])),
+    Buffer.from([0x18, 0x53, 0x80, 0x67]), unknownSize,
+    ebmlElement([0x15, 0x49, 0xa9, 0x66], Buffer.from([0x2a, 0xd7, 0xb1, 0x83, 0x0f, 0x42, 0x40])),
+    ebmlElement([0x16, 0x54, 0xae, 0x6b], ebmlElement([0xae], Buffer.from([0xd7, 0x81, 0x01, 0x83, 0x81, 0x01]))),
+    cluster(0, true), cluster(4000, false), cluster(8000, true),
+  ]);
+}
+
+test('a posted recording is given its length and an index of its keyframes, so it can be skipped through', async () => {
+  const voice = firstChannel('voice');
+  const recorder = await join('Indexed recorder');
+  const socket = await connect(recorder.token);
+  await emitWithAck(socket, 'voice_join', { channelId: voice });
+  const { id } = await (await recordingApi(recorder.token, '', 'POST', { voiceChannelId: voice })).json();
+  const webm = liveWebm();
+  assert.equal((await sendPiece(recorder.token, id, 0, webm.subarray(0, 60))).status, 200);
+  assert.equal((await sendPiece(recorder.token, id, 1, webm.subarray(60))).status, 200);
+  const { attachmentId } = await (await recordingApi(recorder.token, `/${id}/finish`, 'POST', { textChannelId: firstChannel('text'), durationMs: 9000 })).json();
+  const file = Buffer.from(await (await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth(recorder.token) })).arrayBuffer());
+
+  // The segment now has a size, the length is 9 seconds, and the index points at the two
+  // clusters that start with a keyframe.
+  const segment = file.indexOf(Buffer.from([0x18, 0x53, 0x80, 0x67]));
+  const segmentData = segment + 12;
+  assert.equal(Number(file.readBigUInt64BE(segment + 4) & 0x00ffffffffffffffn), file.length - segmentData);
+  const duration = file.indexOf(Buffer.from([0x44, 0x89, 0x88]));
+  assert.equal(file.readDoubleBE(duration + 3), 9000);
+  const cues = [];
+  for (let at = file.indexOf(Buffer.from([0xbb, 0x99])); at !== -1; at = file.indexOf(Buffer.from([0xbb, 0x99]), at + 1)) {
+    cues.push({ time: Number(file.readBigUInt64BE(at + 4)), position: Number(file.readBigUInt64BE(at + 19)) });
+  }
+  assert.deepEqual(cues.map(cue => cue.time), [0, 8000]);
+  for (const cue of cues) assert.deepEqual([...file.subarray(segmentData + cue.position, segmentData + cue.position + 4)], [0x1f, 0x43, 0xb6, 0x75]);
+  // Every picture is still there.
+  assert.equal(file.subarray(segmentData).toString('latin1').split('\x01\x02\x03\x04').length - 1, 3);
+  await leaveCall(voice, socket);
+});
+
 test('a recording ends when its recorder leaves, and can be discarded or posted for them once it goes quiet', async () => {
   const voice = firstChannel('voice');
   const general = firstChannel('text');

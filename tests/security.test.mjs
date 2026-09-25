@@ -2,8 +2,10 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import http2 from 'node:http2';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +44,57 @@ async function withoutLiveKit(run) {
   for (const key of Object.keys(saved)) delete process.env[key];
   try { return await run(); } finally { Object.assign(process.env, saved); }
 }
+// Stands in for a browser's push service: keeps every notification sent to each subscription,
+// decrypted the way the browser would, and answers 410 Gone for subscriptions that have ended.
+const pushService = { server: null, received: [], gone: new Set() };
+function startFakePushService() {
+  pushService.server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      const name = req.url.split('/').pop();
+      pushService.received.push({ name, headers: req.headers, body: Buffer.concat(chunks) });
+      res.statusCode = pushService.gone.has(name) ? 410 : 201;
+      res.end();
+    });
+  });
+  return new Promise(resolve => pushService.server.listen(0, '127.0.0.1', resolve));
+}
+// A browser's side of a subscription: its own P-256 key pair and a shared secret.
+function browserSubscription(name) {
+  const ecdh = crypto.createECDH('prime256v1');
+  ecdh.generateKeys();
+  const auth = crypto.randomBytes(16);
+  const endpoint = `http://127.0.0.1:${pushService.server.address().port}/push/${name}`;
+  return { ecdh, auth, endpoint, keys: { p256dh: ecdh.getPublicKey().toString('base64url'), auth: auth.toString('base64url') } };
+}
+// Decrypts an aes128gcm Web Push message (RFC 8291) with the browser's keys.
+function decryptPush(subscription, body) {
+  const salt = body.subarray(0, 16);
+  const idLength = body[20];
+  const serverKey = body.subarray(21, 21 + idLength);
+  const cipherText = body.subarray(21 + idLength);
+  const hkdf = (ikm, hkdfSalt, info, length) => Buffer.from(crypto.hkdfSync('sha256', ikm, hkdfSalt, info, length));
+  const shared = subscription.ecdh.computeSecret(serverKey);
+  const keyInfo = Buffer.concat([Buffer.from('WebPush: info\0'), subscription.ecdh.getPublicKey(), serverKey]);
+  const ikm = hkdf(shared, subscription.auth, keyInfo, 32);
+  const key = hkdf(ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0'), 16);
+  const nonce = hkdf(ikm, salt, Buffer.from('Content-Encoding: nonce\0'), 12);
+  const decipher = crypto.createDecipheriv('aes-128-gcm', key, nonce);
+  decipher.setAuthTag(cipherText.subarray(-16));
+  const padded = Buffer.concat([decipher.update(cipherText.subarray(0, -16)), decipher.final()]);
+  return JSON.parse(padded.subarray(0, padded.lastIndexOf(2)).toString('utf8'));
+}
+const pushesTo = subscription => pushService.received
+  .filter(entry => entry.name === subscription.endpoint.split('/').pop())
+  .map(entry => decryptPush(subscription, entry.body));
+async function subscribe(token, subscription, extra = {}) {
+  return fetch(`${baseUrl}/api/push/subscribe`, {
+    method: 'POST', headers: jsonAuth(token), body: JSON.stringify({ kind: 'web', endpoint: subscription.endpoint, keys: subscription.keys, ...extra }),
+  });
+}
+const setLevel = (token, level) => fetch(`${baseUrl}/api/push/level`, { method: 'PUT', headers: jsonAuth(token), body: JSON.stringify({ level }) });
+
 async function eventually(check, timeoutMs = 2000) {
   const deadline = Date.now() + timeoutMs;
   while (!(await check())) {
@@ -104,6 +157,7 @@ before(async () => {
   process.env.DATA_DIR = tempDir;
   process.env.JWT_SECRET = 'test-only-signing-secret-that-is-long-enough';
   await startFakeLiveKit();
+  await startFakePushService();
   Object.assign(process.env, {
     LIVEKIT_URL: `ws://127.0.0.1:${liveKit.server.address().port}`, LIVEKIT_API_KEY: 'test-key', LIVEKIT_API_SECRET: 'test-secret',
   });
@@ -118,6 +172,7 @@ after(async () => {
   for (const socket of sockets) socket.disconnect();
   if (appServer?.listening) await new Promise(resolve => appServer.close(resolve));
   if (liveKit.server?.listening) await new Promise(resolve => liveKit.server.close(resolve));
+  if (pushService.server?.listening) await new Promise(resolve => pushService.server.close(resolve));
   db?.close();
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
 });
@@ -497,6 +552,215 @@ test('upload configuration requires authentication and reports the configured de
   const response = await fetch(`${baseUrl}/api/upload-config`, { headers: { Authorization: `Bearer ${user.token}` } });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).maxUploadBytes, 100 * 1024 * 1024);
+});
+
+test('friends who are away are notified of messages, mentions and calls, as each of them chose', async () => {
+  const general = firstChannel('text');
+  const [salma, amal, hind, qasim, omar] = await Promise.all(['Salma', 'Away Amal', 'Here Hind', 'Quiet Qasim', 'Off Omar'].map(name => join(name)));
+  const subs = Object.fromEntries(['salma', 'amal', 'hind', 'qasim', 'omar'].map(name => [name, browserSubscription(`levels-${name}`)]));
+  for (const [person, name] of [[salma, 'salma'], [amal, 'amal'], [hind, 'hind'], [omar, 'omar']]) assert.equal((await subscribe(person.token, subs[name])).status, 200);
+  assert.equal((await subscribe(qasim.token, subs.qasim, { lang: 'ar' })).status, 200);
+
+  // Everyone starts with every notification; the choice is kept per person.
+  const me = token => fetch(`${baseUrl}/api/me`, { headers: auth(token) }).then(response => response.json());
+  assert.equal((await me(qasim.token)).notifyLevel, 'all');
+  assert.equal((await setLevel(qasim.token, 'mentions')).status, 200);
+  assert.equal((await setLevel(omar.token, 'off')).status, 200);
+  assert.equal((await setLevel(omar.token, 'loud')).status, 400);
+  assert.equal((await me(qasim.token)).notifyLevel, 'mentions');
+
+  // Hind has the app in front of her, so she sees messages there instead.
+  const hindSocket = await connect(hind.token);
+  assert.deepEqual(await emitWithAck(hindSocket, 'app_active', { active: true }), { ok: true });
+  const salmaSocket = await connect(salma.token);
+
+  await emitWithAck(salmaSocket, 'send_message', { conversationId: general, content: 'Hello   friends', type: 'text' });
+  assert.ok(await eventually(() => pushesTo(subs.amal).length === 1));
+  assert.deepEqual(pushesTo(subs.amal)[0], {
+    title: 'Salma in #general', body: 'Hello friends', tag: `channel-${general}`, channelId: general, url: `/?channel=${general}`,
+  });
+  // Notifications of one channel share a topic, so a phone that was offline gets only the latest.
+  const amalRequest = pushService.received.find(entry => entry.name === 'levels-amal');
+  assert.equal(amalRequest.headers.topic.length, 32);
+  assert.equal(amalRequest.headers.urgency, 'high');
+  assert.match(amalRequest.headers.authorization, /^vapid t=.+, k=.+/);
+
+  // A mention reaches Qasim, who only wants mentions, in the language his device uses.
+  await emitWithAck(salmaSocket, 'send_message', { conversationId: general, content: `Lesson at five, <@${qasim.user.id}>`, type: 'text' });
+  assert.ok(await eventually(() => pushesTo(subs.qasim).length === 1 && pushesTo(subs.amal).length === 2));
+  assert.deepEqual([pushesTo(subs.qasim)[0].title, pushesTo(subs.qasim)[0].body], ['Salma ذكرك في #general', 'Lesson at five, @Quiet Qasim']);
+  assert.equal(pushesTo(subs.amal)[1].title, 'Salma in #general');
+
+  // Hind looks away from the app, and @everyone now reaches her too.
+  await emitWithAck(hindSocket, 'app_active', { active: false });
+  await emitWithAck(salmaSocket, 'send_message', { conversationId: general, content: '@everyone class is starting', type: 'text' });
+  assert.ok(await eventually(() => pushesTo(subs.hind).length === 1 && pushesTo(subs.qasim).length === 2));
+  assert.equal(pushesTo(subs.hind)[0].title, 'Salma mentioned you in #general');
+
+  // Starting a call tells those who want calls, once, however often people hop in and out.
+  const lesson = (await emitWithAck(salmaSocket, 'create_channel', { name: 'Lesson', kind: 'voice' })).channel;
+  await emitWithAck(salmaSocket, 'voice_join', { channelId: lesson.id });
+  assert.ok(await eventually(() => pushesTo(subs.qasim).length === 3 && pushesTo(subs.amal).length === 4));
+  assert.deepEqual(pushesTo(subs.amal)[3], {
+    title: 'Salma started a call in 🔊 Lesson', body: '', tag: `channel-${lesson.id}`, channelId: lesson.id, url: `/?channel=${lesson.id}`,
+  });
+  salmaSocket.emit('voice_leave');
+  await emitWithAck(salmaSocket, 'voice_join', { channelId: lesson.id });
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.equal(pushesTo(subs.amal).length, 4);
+
+  // The sender and the person who turned notifications off were never notified.
+  assert.equal(pushesTo(subs.salma).length, 0);
+  assert.equal(pushesTo(subs.omar).length, 0);
+  salmaSocket.emit('voice_leave');
+});
+
+test('photos, voice messages, videos and files are described in notifications', async () => {
+  const general = firstChannel('text');
+  const [yusuf, zaid] = await Promise.all([join('Yusuf'), join('Zaid')]);
+  const zaidSub = browserSubscription('attachments-zaid');
+  await subscribe(zaid.token, zaidSub);
+  const socket = await connect(yusuf.token);
+  const send = async (bytes, type, name) => {
+    const form = new FormData();
+    form.append('conversationId', general);
+    form.append('file', new Blob([bytes], { type }), name);
+    const uploaded = await (await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth(yusuf.token), body: form })).json();
+    return emitWithAck(socket, 'send_message', { conversationId: general, type: uploaded.type, attachmentId: uploaded.attachmentId });
+  };
+  const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(60)]);
+  await send(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/F+4AAAAASUVORK5CYII=', 'base64'), 'image/png', 'tiny.png');
+  await send(webm, 'audio/webm', 'voice.webm');
+  await send(webm, 'video/webm', 'lesson.webm');
+  await send(Buffer.from('%PDF-1.7 homework'), 'application/pdf', 'Homework 3.pdf');
+  assert.ok(await eventually(() => pushesTo(zaidSub).length === 4));
+  assert.deepEqual(pushesTo(zaidSub).map(push => push.body), ['📷 Photo', '🎤 Voice message', '🎥 Video', 'Homework 3.pdf']);
+});
+
+test('a device the push service no longer knows is forgotten, and bad subscriptions are refused', async () => {
+  const general = firstChannel('text');
+  const [layla, musa] = await Promise.all([join('Layla'), join('Musa')]);
+  const gone = browserSubscription('gone-layla');
+  pushService.gone.add('gone-layla');
+  assert.equal((await subscribe(layla.token, gone)).status, 200);
+  const stored = endpoint => db.prepare('SELECT COUNT(*) AS n FROM push_subscriptions WHERE endpoint = ?').get(endpoint).n;
+  assert.equal(stored(gone.endpoint), 1);
+  const socket = await connect(musa.token);
+  await emitWithAck(socket, 'send_message', { conversationId: general, content: 'anyone there?', type: 'text' });
+  assert.ok(await eventually(() => stored(gone.endpoint) === 0));
+
+  const valid = browserSubscription('valid-layla');
+  const refused = async body => (await fetch(`${baseUrl}/api/push/subscribe`, { method: 'POST', headers: jsonAuth(layla.token), body: JSON.stringify(body) })).status;
+  assert.equal(await refused({ kind: 'sms', endpoint: valid.endpoint }), 400);
+  assert.equal(await refused({ kind: 'web', endpoint: 'https://example.com/steal', keys: valid.keys }), 400);
+  assert.equal(await refused({ kind: 'web', endpoint: 'http://fcm.googleapis.com/fcm/send/x', keys: valid.keys }), 400);
+  assert.equal(await refused({ kind: 'web', endpoint: valid.endpoint, keys: { p256dh: valid.keys.p256dh.slice(4), auth: valid.keys.auth } }), 400);
+  assert.equal(await refused({ kind: 'web', endpoint: valid.endpoint, keys: { p256dh: valid.keys.p256dh } }), 400);
+  assert.equal(await refused({ kind: 'web', endpoint: valid.endpoint.padEnd(3000, 'x'), keys: valid.keys }), 400);
+  assert.equal(await refused({ kind: 'fcm', endpoint: 'short' }), 400);
+  assert.equal(await refused({ kind: 'apns', endpoint: 'not-a-device-token-at-all' }), 400);
+  assert.equal((await fetch(`${baseUrl}/api/push/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+
+  // Signing out removes the device, but nobody can remove someone else's.
+  assert.equal((await subscribe(layla.token, valid)).status, 200);
+  const unsubscribe = token => fetch(`${baseUrl}/api/push/subscribe`, { method: 'DELETE', headers: jsonAuth(token), body: JSON.stringify({ endpoint: valid.endpoint }) });
+  await unsubscribe(musa.token);
+  assert.equal(stored(valid.endpoint), 1);
+  await unsubscribe(layla.token);
+  assert.equal(stored(valid.endpoint), 0);
+});
+
+test('the Android and iPhone apps are notified through Firebase and Apple once their keys are set', async () => {
+  const general = firstChannel('text');
+  const [nour, rami] = await Promise.all([join('Nour'), join('Rami')]);
+  const config = () => fetch(`${baseUrl}/api/push/config`, { headers: auth(nour.token) }).then(response => response.json());
+  const initial = await config();
+  assert.deepEqual([typeof initial.webPublicKey, initial.fcm, initial.apns], ['string', false, false]);
+
+  // Stand-ins for Google (its sign-in and Firebase) and for Apple's push service.
+  const google = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const apple = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const firebase = { messages: [], passes: 0 };
+  const googleServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      if (req.url === '/token') {
+        const claims = jwt.verify(new URLSearchParams(body).get('assertion'), google.publicKey, { algorithms: ['RS256'] });
+        if (claims.iss === 'push@majlis-test.iam.gserviceaccount.com') firebase.passes++;
+        return res.end(JSON.stringify({ access_token: 'firebase-access', expires_in: 3600 }));
+      }
+      const { message } = JSON.parse(body);
+      firebase.messages.push({ ...message, url: req.url, authorization: req.headers.authorization });
+      if (message.token.startsWith('uninstalled')) {
+        res.statusCode = 404;
+        return res.end(JSON.stringify({ error: { status: 'NOT_FOUND', details: [{ errorCode: 'UNREGISTERED' }] } }));
+      }
+      res.end('{"name":"sent"}');
+    });
+  });
+  const appleServer = http2.createServer();
+  const appleRequests = [];
+  appleServer.on('stream', (stream, headers) => {
+    let body = '';
+    stream.on('data', chunk => { body += chunk; });
+    stream.on('end', () => {
+      appleRequests.push({ headers, body: JSON.parse(body) });
+      const gone = headers[':path'].endsWith('dead');
+      stream.respond({ ':status': gone ? 410 : 200, 'content-type': 'application/json' });
+      stream.end(gone ? '{"reason":"Unregistered"}' : '');
+    });
+  });
+  await Promise.all([googleServer, appleServer].map(server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve))));
+  const saved = Object.fromEntries(['FCM_SERVICE_ACCOUNT', 'FCM_API_BASE', 'APNS_KEY', 'APNS_KEY_ID', 'APNS_TEAM_ID', 'APNS_HOST'].map(key => [key, process.env[key]]));
+  const googleBase = `http://127.0.0.1:${googleServer.address().port}`;
+  const account = {
+    project_id: 'majlis-test', client_email: 'push@majlis-test.iam.gserviceaccount.com', token_uri: `${googleBase}/token`,
+    private_key: google.privateKey.export({ type: 'pkcs8', format: 'pem' }),
+  };
+  Object.assign(process.env, {
+    // Base64 keeps the whole JSON file on one line, as a deployment variable wants.
+    FCM_SERVICE_ACCOUNT: Buffer.from(JSON.stringify(account)).toString('base64'), FCM_API_BASE: googleBase,
+    APNS_KEY: apple.privateKey.export({ type: 'pkcs8', format: 'pem' }).replace(/\n/g, '\\n'), APNS_KEY_ID: 'KEY1234567', APNS_TEAM_ID: 'TEAM123456',
+    APNS_HOST: `http://127.0.0.1:${appleServer.address().port}`,
+  });
+  try {
+    const configured = await config();
+    assert.deepEqual([configured.fcm, configured.apns], [true, true]);
+    const android = `phone-token:${'a'.repeat(140)}`;
+    const iphone = 'ab'.repeat(32);
+    const add = (kind, endpoint) => fetch(`${baseUrl}/api/push/subscribe`, { method: 'POST', headers: jsonAuth(rami.token), body: JSON.stringify({ kind, endpoint, lang: 'en' }) });
+    for (const [kind, endpoint] of [['fcm', android], ['fcm', `uninstalled:${'b'.repeat(140)}`], ['apns', iphone], ['apns', `${'cd'.repeat(30)}dead`]]) {
+      assert.equal((await add(kind, endpoint)).status, 200);
+    }
+    const socket = await connect(nour.token);
+    await emitWithAck(socket, 'send_message', { conversationId: general, content: 'On my way', type: 'text' });
+    const devices = () => db.prepare('SELECT endpoint FROM push_subscriptions WHERE user_id = ?').all(rami.user.id).map(row => row.endpoint).sort();
+    assert.ok(await eventually(() => firebase.messages.length === 2 && appleRequests.length === 2 && devices().length === 2));
+    // Uninstalled apps are forgotten.
+    assert.deepEqual(devices(), [iphone, android].sort());
+    assert.equal(firebase.passes, 1);
+
+    const toAndroid = firebase.messages.find(message => message.token === android);
+    assert.equal(toAndroid.url, '/v1/projects/majlis-test/messages:send');
+    assert.equal(toAndroid.authorization, 'Bearer firebase-access');
+    assert.deepEqual(toAndroid.notification, { title: 'Nour in #general', body: 'On my way' });
+    assert.deepEqual(toAndroid.data, { channelId: general });
+    assert.deepEqual(toAndroid.android.notification, { tag: `channel-${general}`, channel_id: 'messages' });
+
+    const toIphone = appleRequests.find(request => request.headers[':path'] === `/3/device/${iphone}`);
+    assert.equal(toIphone.headers['apns-topic'], 'com.samycc777.majlis');
+    assert.equal(toIphone.headers['apns-collapse-id'], `channel-${general}`);
+    const pass = jwt.verify(toIphone.headers.authorization.replace('bearer ', ''), apple.publicKey, { algorithms: ['ES256'], complete: true });
+    assert.deepEqual([pass.header.kid, pass.payload.iss], ['KEY1234567', 'TEAM123456']);
+    assert.deepEqual(toIphone.body, {
+      aps: { alert: { title: 'Nour in #general', body: 'On my way' }, sound: 'default', 'thread-id': general }, channelId: general,
+    });
+  } finally {
+    for (const [key, value] of Object.entries(saved)) value === undefined ? delete process.env[key] : process.env[key] = value;
+    await Promise.all([googleServer, appleServer].map(server => new Promise(resolve => server.close(resolve))));
+  }
 });
 
 // Runs last because it deliberately locks this test client's address out of joining.

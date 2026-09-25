@@ -96,6 +96,9 @@ router.post('/join', (req: Request, res: Response) => {
     const avatarColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
     db.prepare('INSERT INTO users (id, username, display_name, password_hash, avatar_color, visitor_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(id, username, displayName, 'disabled', avatarColor, visitorId, '');
+    // A newcomer starts with the history already read, so nothing old is marked new for them.
+    db.prepare(`INSERT OR IGNORE INTO channel_reads (user_id, channel_id, last_read_seq)
+      SELECT ?, c.id, (SELECT COALESCE(MAX(m.rowid), 0) FROM messages m WHERE m.conversation_id = c.id) FROM channels c WHERE c.kind = 'text'`).run(id);
     user = { id, username, display_name: displayName, avatar_color: avatarColor, status: '' };
   }
   // Friends open the app from their home screen for weeks, so a session lasts a month; changing

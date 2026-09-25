@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import {
   ALargeSmall, Hash, Languages, LogOut, Mic, MicOff, Moon, PhoneOff, Plus, Settings, Sun, Trash2, UserPlus, Volume2, X, Pencil,
 } from 'lucide-vue-next';
-import type { Channel, User, VoiceCall } from '../types';
+import type { Channel, ReadState, User, VoiceCall } from '../types';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import Avatar from './Avatar.vue';
@@ -18,6 +18,7 @@ const props = defineProps<{
   currentUser: User;
   theme: 'light' | 'dark';
   textSize: number;
+  reads: Map<string, ReadState>;
 }>();
 const emit = defineEmits<{
   select: [channel: Channel];
@@ -33,6 +34,9 @@ const SIZE_LABELS = ['textSizeSmall', 'textSizeMedium', 'textSizeLarge', 'textSi
 const textChannels = computed(() => props.channels.filter(channel => channel.kind === 'text'));
 const voiceChannels = computed(() => props.channels.filter(channel => channel.kind === 'voice'));
 const callChannel = computed(() => props.channels.find(channel => channel.id === props.callChannelId) ?? null);
+// Like Discord, a channel with new messages is shown brighter, and mentions of you are counted.
+const unreadIn = (channelId: string) => channelId !== props.currentChannelId && (props.reads.get(channelId)?.unread ?? 0) > 0;
+const mentionsIn = (channelId: string) => channelId === props.currentChannelId ? 0 : props.reads.get(channelId)?.mentions ?? 0;
 const membersOf = (channelId: string) => props.calls.find(call => call.channelId === channelId)?.members ?? [];
 
 // One small dialog serves creating, renaming and deleting channels, so there is only one pattern to learn.
@@ -113,9 +117,11 @@ onBeforeUnmount(() => { document.removeEventListener('keydown', closeOnEscape); 
           <span>{{ t('textChannels') }}</span>
           <button type="button" :title="t('addTextChannel')" :aria-label="t('addTextChannel')" @click="openDialog({ mode: 'create', kind: 'text' })"><Plus :size="16" /></button>
         </div>
-        <div v-for="channel in textChannels" :key="channel.id" class="channel-row" :class="{ active: channel.id === currentChannelId }">
+        <div v-for="channel in textChannels" :key="channel.id" class="channel-row" :class="{ active: channel.id === currentChannelId, unread: unreadIn(channel.id) }">
           <button class="channel-link" type="button" @click="emit('select', channel)">
             <Hash :size="18" class="channel-icon" /><bdi>{{ channel.name }}</bdi>
+            <span v-if="mentionsIn(channel.id)" class="mention-badge" :aria-label="t('mentionCount', { count: mentionsIn(channel.id) })">{{ mentionsIn(channel.id) }}</span>
+            <span v-else-if="unreadIn(channel.id)" class="visually-hidden">{{ t('newMessagesHere') }}</span>
           </button>
           <button class="channel-edit" type="button" :title="t('channelOptions')" :aria-label="`${t('channelOptions')}: ${channel.name}`" @click="openDialog({ mode: 'edit', channel })"><Settings :size="14" /></button>
         </div>
@@ -322,6 +328,50 @@ onBeforeUnmount(() => { document.removeEventListener('keydown', closeOnEscape); 
 .channel-row.active {
   color: var(--text-primary);
   background: var(--bg-active);
+}
+
+/* A white dot at the edge and brighter bold text, as in Discord, mark a channel with new messages. */
+.channel-row.unread {
+  position: relative;
+  color: var(--text-primary);
+}
+
+.channel-row.unread .channel-link {
+  font-weight: 700;
+}
+
+.channel-row.unread::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: -7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-primary);
+}
+
+.mention-badge {
+  min-width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  margin-inline-start: auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--danger);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .channel-row.joined .channel-icon {

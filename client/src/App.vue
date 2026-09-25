@@ -2,13 +2,15 @@
 import { computed, defineAsyncComponent, onMounted, ref, watch, watchEffect } from 'vue';
 import { LoaderCircle, Menu, Volume2, WifiOff } from 'lucide-vue-next';
 import type { Socket } from 'socket.io-client';
-import type { Channel, OnlineUser, User, VoiceCall } from './types';
+import type { Channel, Member, Message, OnlineUser, ReadState, User, VoiceCall } from './types';
 import { api, ApiError, session } from './api';
 import { connectSocket, disconnectSocket, getSocket } from './socket';
 import { useI18n } from './i18n';
 import Auth from './components/Auth.vue';
 import ChatView from './components/ChatView.vue';
 import MemberList from './components/MemberList.vue';
+import SearchPanel from './components/SearchPanel.vue';
+import { mentionsUser } from './mentions';
 import ServerSidebar from './components/ServerSidebar.vue';
 import RecordingDialog from './components/RecordingDialog.vue';
 
@@ -35,6 +37,13 @@ const restoring = ref(false);
 const restoreFailed = ref(false);
 const connection = ref<'connecting' | 'connected' | 'reconnecting'>('connecting');
 const onlineUsers = ref(new Map<string, OnlineUser>());
+// Everyone who has joined, for the member list and for mentions.
+const members = ref(new Map<string, Member>());
+const reads = ref(new Map<string, ReadState>());
+const searchOpen = ref(false);
+// A message to show in its channel, from search or the pinned list; the counter repeats a jump.
+const jump = ref<{ channelId: string; messageId: string; count: number } | null>(null);
+let jumps = 0;
 const channels = ref<Channel[]>([]);
 const calls = ref<VoiceCall[]>([]);
 const selectedId = ref<string | null>(stored('lastChannel'));
@@ -97,11 +106,23 @@ function listen(socket: Socket, user: User) {
   socket.on('presence_state', ({ users }: { users: OnlineUser[] }) => {
     onlineUsers.value = new Map(users.map(person => [person.id, person]));
   });
-  socket.on('presence', (data: { userId: string; online: boolean; user?: OnlineUser }) => {
+  socket.on('presence', (data: { userId: string; online: boolean; user?: OnlineUser; lastSeen?: number }) => {
     const next = new Map(onlineUsers.value);
     if (data.online && data.user) next.set(data.userId, data.user);
     else next.delete(data.userId);
     onlineUsers.value = next;
+    const known = new Map(members.value);
+    const member = data.user ?? known.get(data.userId);
+    if (member) known.set(data.userId, { ...known.get(data.userId), ...member, lastSeen: data.lastSeen ?? Date.now() });
+    members.value = known;
+  });
+  socket.on('members', ({ users }: { users: Member[] }) => {
+    members.value = new Map(users.map(member => [member.id, member]));
+  });
+  socket.on('read_state', ({ channels: list }: { channels: ReadState[] }) => {
+    const next = new Map(reads.value);
+    for (const state of list) next.set(state.channelId, state);
+    reads.value = next;
   });
   socket.on('channels', ({ channels: list }: { channels: Channel[] }) => {
     channels.value = list;
@@ -109,8 +130,15 @@ function listen(socket: Socket, user: User) {
     if (callChannelId.value && !list.some(channel => channel.id === callChannelId.value)) callChannelId.value = null;
   });
   socket.on('voice_state', ({ calls: list }: { calls: VoiceCall[] }) => { calls.value = list; });
-  socket.on('new_message', (message: { senderId: string }) => {
-    if (document.hidden && message.senderId !== user.id) unseen.value++;
+  socket.on('new_message', (message: Message) => {
+    if (message.senderId === user.id) return;
+    if (document.hidden) unseen.value++;
+    // The channel being read marks itself read; every other channel counts the message as new.
+    if (message.conversationId === selectedChannel.value?.id && !document.hidden) return;
+    const state = reads.value.get(message.conversationId) ?? { channelId: message.conversationId, lastReadSeq: 0, unread: 0, mentions: 0 };
+    reads.value = new Map(reads.value).set(message.conversationId, {
+      ...state, unread: state.unread + 1, mentions: state.mentions + Number(mentionsUser(message.content, user.id)),
+    });
   });
 }
 
@@ -145,6 +173,20 @@ onMounted(() => {
   void restoreSession();
 });
 
+const nameOf = (userId: string) => members.value.get(userId)?.displayName ?? onlineUsers.value.get(userId)?.displayName;
+
+// Search results and pins open their channel at that message.
+function openMessage(message: Message) {
+  const channel = channels.value.find(entry => entry.id === message.conversationId);
+  if (!channel) return;
+  jump.value = { channelId: channel.id, messageId: message.id, count: ++jumps };
+  select(channel);
+  if (window.innerWidth <= 768) searchOpen.value = false;
+}
+// Channels other than the open one with something new, shown as a dot on the phone's menu button.
+const unreadElsewhere = computed(() => [...reads.value.values()]
+  .some(state => state.unread > 0 && state.channelId !== selectedChannel.value?.id && channels.value.some(channel => channel.id === state.channelId)));
+
 // Opening a voice channel joins its call, as it does in Discord; opening a text channel keeps the
 // call going in the background.
 function select(channel: Channel) {
@@ -168,6 +210,7 @@ function leftCall() {
 function endSession() {
   disconnectSocket(); session.token = null; token.value = null;
   currentUser.value = null; callChannelId.value = null; channels.value = []; calls.value = [];
+  members.value = new Map(); reads.value = new Map(); searchOpen.value = false;
   onlineUsers.value = new Map(); connection.value = 'connecting'; restoreFailed.value = false;
 }
 function signOut() {
@@ -198,6 +241,7 @@ function signOut() {
       :current-user="currentUser"
       :theme="theme"
       :text-size="textSize"
+      :reads="reads"
       @select="select"
       @toggle-mic="callView?.toggleMicrophone()"
       @leave-call="callView?.leave()"
@@ -215,9 +259,17 @@ function signOut() {
         :channel="selectedChannel"
         :current-user="currentUser"
         :online-users="onlineUsers"
+        :members="members"
         :members-open="membersOpen"
+        :search-open="searchOpen"
+        :last-read-seq="reads.get(selectedChannel.id)?.lastReadSeq ?? null"
+        :unread-elsewhere="unreadElsewhere"
+        :jump="jump?.channelId === selectedChannel.id ? jump : null"
         @menu="sidebarOpen = true"
-        @members="membersOpen = !membersOpen"
+        @members="membersOpen = !membersOpen; searchOpen = false"
+        @search="searchOpen = !searchOpen; membersOpen = false"
+        @open-message="openMessage"
+        @jumped="jump = null"
       />
       <!-- The call stays mounted while text channels are read, so its sound carries on. -->
       <CallView
@@ -249,7 +301,8 @@ function signOut() {
         </div>
       </section>
     </div>
-    <MemberList v-if="membersOpen && selectedChannel?.kind === 'text'" :people="[...onlineUsers.values()]" :current-user-id="currentUser.id" />
+    <SearchPanel v-if="searchOpen && selectedChannel?.kind === 'text'" :channels="channels" :name-of="nameOf" @open="openMessage" @close="searchOpen = false" />
+    <MemberList v-else-if="membersOpen && selectedChannel?.kind === 'text'" :members="[...members.values()]" :online="onlineUsers" :current-user-id="currentUser.id" />
     <!-- Outside the call, because a recording is posted after its recorder has left the call. -->
     <RecordingDialog :channels="channels" />
   </main>

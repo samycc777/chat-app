@@ -181,6 +181,122 @@ test('sound and video can be shared, with their type and length, while other fil
   assert.equal(history.find(entry => entry.id === message.id).mimeType, 'audio/webm');
 });
 
+test('unread counts and mentions follow each person across devices, and newcomers start with nothing unread', async () => {
+  const general = firstChannel('text');
+  const writer = await join('Unread writer');
+  const reader = await join('Unread reader');
+  const writerSocket = await connect(writer.token);
+  const readerState = s => s.channels.find(channel => channel.channelId === general);
+  const phone = await connect(reader.token);
+  const laptopFirst = new Promise(resolve => {
+    const socket = io(baseUrl, { auth: { token: reader.token }, transports: ['websocket'] });
+    sockets.push(socket);
+    socket.once('read_state', state => resolve({ socket, state }));
+  });
+  const { socket: laptop, state: initial } = await laptopFirst;
+  assert.deepEqual([readerState(initial).unread, readerState(initial).mentions], [0, 0]);
+
+  await emitWithAck(writerSocket, 'send_message', { conversationId: general, content: 'first', type: 'text' });
+  await emitWithAck(writerSocket, 'send_message', { conversationId: general, content: `hi <@${reader.user.id}>`, type: 'text' });
+  const last = await emitWithAck(writerSocket, 'send_message', { conversationId: general, content: '@everyone class now', type: 'text' });
+  const fresh = new Promise(resolve => {
+    const socket = io(baseUrl, { auth: { token: reader.token }, transports: ['websocket'] });
+    sockets.push(socket);
+    socket.once('read_state', resolve);
+  });
+  const counted = readerState(await fresh);
+  assert.deepEqual([counted.unread, counted.mentions], [3, 2]);
+
+  // Reading on the phone clears the channel on the laptop too.
+  const seq = db.prepare('SELECT rowid AS seq FROM messages WHERE id = ?').get(last.id).seq;
+  const laptopHears = eventWhere(laptop, 'read_state', state => readerState(state)?.unread === 0);
+  phone.emit('mark_read', { channelId: general, seq });
+  const cleared = readerState(await laptopHears);
+  assert.deepEqual([cleared.unread, cleared.mentions, cleared.lastReadSeq], [0, 0, seq]);
+  // A read position can't go backwards or past the newest message.
+  phone.emit('mark_read', { channelId: general, seq: 1 });
+  phone.emit('mark_read', { channelId: general, seq: seq + 1000 });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(db.prepare('SELECT last_read_seq FROM channel_reads WHERE user_id = ? AND channel_id = ?').get(reader.user.id, general).last_read_seq, seq);
+
+  // Someone who joins later doesn't see the history as unread.
+  const newcomer = await join('Unread newcomer');
+  const newcomerState = await new Promise(resolve => {
+    const socket = io(baseUrl, { auth: { token: newcomer.token }, transports: ['websocket'] });
+    sockets.push(socket);
+    socket.once('read_state', resolve);
+  });
+  assert.equal(readerState(newcomerState).unread, 0);
+});
+
+test('everyone can react with the few allowed emoji and pin messages, and search ignores vowel marks', async () => {
+  const general = firstChannel('text');
+  const erin = await join('Erin');
+  const frank = await join('Frank');
+  const [erinSocket, frankSocket] = await Promise.all([connect(erin.token), connect(frank.token)]);
+  const sent = await emitWithAck(erinSocket, 'send_message', { conversationId: general, content: 'قَالَ رَسُولُ اللَّهِ ﷺ: إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ', type: 'text' });
+
+  const reacted = eventWhere(erinSocket, 'reactions', data => data.messageId === sent.id && data.reactions.length > 0);
+  frankSocket.emit('react', { messageId: sent.id, emoji: '🤲', on: true });
+  assert.deepEqual((await reacted).reactions, [{ emoji: '🤲', userIds: [frank.user.id] }]);
+  frankSocket.emit('react', { messageId: sent.id, emoji: '😂', on: true });
+  const removed = eventWhere(erinSocket, 'reactions', data => data.messageId === sent.id && data.reactions.length === 0);
+  frankSocket.emit('react', { messageId: sent.id, emoji: '🤲', on: false });
+  await removed;
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM message_reactions WHERE message_id = ?').get(sent.id).n, 0);
+
+  const pinned = eventWhere(erinSocket, 'message_pinned', data => data.messageId === sent.id);
+  assert.deepEqual(await emitWithAck(frankSocket, 'pin_message', { messageId: sent.id, pinned: true }), { ok: true });
+  assert.ok((await pinned).pinnedAt);
+  const pins = await (await fetch(`${baseUrl}/api/conversations/${general}/pins`, { headers: auth(erin.token) })).json();
+  assert.equal(pins[0].id, sent.id);
+  assert.deepEqual(await emitWithAck(frankSocket, 'pin_message', { messageId: 'nope', pinned: true }), { error: 'Invalid message' });
+
+  const search = async q => (await fetch(`${baseUrl}/api/search?q=${encodeURIComponent(q)}`, { headers: auth(erin.token) })).json();
+  assert.ok((await search('الاعمال بالنيات')).some(message => message.id === sent.id));
+  assert.equal((await search('nothing-like-this-anywhere')).length, 0);
+  assert.equal((await fetch(`${baseUrl}/api/search?q=a`, { headers: auth(erin.token) })).status, 400);
+  assert.equal((await fetch(`${baseUrl}/api/search?q=hello`, { headers: auth('invalid') })).status, 401);
+
+  // Deleting the message takes its pin with it.
+  erinSocket.emit('delete_message', { messageId: sent.id });
+  await nextEvent(frankSocket, 'message_deleted');
+  const after = await (await fetch(`${baseUrl}/api/conversations/${general}/pins`, { headers: auth(erin.token) })).json();
+  assert.ok(!after.some(message => message.id === sent.id));
+});
+
+test('history can be opened around an old message and read forwards from there', async () => {
+  const general = firstChannel('text');
+  const reader = await join('Around reader');
+  const insert = db.prepare("INSERT INTO messages (id, conversation_id, sender_id, content, type, created_at) VALUES (?, ?, ?, ?, 'text', ?)");
+  const ids = Array.from({ length: 30 }, (_, index) => `aaaaaaaa-0000-4000-9000-${String(index).padStart(12, '0')}`);
+  // Dated in the past so they stay out of other tests' latest page.
+  ids.forEach((id, index) => insert.run(id, general, reader.user.id, `old ${index}`, 915_148_800_000 + index));
+  const get = async query => (await fetch(`${baseUrl}/api/conversations/${general}/messages?${query}`, { headers: auth(reader.token) })).json();
+  const around = await get(`around=${ids[15]}&limit=10`);
+  assert.deepEqual(around.map(message => message.content), ['old 10', 'old 11', 'old 12', 'old 13', 'old 14', 'old 15', 'old 16', 'old 17', 'old 18', 'old 19']);
+  const later = await get(`after=${915_148_800_019}&afterId=${ids[19]}&limit=3`);
+  assert.deepEqual(later.map(message => message.content), ['old 20', 'old 21', 'old 22']);
+  assert.equal((await fetch(`${baseUrl}/api/conversations/${general}/messages?around=00000000-0000-4000-9000-999999999999`, { headers: auth(reader.token) })).status, 404);
+  assert.equal((await fetch(`${baseUrl}/api/conversations/${general}/messages?after=soon`, { headers: auth(reader.token) })).status, 400);
+});
+
+test('a connecting client learns every member with when they were last seen', async () => {
+  const gone = await join('Gone for now');
+  const goneSocket = await connect(gone.token);
+  goneSocket.disconnect();
+  const viewer = await join('Member viewer');
+  const heard = new Promise(resolve => {
+    const socket = io(baseUrl, { auth: { token: viewer.token }, transports: ['websocket'] });
+    sockets.push(socket);
+    socket.once('members', resolve);
+  });
+  const { users } = await heard;
+  const entry = users.find(user => user.id === gone.user.id);
+  assert.equal(entry.displayName, 'Gone for now');
+  assert.ok(entry.lastSeen > Date.now() - 60_000);
+});
+
 const recordingApi = (token, path, method = 'POST', body) => fetch(`${baseUrl}/api/recordings${path}`, {
   method, headers: jsonAuth(token), body: body === undefined ? undefined : JSON.stringify(body),
 });

@@ -219,6 +219,31 @@ if (!userColumnsNow.some(column => column.name === 'notify_level')) {
   db.exec("ALTER TABLE users ADD COLUMN notify_level TEXT NOT NULL DEFAULT 'all'");
 }
 
+// Unread markers arrived after people had been chatting for months. Everything already sent counts
+// as read, once, so nobody opens the app to thousands of old messages marked new.
+if (!db.prepare("SELECT 1 FROM app_settings WHERE key = 'reads_started'").get()) {
+  db.transaction(() => {
+    db.exec(`
+      INSERT OR IGNORE INTO channel_reads (user_id, channel_id, last_read_seq)
+      SELECT u.id, c.id, (SELECT COALESCE(MAX(m.rowid), 0) FROM messages m WHERE m.conversation_id = c.id)
+      FROM users u, channels c WHERE c.kind = 'text'
+    `);
+    db.prepare("INSERT INTO app_settings (key, value) VALUES ('reads_started', '1')").run();
+  })();
+}
+
+// Search ignores vowel marks, the stretching line and the different ways of writing alif, yaa and
+// taa marbuta, so كتاب finds كِتَابٌ.
+export function searchText(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.normalize('NFKC').toLowerCase()
+    .replace(/[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed\u0640]/g, '')
+    .replace(/[\u0622\u0623\u0625\u0671]/g, '\u0627')
+    .replace(/\u0649/g, '\u064a')
+    .replace(/\u0629/g, '\u0647');
+}
+db.function('search_text', { deterministic: true }, searchText);
+
 // A call recording is uploaded in pieces while it is made. Until its recorder posts it (or it is
 // posted for them after going quiet), it lives here; posting turns it into an attachment. The voice
 // channel is not a foreign key, because a recording outlives a channel deleted while it was made.

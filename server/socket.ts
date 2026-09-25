@@ -8,6 +8,7 @@ import { ChannelKind, cleanChannelName, createChannel, deleteChannel, getChannel
 import { addToCall, allCalls, callOf, endCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
 import { roomService } from './livekit';
 import { messageById } from './messages';
+import { registerChatEvents } from './chat';
 import { connectRecordings } from './recordings';
 
 const onlineUsers = new Map<string, Set<string>>();
@@ -110,6 +111,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     socket.emit('channels', { channels: listChannels() });
     socket.emit('voice_state', voiceState());
     socket.to(EVERYONE).emit('presence', { userId, online: true, user: me });
+    registerChatEvents(io, socket, userId);
 
     socket.on('send_message', (data, callback) => {
       if (!data || !isTextChannel(data.conversationId)) return callback?.({ error: 'Unknown channel' });

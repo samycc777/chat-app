@@ -13,33 +13,50 @@ import {
   Copy,
   Hash,
   Menu,
+  Mic,
   Users,
   MessageCircle,
   Paperclip,
   Pencil,
+  Pin,
+  PinOff,
   RefreshCw,
   Reply,
+  Search,
   Send,
+  ThumbsUp,
   Trash2,
   X,
 } from 'lucide-vue-next';
-import type { Channel, Message, OnlineUser, User } from '../types';
+import type { Channel, Member, Message, OnlineUser, Reaction, User } from '../types';
 import { api } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
+import { decodeMentions, encodeMentions, mentionsUser, messageParts, readableText } from '../mentions';
 import ArabicKeyboard from './ArabicKeyboard.vue';
 import Attachment from './Attachment.vue';
 import Avatar from './Avatar.vue';
+import VoiceNote from './VoiceNote.vue';
 
 const props = defineProps<{
   channel: Channel;
   currentUser: User;
   onlineUsers: Map<string, OnlineUser>;
+  members: Map<string, Member>;
   membersOpen: boolean;
+  searchOpen: boolean;
+  /** How far this person had read the channel, for the "new messages" line; null until known. */
+  lastReadSeq: number | null;
+  unreadElsewhere: boolean;
+  /** A message to show, from search or the pinned list. */
+  jump: { messageId: string; count: number } | null;
 }>();
 
-const emit = defineEmits<{ menu: []; members: [] }>();
+const emit = defineEmits<{ menu: []; members: []; search: []; 'open-message': [message: Message]; jumped: [] }>();
 const { t, lang, dateLocale, translateError } = useI18n();
+
+// The same short set as the server's, none with faces.
+const REACTIONS = ['👍', '❤️', '✅', '🤲', '👏', '🌟'];
 
 const messages = ref<Message[]>([]);
 const input = ref('');
@@ -58,8 +75,11 @@ const container = ref<HTMLElement | null>(null);
 const textarea = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const contextMenu = ref<{ x: number; y: number; message: Message } | null>(null);
+const reactionPicker = ref<{ x: number; y: number; message: Message } | null>(null);
 const arabicKeyboard = ref(localStorage.getItem('arabic-keyboard') === '1');
 watch(arabicKeyboard, (open) => localStorage.setItem('arabic-keyboard', open ? '1' : '0'));
+
+const nameOf = (userId: string) => props.members.get(userId)?.displayName ?? props.onlineUsers.get(userId)?.displayName;
 
 // Mostly-Arabic messages are set larger, with room between lines for vowel marks; a Latin message
 // quoting a few Arabic words keeps its size and only gets the taller lines.
@@ -73,6 +93,7 @@ function scriptClass(text: string | null | undefined) {
 
 let typingTimer: ReturnType<typeof setTimeout> | undefined;
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+let highlightTimer: ReturnType<typeof setTimeout> | undefined;
 let lastTypingSent = 0;
 const typingExpiry = new Map<string, ReturnType<typeof setTimeout>>();
 let atBottom = true;
@@ -80,11 +101,32 @@ let pressTimer: ReturnType<typeof setTimeout> | undefined;
 let pressStart: { x: number; y: number } | null = null;
 const hasEarlier = ref(false);
 const loadingEarlier = ref(false);
+// After opening an old message, the newest messages are not loaded until you scroll down to them.
+const hasLater = ref(false);
+const loadingLater = ref(false);
 const newBelow = ref(0);
+const highlighted = ref<string | null>(null);
 // The server sends history in pages of this many messages.
 const PAGE_SIZE = 50;
+let loadedChannel = '';
+let loadToken = 0;
 
 const typingNames = computed(() => [...typingUsers.value.values()].filter(Boolean));
+
+// Discord's red "new" line sits above the first message that arrived since you last read the channel.
+const dividerSeq = ref<number | null>(null);
+// The line is placed from how far you had read when the channel opened, which the server may send
+// a moment after the channel appears; later reads leave it where it is.
+let dividerPending = true;
+function placeDivider() {
+  if (!dividerPending || props.lastReadSeq === null) return;
+  dividerSeq.value = props.lastReadSeq;
+  dividerPending = false;
+}
+const firstUnreadId = computed(() => {
+  if (dividerSeq.value === null) return null;
+  return messages.value.find((message) => (message.seq ?? 0) > dividerSeq.value! && message.senderId !== props.currentUser.id)?.id ?? null;
+});
 
 function scrollBottom() {
   if (!atBottom) return;
@@ -93,25 +135,86 @@ function scrollBottom() {
   );
 }
 
+function showElement(messageId: string) {
+  const element = container.value?.querySelector(`[data-message-id="${messageId}"]`);
+  element?.scrollIntoView({ block: 'center' });
+  return Boolean(element);
+}
+
+// The server remembers how far each person has read, so every device shows the same unread channels.
+let markedSeq = 0;
+function markRead() {
+  if (document.hidden || hasLater.value || loadingMessages.value) return;
+  const seq = messages.value.reduce((highest, message) => Math.max(highest, message.seq ?? 0), 0);
+  if (!seq || seq <= markedSeq) return;
+  markedSeq = seq;
+  getSocket()?.emit('mark_read', { channelId: props.channel.id, seq });
+}
+function onVisible() { if (!document.hidden) markRead(); }
+
 async function loadMessages(id: string) {
+  const token = ++loadToken;
   loadingMessages.value = true;
   loadError.value = '';
   messages.value = [];
+  hasLater.value = false;
+  newBelow.value = 0;
   try {
-    messages.value = await api.getMessages(id);
-    hasEarlier.value = messages.value.length >= PAGE_SIZE;
-    await nextTick();
-    container.value?.lastElementChild?.scrollIntoView();
-  } catch {
-    loadError.value = t('messagesLoadFailed');
-  } finally {
+    const loaded: Message[] = await api.getMessages(id);
+    if (token !== loadToken) return;
+    messages.value = loaded;
+    loadedChannel = id;
+    hasEarlier.value = loaded.length >= PAGE_SIZE;
     loadingMessages.value = false;
+    await nextTick();
+    // Open at the first new message when there is one, as Discord does, or else at the latest.
+    if (!firstUnreadId.value || !showElement(firstUnreadId.value)) container.value?.lastElementChild?.scrollIntoView();
+    markRead();
+  } catch {
+    if (token === loadToken) loadError.value = t('messagesLoadFailed');
+  } finally {
+    if (token === loadToken) loadingMessages.value = false;
   }
+}
+
+// Opens the history at one message, for search results and pins, and briefly highlights it.
+async function showMessage(messageId: string) {
+  emit('jumped');
+  if (loadedChannel === props.channel.id && messages.value.some((message) => message.id === messageId)) {
+    await nextTick();
+    showElement(messageId);
+  } else {
+    const token = ++loadToken;
+    loadingMessages.value = true;
+    loadError.value = '';
+    try {
+      const loaded: Message[] = await api.getMessages(props.channel.id, undefined, { around: messageId });
+      if (token !== loadToken) return;
+      const index = loaded.findIndex((message) => message.id === messageId);
+      messages.value = loaded;
+      loadedChannel = props.channel.id;
+      hasEarlier.value = index >= PAGE_SIZE / 2;
+      hasLater.value = loaded.length - index - 1 >= PAGE_SIZE / 2 - 1;
+      loadingMessages.value = false;
+      await nextTick();
+      showElement(messageId);
+      atBottom = false;
+      markRead();
+    } catch {
+      if (token !== loadToken) return;
+      loadingMessages.value = false;
+      void loadMessages(props.channel.id);
+      return;
+    }
+  }
+  highlighted.value = messageId;
+  clearTimeout(highlightTimer);
+  highlightTimer = setTimeout(() => { highlighted.value = null; }, 2500);
 }
 
 // Messages sent while this device was offline are fetched once it reconnects.
 async function catchUp() {
-  if (loadingMessages.value) return;
+  if (loadingMessages.value || hasLater.value) return;
   if (loadError.value) { void loadMessages(props.channel.id); return; }
   try {
     const latest: Message[] = await api.getMessages(props.channel.id);
@@ -119,6 +222,7 @@ async function catchUp() {
     for (const message of latest) merged.set(message.id, message);
     messages.value = [...merged.values()].sort((a, b) => a.createdAt - b.createdAt || (a.seq ?? 0) - (b.seq ?? 0));
     scrollBottom();
+    markRead();
   } catch {
     // The next reconnection tries again.
   }
@@ -147,9 +251,27 @@ async function loadEarlier() {
   }
 }
 
+async function loadLater() {
+  const newest = messages.value[messages.value.length - 1];
+  if (!newest || loadingLater.value) return;
+  loadingLater.value = true;
+  try {
+    const later: Message[] = await api.getMessages(props.channel.id, undefined, { after: newest });
+    hasLater.value = later.length >= PAGE_SIZE;
+    const known = new Set(messages.value.map((message) => message.id));
+    messages.value = [...messages.value, ...later.filter((message) => !known.has(message.id))];
+    markRead();
+  } catch {
+    setFeedback({ kind: 'error', message: t('messagesLoadFailed') }, 4000);
+  } finally {
+    loadingLater.value = false;
+  }
+}
+
 function jumpToLatest() {
   atBottom = true;
   newBelow.value = 0;
+  if (hasLater.value) { void loadMessages(props.channel.id); return; }
   container.value?.lastElementChild?.scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -164,41 +286,34 @@ function keepAtBottom() {
 function onNewMessage(message: Message) {
   if (message.conversationId !== props.channel.id) return;
   if (messages.value.some((existing) => existing.id === message.id)) return;
+  // While an older part of the history is open, the new message waits below it.
+  if (hasLater.value) { if (message.senderId !== props.currentUser.id) newBelow.value++; return; }
   messages.value.push(message);
   if (!atBottom && message.senderId !== props.currentUser.id) newBelow.value++;
   scrollBottom();
+  markRead();
 }
 
-// Turns web addresses in a message into links; trailing punctuation stays outside the link.
-const LINK = /\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+/gi;
-function linkParts(text: string) {
-  const parts: { text: string; href?: string }[] = [];
-  let position = 0;
-  for (const match of text.matchAll(LINK)) {
-    const link = match[0].replace(/[.,:;!?\u060c\u061b\u061f)\]}'"]+$/u, '');
-    const start = match.index ?? 0;
-    if (start > position) parts.push({ text: text.slice(position, start) });
-    parts.push({ text: link, href: link.toLowerCase().startsWith('www.') ? `https://${link}` : link });
-    position = start + link.length;
-  }
-  if (position < text.length) parts.push({ text: text.slice(position) });
-  return parts;
+function updateMessage(messageId: string, change: Partial<Message>) {
+  messages.value = messages.value.map((message) => message.id === messageId ? { ...message, ...change } : message);
 }
 
 function onEdited(data: { messageId: string; content: string; editedAt: number }) {
-  messages.value = messages.value.map((message) =>
-    message.id === data.messageId
-      ? { ...message, content: data.content, editedAt: data.editedAt }
-      : message,
-  );
+  updateMessage(data.messageId, { content: data.content, editedAt: data.editedAt });
 }
 
 function onDeleted(data: { messageId: string }) {
-  messages.value = messages.value.map((message) =>
-    message.id === data.messageId
-      ? { ...message, deleted: true, content: null }
-      : message,
-  );
+  updateMessage(data.messageId, { deleted: true, content: null, reactions: [], pinnedAt: null });
+  pins.value = pins.value.filter((message) => message.id !== data.messageId);
+}
+
+function onReactions(data: { messageId: string; reactions: Reaction[] }) {
+  updateMessage(data.messageId, { reactions: data.reactions });
+}
+
+function onPinned(data: { messageId: string; conversationId: string; pinnedAt: number | null }) {
+  updateMessage(data.messageId, { pinnedAt: data.pinnedAt });
+  if (pinsOpen.value && data.conversationId === props.channel.id) void loadPins();
 }
 
 // Typing notices repeat every few seconds while someone types, so one that stops arriving
@@ -217,44 +332,12 @@ function onStopTyping(data: { conversationId: string; userId: string }) {
   typingUsers.value.delete(data.userId);
 }
 
-watch(
-  () => props.channel.id,
-  (id) => void loadMessages(id),
-  { immediate: true },
-);
-
-onMounted(() => {
-  const socket = getSocket();
-  if (!socket) return;
-  socket.on('new_message', onNewMessage);
-  socket.on('message_edited', onEdited);
-  socket.on('message_deleted', onDeleted);
-  socket.on('user_typing', onTyping);
-  socket.on('user_stop_typing', onStopTyping);
-  socket.on('connect', catchUp);
-});
-
-onBeforeUnmount(() => {
-  const socket = getSocket();
-  socket?.off('new_message', onNewMessage);
-  socket?.off('message_edited', onEdited);
-  socket?.off('message_deleted', onDeleted);
-  socket?.off('user_typing', onTyping);
-  socket?.off('user_stop_typing', onStopTyping);
-  socket?.off('connect', catchUp);
-  stopTyping();
-  clearTimeout(feedbackTimer);
-  typingExpiry.forEach((timer) => clearTimeout(timer));
-});
-
 function onScroll() {
   if (!container.value) return;
-  atBottom =
-    container.value.scrollHeight -
-      container.value.scrollTop -
-      container.value.clientHeight <
-    100;
+  const fromBottom = container.value.scrollHeight - container.value.scrollTop - container.value.clientHeight;
+  atBottom = fromBottom < 100 && !hasLater.value;
   if (atBottom) newBelow.value = 0;
+  if (hasLater.value && fromBottom < 300) void loadLater();
 }
 
 function autosize() {
@@ -285,6 +368,7 @@ function placeCaret(position: number) {
     textarea.value?.focus({ preventScroll: true });
     textarea.value?.setSelectionRange(position, position);
     autosize();
+    findMention();
   });
 }
 
@@ -306,6 +390,40 @@ function deleteBackward() {
   placeCaret(start);
 }
 
+// Mentions: typing @ offers the server's members by name, and @everyone.
+const chosenMentions = new Map<string, string>();
+const mentionQuery = ref<{ start: number; text: string } | null>(null);
+const mentionIndex = ref(0);
+const mentionOptions = computed(() => {
+  const query = mentionQuery.value?.text.toLowerCase();
+  if (query === undefined) return [];
+  const people = [...props.members.values()]
+    .filter((member) => member.id !== props.currentUser.id && member.displayName.toLowerCase().includes(query))
+    .sort((a, b) => Number(props.onlineUsers.has(b.id)) - Number(props.onlineUsers.has(a.id)) || a.displayName.localeCompare(b.displayName))
+    .slice(0, 6)
+    .map((member) => ({ id: member.id, name: member.displayName, color: member.avatarColor }));
+  return 'everyone'.startsWith(query) ? [...people, { id: 'everyone', name: 'everyone', color: '' }] : people;
+});
+
+function findMention() {
+  const element = textarea.value;
+  const position = element && document.activeElement === element ? element.selectionStart : input.value.length;
+  const match = /(?:^|\s)@([^\s@]{0,30})$/u.exec(input.value.slice(0, position));
+  mentionQuery.value = match ? { start: position - match[1].length - 1, text: match[1] } : null;
+  mentionIndex.value = 0;
+}
+
+function pickMention(option: { id: string; name: string }) {
+  const query = mentionQuery.value;
+  if (!query) return;
+  const { end } = caret();
+  const text = `@${option.name} `;
+  if (option.id !== 'everyone') chosenMentions.set(option.name, option.id);
+  updateInput(input.value.slice(0, query.start) + text + input.value.slice(end));
+  mentionQuery.value = null;
+  placeCaret(query.start + text.length);
+}
+
 function stopTyping() {
   clearTimeout(typingTimer);
   if (!lastTypingSent) return;
@@ -317,6 +435,7 @@ function stopTyping() {
 // the server's event limit.
 function updateInput(value: string) {
   input.value = value;
+  findMention();
   const socket = getSocket();
   if (!socket) return;
   if (!value.trim()) { stopTyping(); return; }
@@ -329,15 +448,18 @@ function updateInput(value: string) {
 }
 
 function send() {
-  const content = input.value.trim();
+  const typed = input.value.trim();
   const socket = getSocket();
-  if (!content || !socket) return;
+  if (!typed || !socket) return;
+  const content = encodeMentions(typed, chosenMentions);
   stopTyping();
+  mentionQuery.value = null;
 
   if (editingMsg.value) {
     socket.emit('edit_message', { messageId: editingMsg.value.id, content });
     editingMsg.value = null;
     input.value = '';
+    chosenMentions.clear();
     nextTick(autosize);
     return;
   }
@@ -350,16 +472,33 @@ function send() {
   }, (response?: { error?: string }) => {
     if (!response?.error) return;
     // Give the text back so a refused message does not have to be typed again.
-    if (!input.value) input.value = content;
+    if (!input.value) input.value = typed;
     setFeedback({ kind: 'error', message: translateError(response.error) });
   });
   input.value = '';
   replyTo.value = null;
+  chosenMentions.clear();
+  dividerSeq.value = null;
   atBottom = true;
+  if (hasLater.value) void loadMessages(props.channel.id);
   nextTick(autosize);
 }
 
 function keydown(event: KeyboardEvent) {
+  if (mentionOptions.value.length) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const count = mentionOptions.value.length;
+      mentionIndex.value = (mentionIndex.value + (event.key === 'ArrowDown' ? 1 : count - 1)) % count;
+      return;
+    }
+    if ((event.key === 'Enter' || event.key === 'Tab') && !event.isComposing) {
+      event.preventDefault();
+      pickMention(mentionOptions.value[mentionIndex.value]);
+      return;
+    }
+    if (event.key === 'Escape') { mentionQuery.value = null; return; }
+  }
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     send();
@@ -380,16 +519,12 @@ function setFeedback(
   }
 }
 
-async function upload(event: Event) {
-  const element = event.target as HTMLInputElement;
-  const file = element.files?.[0];
-  if (!file) return;
-
+async function shareFile(file: File, durationMs?: number) {
   setFeedback({ kind: 'uploading', message: t('uploading'), progress: 0 });
   try {
     const result = await api.uploadFile(file, props.channel.id, (progress) => {
       feedback.value = { kind: 'uploading', message: t('uploading'), progress };
-    });
+    }, durationMs);
     getSocket()?.emit(
       'send_message',
       {
@@ -398,25 +533,91 @@ async function upload(event: Event) {
         type: result.type,
         attachmentId: result.attachmentId,
         fileName: result.name,
+        replyTo: replyTo.value?.id || null,
       },
       (response: { error?: string }) => {
         if (response?.error) {
-          setFeedback({ kind: 'error', message: response.error });
+          setFeedback({ kind: 'error', message: translateError(response.error) });
         }
       },
     );
+    replyTo.value = null;
+    dividerSeq.value = null;
     atBottom = true;
     setFeedback(
-      { kind: 'success', message: t('fileShared', { name: result.name }), progress: 100 },
+      durationMs ? null : { kind: 'success', message: t('fileShared', { name: result.name }), progress: 100 },
       3000,
     );
   } catch (cause) {
     const message = cause instanceof Error ? translateError(cause.message) : t('uploadFailed');
     setFeedback({ kind: 'error', message });
-  } finally {
-    element.value = '';
   }
 }
+
+async function upload(event: Event) {
+  const element = event.target as HTMLInputElement;
+  const file = element.files?.[0];
+  if (!file) return;
+  await shareFile(file);
+  element.value = '';
+}
+
+// Voice messages: tap the microphone, talk, then send or throw it away. Five minutes at most.
+const MAX_VOICE_MS = 5 * 60_000;
+const recording = ref<{ elapsed: number } | null>(null);
+let recorder: MediaRecorder | null = null;
+let recordedChunks: Blob[] = [];
+let recordingStartedAt = 0;
+let recordingTimer: ReturnType<typeof setInterval> | undefined;
+
+async function startRecording() {
+  if (recording.value) return;
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    setFeedback({ kind: 'error', message: t('voiceUnsupported') }, 5000);
+    return;
+  }
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch {
+    setFeedback({ kind: 'error', message: t('microphoneBlocked') }, 5000);
+    return;
+  }
+  // WebM with Opus where the browser has it, and MP4 on iPhones, which have no WebM recorder.
+  const mimeType = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((type) => MediaRecorder.isTypeSupported(type));
+  recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 32_000 });
+  recordedChunks = [];
+  recorder.addEventListener('dataavailable', (event) => { if (event.data.size) recordedChunks.push(event.data); });
+  recorder.start(1000);
+  recordingStartedAt = Date.now();
+  recording.value = { elapsed: 0 };
+  navigator.vibrate?.(12);
+  recordingTimer = setInterval(() => {
+    if (!recording.value) return;
+    recording.value.elapsed = Date.now() - recordingStartedAt;
+    if (recording.value.elapsed >= MAX_VOICE_MS) void finishRecording(true);
+  }, 250);
+}
+
+async function finishRecording(send: boolean) {
+  const active = recorder;
+  if (!active) return;
+  recorder = null;
+  clearInterval(recordingTimer);
+  const durationMs = Date.now() - recordingStartedAt;
+  recording.value = null;
+  const stopped = new Promise((resolve) => active.addEventListener('stop', resolve, { once: true }));
+  if (active.state !== 'inactive') active.stop();
+  await stopped;
+  active.stream.getTracks().forEach((track) => track.stop());
+  // A tap that ends straight away is a mistake, not a message.
+  if (!send || durationMs < 700 || !recordedChunks.length) return;
+  const type = (active.mimeType || recordedChunks[0].type || 'audio/webm').split(';')[0];
+  const file = new File(recordedChunks, `voice-message.${type === 'audio/mp4' ? 'm4a' : 'webm'}`, { type });
+  await shareFile(file, durationMs);
+}
+
+const clock = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
 
 function startReply(message: Message) {
   replyTo.value = message;
@@ -427,7 +628,10 @@ function startReply(message: Message) {
 
 function startEdit(message: Message) {
   editingMsg.value = message;
-  input.value = message.content || '';
+  const decoded = decodeMentions(message.content || '', nameOf);
+  input.value = decoded.text;
+  chosenMentions.clear();
+  decoded.chosen.forEach((userId, name) => chosenMentions.set(name, userId));
   replyTo.value = null;
   contextMenu.value = null;
   textarea.value?.focus();
@@ -443,6 +647,8 @@ function cancelComposition() {
   replyTo.value = null;
   editingMsg.value = null;
   input.value = '';
+  chosenMentions.clear();
+  mentionQuery.value = null;
   nextTick(autosize);
 }
 
@@ -459,10 +665,76 @@ function canCopy(message: Message) {
   return !message.deleted && message.type === 'text' && Boolean(message.content);
 }
 
+const isVoice = (message: Message) => Boolean(message.mimeType?.startsWith('audio/'));
+const mentionsMe = (message: Message) => message.senderId !== props.currentUser.id && mentionsUser(message.content, props.currentUser.id);
+
+// Replies carry only a summary of the message they answer, so a voice message is known by its name.
+function replyText(reply: NonNullable<Message['replyTo']>) {
+  if (reply.deleted) return t('messageDeleted');
+  if (reply.type === 'image') return `📷 ${t('photo')}`;
+  if (reply.type === 'file' && /^voice-message\.\w+$/.test(reply.content ?? '')) return `🎤 ${t('voiceMessage')}`;
+  return readableText(reply.content, nameOf);
+}
+function previewText(message: Message) {
+  if (message.type === 'image') return `📷 ${t('photo')}`;
+  if (isVoice(message)) return `🎤 ${t('voiceMessage')}`;
+  return readableText(message.content ?? message.fileName, nameOf);
+}
+
+// Reactions: anyone can add any of the few emoji, and tapping your own takes it back.
+function toggleReaction(message: Message, emoji: string) {
+  const mine = message.reactions?.find((reaction) => reaction.emoji === emoji)?.userIds.includes(props.currentUser.id) ?? false;
+  getSocket()?.emit('react', { messageId: message.id, emoji, on: !mine });
+  contextMenu.value = null;
+  reactionPicker.value = null;
+}
+const reactedByMe = (reaction: Reaction) => reaction.userIds.includes(props.currentUser.id);
+const reactionNames = (reaction: Reaction) => reaction.userIds.map((userId) => nameOf(userId) ?? '…').join(', ');
+
+function openReactionPicker(event: MouseEvent, message: Message) {
+  const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const width = 6 * 40 + 12;
+  reactionPicker.value = {
+    x: Math.max(12, Math.min(bounds.right - width, window.innerWidth - width - 12)),
+    y: Math.max(12, bounds.top - 52),
+    message,
+  };
+}
+
+// Pins: anyone can pin a message so it stays easy to find, such as homework or the lesson times.
+const pinsOpen = ref(false);
+const pins = ref<Message[]>([]);
+const loadingPins = ref(false);
+async function loadPins() {
+  loadingPins.value = true;
+  try {
+    pins.value = await api.getPins(props.channel.id);
+  } catch {
+    setFeedback({ kind: 'error', message: t('messagesLoadFailed') }, 4000);
+  } finally {
+    loadingPins.value = false;
+  }
+}
+function togglePins() {
+  pinsOpen.value = !pinsOpen.value;
+  if (pinsOpen.value) void loadPins();
+}
+function togglePin(message: Message) {
+  contextMenu.value = null;
+  getSocket()?.emit('pin_message', { messageId: message.id, pinned: !message.pinnedAt }, (result?: { error?: string }) => {
+    if (result?.error === 'Too many pins') setFeedback({ kind: 'error', message: t('tooManyPins') }, 4000);
+    else if (!result?.error && !message.pinnedAt) setFeedback({ kind: 'success', message: t('pinnedNotice') }, 2500);
+  });
+}
+function openPin(message: Message) {
+  pinsOpen.value = false;
+  emit('open-message', message);
+}
+
 function openMenu(x: number, y: number, message: Message) {
   if (message.deleted) return;
-  const width = 200;
-  const height = 14 + 42 * (1 + Number(canCopy(message)) + Number(canEdit(message)) + Number(canDelete(message)));
+  const width = 250;
+  const height = 70 + 42 * (2 + Number(canCopy(message)) + Number(canEdit(message)) + Number(canDelete(message)));
   contextMenu.value = {
     x: Math.max(12, Math.min(x, window.innerWidth - width - 12)),
     y: Math.max(12, Math.min(y, window.innerHeight - height - 12)),
@@ -498,7 +770,7 @@ function pressEnd() {
 async function copyMessage(message: Message) {
   contextMenu.value = null;
   try {
-    await navigator.clipboard.writeText(message.content ?? '');
+    await navigator.clipboard.writeText(readableText(message.content, nameOf));
     setFeedback({ kind: 'success', message: t('copied') }, 2000);
   } catch {
     setFeedback({ kind: 'error', message: t('copyFailed') }, 3000);
@@ -519,6 +791,7 @@ function beginsGroup(index: number) {
   const message = messages.value[index];
   const previous = messages.value[index - 1];
   return (
+    message.id === firstUnreadId.value ||
     previous.senderId !== message.senderId ||
     !isSameDay(new Date(previous.createdAt), new Date(message.createdAt)) ||
     message.createdAt - previous.createdAt > 5 * 60_000
@@ -532,17 +805,94 @@ function timeLabel(timestamp: number) {
   if (isToday(date)) return time;
   return `${isYesterday(date) ? t('yesterday') : format(date, 'P', { locale: dateLocale.value })} ${time}`;
 }
+
+// A jump arrives together with the channel it is in, so both are handled by one watcher.
+watch(
+  () => [props.channel.id, props.jump?.count] as const,
+  ([id], previous) => {
+    if (id !== previous?.[0]) {
+      dividerSeq.value = null;
+      dividerPending = true;
+      placeDivider();
+      markedSeq = 0;
+      pinsOpen.value = false;
+      chosenMentions.clear();
+      void finishRecording(false);
+    }
+    if (props.jump) void showMessage(props.jump.messageId);
+    else if (id !== previous?.[0]) void loadMessages(id);
+  },
+  { immediate: true },
+);
+
+watch(() => props.lastReadSeq, placeDivider);
+
+onMounted(() => {
+  const socket = getSocket();
+  document.addEventListener('visibilitychange', onVisible);
+  if (!socket) return;
+  socket.on('new_message', onNewMessage);
+  socket.on('message_edited', onEdited);
+  socket.on('message_deleted', onDeleted);
+  socket.on('reactions', onReactions);
+  socket.on('message_pinned', onPinned);
+  socket.on('user_typing', onTyping);
+  socket.on('user_stop_typing', onStopTyping);
+  socket.on('connect', catchUp);
+});
+
+onBeforeUnmount(() => {
+  const socket = getSocket();
+  document.removeEventListener('visibilitychange', onVisible);
+  socket?.off('new_message', onNewMessage);
+  socket?.off('message_edited', onEdited);
+  socket?.off('message_deleted', onDeleted);
+  socket?.off('reactions', onReactions);
+  socket?.off('message_pinned', onPinned);
+  socket?.off('user_typing', onTyping);
+  socket?.off('user_stop_typing', onStopTyping);
+  socket?.off('connect', catchUp);
+  stopTyping();
+  void finishRecording(false);
+  clearTimeout(feedbackTimer);
+  clearTimeout(highlightTimer);
+  typingExpiry.forEach((timer) => clearTimeout(timer));
+});
 </script>
 
 <template>
   <div class="chat-area">
     <header class="channel-header">
-      <button class="channel-header-btn menu-btn" type="button" :aria-label="t('channels')" @click="emit('menu')"><Menu :size="20" /></button>
+      <button class="channel-header-btn menu-btn" :class="{ 'has-unread': unreadElsewhere }" type="button" :aria-label="t('channels')" @click="emit('menu')"><Menu :size="20" /></button>
       <Hash :size="22" class="channel-header-hash" aria-hidden="true" />
       <h2><bdi>{{ channel.name }}</bdi></h2>
       <span class="channel-header-spacer" />
+      <button class="channel-header-btn" :class="{ active: pinsOpen }" type="button" :title="t('pinnedMessages')" :aria-label="t('pinnedMessages')" :aria-expanded="pinsOpen" @click="togglePins"><Pin :size="19" /></button>
+      <button class="channel-header-btn" :class="{ active: searchOpen }" type="button" :title="t('search')" :aria-label="t('search')" :aria-pressed="searchOpen" @click="emit('search')"><Search :size="19" /></button>
       <button class="channel-header-btn" :class="{ active: membersOpen }" type="button" :title="t('members')" :aria-label="t('members')" :aria-pressed="membersOpen" @click="emit('members')"><Users :size="20" /></button>
     </header>
+
+    <template v-if="pinsOpen">
+      <div class="popover-backdrop" @click="pinsOpen = false" />
+      <div class="pins-popover" role="dialog" :aria-label="t('pinnedMessages')">
+        <div class="pins-head">
+          <strong>{{ t('pinnedMessages') }}</strong>
+          <button type="button" :aria-label="t('close')" @click="pinsOpen = false"><X :size="18" /></button>
+        </div>
+        <p v-if="loadingPins && !pins.length" class="pins-state"><RefreshCw class="spin" :size="16" /></p>
+        <p v-else-if="!pins.length" class="pins-state">{{ t('noPins') }}</p>
+        <div v-for="pin in pins" :key="pin.id" class="pin-item">
+          <button class="pin-open" type="button" @click="openPin(pin)">
+            <span class="pin-meta">
+              <bdi :style="{ color: pin.sender.avatarColor }">{{ pin.sender.displayName }}</bdi>
+              <span>{{ timeLabel(pin.createdAt) }}</span>
+            </span>
+            <span class="pin-text" :class="scriptClass(pin.content)" dir="auto">{{ previewText(pin) }}</span>
+          </button>
+          <button class="pin-remove" type="button" :title="t('unpin')" :aria-label="t('unpin')" @click="togglePin(pin)"><PinOff :size="15" /></button>
+        </div>
+      </div>
+    </template>
 
     <div ref="container" class="messages-container" @scroll="onScroll">
       <div v-if="loadingMessages" class="conversation-state" role="status">
@@ -585,9 +935,12 @@ function timeLabel(timestamp: number) {
           <span><bdi>{{ dateLabel(message.createdAt) }}</bdi></span>
         </div>
 
+        <div v-if="message.id === firstUnreadId" class="unread-divider" role="separator"><span>{{ t('newLine') }}</span></div>
+
         <div
           class="message-row"
-          :class="{ 'starts-group': beginsGroup(index) }"
+          :class="{ 'starts-group': beginsGroup(index), 'mentions-me': mentionsMe(message), highlighted: highlighted === message.id }"
+          :data-message-id="message.id"
           @contextmenu="openContext($event, message)"
           @pointerdown="pressStartOn($event, message)"
           @pointermove="pressMove"
@@ -615,13 +968,7 @@ function timeLabel(timestamp: number) {
                 <bdi>{{ message.replyTo.senderDisplayName }}</bdi>
               </div>
               <div class="reply-text" :class="[scriptClass(message.replyTo.content), { deleted: message.replyTo.deleted }]" dir="auto">
-                {{
-                  message.replyTo.deleted
-                    ? t('messageDeleted')
-                    : message.replyTo.type === 'image'
-                      ? `📷 ${t('photo')}`
-                      : message.replyTo.content
-                }}
+                {{ replyText(message.replyTo) }}
               </div>
             </div>
 
@@ -635,6 +982,11 @@ function timeLabel(timestamp: number) {
               image
               @loaded="keepAtBottom"
             />
+            <VoiceNote
+              v-else-if="message.type === 'file' && message.attachmentId && isVoice(message)"
+              :attachment-id="message.attachmentId"
+              :duration-ms="message.durationMs"
+            />
             <Attachment
               v-else-if="message.type === 'file' && message.attachmentId"
               :attachment-id="message.attachmentId"
@@ -642,11 +994,31 @@ function timeLabel(timestamp: number) {
               :mime-type="message.mimeType"
               :duration-ms="message.durationMs"
             />
-            <div v-else class="message-content" :class="scriptClass(message.content)" dir="auto"><template v-for="(part, partIndex) in linkParts(message.content ?? '')" :key="partIndex"><a v-if="part.href" :href="part.href" target="_blank" rel="noopener noreferrer" dir="ltr">{{ part.text }}</a><template v-else>{{ part.text }}</template></template></div>
+            <div v-else class="message-content" :class="scriptClass(message.content)" dir="auto"><template v-for="(part, partIndex) in messageParts(message.content ?? '', nameOf)" :key="partIndex"><a v-if="part.href" :href="part.href" target="_blank" rel="noopener noreferrer" dir="ltr">{{ part.text }}</a><bdi v-else-if="part.mention" class="mention" :class="{ me: part.mention === currentUser.id.toLowerCase() || part.mention === 'everyone' }">{{ part.text }}</bdi><template v-else>{{ part.text }}</template></template></div>
 
             <span v-if="message.editedAt" class="message-edited">({{ t('edited') }})</span>
+            <span v-if="message.pinnedAt" class="message-pinned"><Pin :size="11" />{{ t('pinned') }}</span>
+
+            <div v-if="message.reactions?.length" class="reactions">
+              <button
+                v-for="reaction in message.reactions"
+                :key="reaction.emoji"
+                class="reaction"
+                :class="{ mine: reactedByMe(reaction) }"
+                type="button"
+                :title="reactionNames(reaction)"
+                :aria-label="`${reaction.emoji} ${reaction.userIds.length}: ${reactionNames(reaction)}`"
+                :aria-pressed="reactedByMe(reaction)"
+                @click="toggleReaction(message, reaction.emoji)"
+              >
+                <span aria-hidden="true">{{ reaction.emoji }}</span><span class="reaction-count">{{ reaction.userIds.length }}</span>
+              </button>
+            </div>
 
             <div v-if="!message.deleted" class="message-actions">
+              <button type="button" :title="t('react')" :aria-label="t('react')" @click="openReactionPicker($event, message)">
+                <ThumbsUp :size="14" />
+              </button>
               <button
                 type="button"
                 :title="t('reply')"
@@ -654,6 +1026,9 @@ function timeLabel(timestamp: number) {
                 @click="startReply(message)"
               >
                 <Reply :size="14" />
+              </button>
+              <button type="button" :title="message.pinnedAt ? t('unpin') : t('pin')" :aria-label="message.pinnedAt ? t('unpin') : t('pin')" @click="togglePin(message)">
+                <PinOff v-if="message.pinnedAt" :size="14" /><Pin v-else :size="14" />
               </button>
               <button v-if="canEdit(message)" type="button" :title="t('edit')" :aria-label="t('edit')" @click="startEdit(message)">
                 <Pencil :size="14" />
@@ -665,14 +1040,29 @@ function timeLabel(timestamp: number) {
           </div>
         </div>
       </template>
+      <div v-if="hasLater" class="load-earlier">
+        <button type="button" :disabled="loadingLater" @click="loadLater">
+          <RefreshCw v-if="loadingLater" class="spin" :size="14" />{{ t('laterMessages') }}
+        </button>
+      </div>
       </template>
       <div v-if="messages.length" class="messages-end" />
     </div>
 
     <div class="chat-bottom">
-      <button v-if="newBelow" class="new-messages-pill" type="button" @click="jumpToLatest">
-        <ArrowDown :size="15" />{{ t('newMessages') }}
+      <button v-if="newBelow || hasLater" class="new-messages-pill" type="button" @click="jumpToLatest">
+        <ArrowDown :size="15" />{{ newBelow ? t('newMessages') : t('backToLatest') }}
       </button>
+      <ul v-if="mentionOptions.length" class="mention-picker" role="listbox" :aria-label="t('mentionSomeone')">
+        <li v-for="(option, optionIndex) in mentionOptions" :key="option.id">
+          <button type="button" role="option" :aria-selected="optionIndex === mentionIndex" :class="{ selected: optionIndex === mentionIndex }" @pointerdown.prevent @click="pickMention(option)">
+            <Avatar v-if="option.color" :name="option.name" :color="option.color" size="tiny" />
+            <span v-else class="mention-everyone" aria-hidden="true">@</span>
+            <bdi>{{ option.id === 'everyone' ? '@everyone' : option.name }}</bdi>
+            <small v-if="option.id === 'everyone'">{{ t('mentionEveryoneHint') }}</small>
+          </button>
+        </li>
+      </ul>
       <div v-if="typingNames.length" class="typing-indicator" aria-live="polite">
         {{
           typingNames.length === 1
@@ -697,7 +1087,7 @@ function timeLabel(timestamp: number) {
             <bdi>{{ editingMsg ? t('editingMessage') : replyTo?.sender.displayName }}</bdi>
           </div>
           <div class="reply-preview-text" dir="auto">
-            {{ editingMsg ? editingMsg.content : replyTo?.content }}
+            {{ editingMsg ? previewText(editingMsg) : replyTo ? previewText(replyTo) : '' }}
           </div>
         </div>
         <button class="icon-btn" type="button" :aria-label="t('dismiss')" @click="cancelComposition">
@@ -705,7 +1095,20 @@ function timeLabel(timestamp: number) {
         </button>
       </div>
 
-      <div class="chat-input-area">
+      <div v-if="recording" class="chat-input-area recording-bar">
+        <button class="icon-btn" type="button" :title="t('discardVoice')" :aria-label="t('discardVoice')" @click="finishRecording(false)">
+          <Trash2 :size="20" />
+        </button>
+        <div class="recording-status" role="status">
+          <span class="recording-dot" aria-hidden="true" />
+          <span class="recording-time">{{ clock(recording.elapsed) }}</span>
+          <span class="recording-label">{{ t('recordingVoice') }}</span>
+        </div>
+        <button class="send-btn" type="button" :title="t('sendVoice')" :aria-label="t('sendVoice')" @click="finishRecording(true)">
+          <Send :size="20" />
+        </button>
+      </div>
+      <div v-else class="chat-input-area">
         <button
           class="icon-btn attach-btn"
           type="button"
@@ -745,9 +1148,12 @@ function timeLabel(timestamp: number) {
             :inputmode="arabicKeyboard ? 'none' : undefined"
             @input="updateInput(($event.target as HTMLTextAreaElement).value); autosize()"
             @keydown="keydown"
+            @click="findMention"
+            @blur="mentionQuery = null"
           />
         </div>
         <button
+          v-if="input.trim() || editingMsg"
           class="send-btn"
           type="button"
           :title="t('sendMessage')"
@@ -757,9 +1163,26 @@ function timeLabel(timestamp: number) {
         >
           <Send :size="20" />
         </button>
+        <button
+          v-else
+          class="send-btn"
+          type="button"
+          :title="t('recordVoice')"
+          :aria-label="t('recordVoice')"
+          @click="startRecording"
+        >
+          <Mic :size="20" />
+        </button>
       </div>
-      <ArabicKeyboard v-if="arabicKeyboard" @insert="insertText" @backspace="deleteBackward" />
+      <ArabicKeyboard v-if="arabicKeyboard && !recording" @insert="insertText" @backspace="deleteBackward" />
     </div>
+
+    <template v-if="reactionPicker">
+      <div class="context-menu-backdrop" @click="reactionPicker = null" />
+      <div class="reaction-picker" :style="{ top: `${reactionPicker.y}px`, left: `${reactionPicker.x}px` }" role="menu">
+        <button v-for="emoji in REACTIONS" :key="emoji" type="button" role="menuitem" @click="toggleReaction(reactionPicker.message, emoji)">{{ emoji }}</button>
+      </div>
+    </template>
 
     <template v-if="contextMenu">
       <div class="context-menu-backdrop" @click="contextMenu = null" />
@@ -767,8 +1190,15 @@ function timeLabel(timestamp: number) {
         class="context-menu"
         :style="{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }"
       >
+        <div class="context-reactions">
+          <button v-for="emoji in REACTIONS" :key="emoji" type="button" :aria-label="`${t('react')} ${emoji}`" @click="toggleReaction(contextMenu.message, emoji)">{{ emoji }}</button>
+        </div>
         <button type="button" @click="startReply(contextMenu.message)">
           <Reply :size="16" />{{ t('reply') }}
+        </button>
+        <button type="button" @click="togglePin(contextMenu.message)">
+          <template v-if="contextMenu.message.pinnedAt"><PinOff :size="16" />{{ t('unpin') }}</template>
+          <template v-else><Pin :size="16" />{{ t('pin') }}</template>
         </button>
         <button v-if="canCopy(contextMenu.message)" type="button" @click="copyMessage(contextMenu.message)">
           <Copy :size="16" />{{ t('copy') }}
@@ -1272,6 +1702,351 @@ function timeLabel(timestamp: number) {
 
 .send-btn:disabled {
   opacity: 0.38;
+}
+
+/* A message that mentions you is tinted and marked at its edge, as in Discord. */
+.message-row.mentions-me {
+  background: var(--warning-soft);
+  box-shadow: inset 2px 0 0 #f0b232;
+}
+
+[dir='rtl'] .message-row.mentions-me {
+  box-shadow: inset -2px 0 0 #f0b232;
+}
+
+/* A message opened from search or the pinned list lights up for a moment. */
+.message-row.highlighted {
+  animation: message-highlight 2.5s ease-out;
+}
+
+@keyframes message-highlight {
+  from, 30% { background: var(--accent-soft); }
+}
+
+.mention {
+  padding: 0 2px;
+  border-radius: 3px;
+  color: var(--text-accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.mention.me {
+  color: #f0b232;
+  background: var(--warning-soft);
+}
+
+.unread-divider {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+  margin: 12px 16px 0;
+  border-top: 1px solid var(--danger);
+}
+
+.unread-divider span {
+  margin-top: -9px;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: #ffffff;
+  background: var(--danger);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 17px;
+  text-transform: uppercase;
+}
+
+.message-pinned {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-inline-start: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.reaction {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  font-size: 15px;
+}
+
+.reaction:hover {
+  border-color: var(--border-color);
+}
+
+.reaction.mine {
+  border-color: var(--text-accent);
+  color: var(--text-primary);
+  background: var(--accent-soft);
+}
+
+.reaction-count {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.reaction-picker {
+  position: fixed;
+  z-index: 100;
+  display: flex;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-primary);
+  box-shadow: 0 12px 32px var(--shadow-color);
+}
+
+.reaction-picker button,
+.context-menu .context-reactions button {
+  width: 38px;
+  min-height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 9px;
+  font-size: 21px;
+}
+
+.reaction-picker button:hover {
+  background: var(--bg-hover);
+}
+
+.context-reactions {
+  display: flex;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 2px 2px 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* Pinned messages open under the channel's header. */
+.pins-popover {
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(480px, 70dvh);
+  position: absolute;
+  top: calc(max(6px, env(safe-area-inset-top)) + 46px);
+  inset-inline-end: 12px;
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  box-shadow: 0 16px 42px var(--shadow-color);
+}
+
+.pins-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 4px 8px 8px;
+  color: var(--text-primary);
+}
+
+.pins-head button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+
+.pins-state {
+  display: flex;
+  justify-content: center;
+  padding: 18px 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.pin-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.pin-open {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 10px;
+  text-align: start;
+}
+
+.pin-meta {
+  display: flex;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.pin-meta bdi {
+  font-weight: 700;
+}
+
+.pin-text {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.pin-remove {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin: 4px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+
+.pin-remove:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* Typing @ lists people to mention, just above the message box. */
+.mention-picker {
+  width: min(360px, calc(100% - 28px));
+  position: absolute;
+  bottom: calc(100% + 6px);
+  inset-inline-start: 14px;
+  z-index: 4;
+  padding: 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-primary);
+  box-shadow: 0 10px 28px var(--shadow-color);
+  list-style: none;
+}
+
+.mention-picker button {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 9px;
+  border-radius: 7px;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-align: start;
+}
+
+.mention-picker button.selected,
+.mention-picker button:hover {
+  background: var(--bg-hover);
+}
+
+.mention-picker small {
+  margin-inline-start: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.mention-everyone {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.recording-bar {
+  align-items: center;
+}
+
+.recording-status {
+  min-width: 0;
+  min-height: 44px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-radius: 16px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+/* A slowly pulsing red dot shows the microphone is recording, without any sound. */
+.recording-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--danger);
+  animation: recording-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes recording-pulse {
+  50% { opacity: 0.35; }
+}
+
+.recording-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.recording-label {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The menu button shows a dot when another channel has new messages. */
+.menu-btn.has-unread {
+  position: relative;
+}
+
+.menu-btn.has-unread::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  inset-inline-end: 6px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--bg-chat);
+  border-radius: 999px;
+  background: var(--danger);
 }
 
 /* Message context menu */

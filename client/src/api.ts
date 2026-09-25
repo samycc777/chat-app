@@ -65,9 +65,17 @@ export const api = {
 
   getMe: () => request('/api/me'),
 
-  // Pages back from the given message; its ID separates messages sent in the same millisecond.
-  getMessages: (conversationId: string, before?: { createdAt: number; id: string }) =>
-    request(`/api/conversations/${conversationId}/messages${before ? `?before=${before.createdAt}&beforeId=${encodeURIComponent(before.id)}` : ''}`),
+  // Pages back from the given message, or forwards with `after`; a message's ID separates messages
+  // sent in the same millisecond. `around` opens the history at one message.
+  getMessages: (conversationId: string, before?: { createdAt: number; id: string }, options: { after?: { createdAt: number; id: string }; around?: string } = {}) => {
+    const query = before ? `?before=${before.createdAt}&beforeId=${encodeURIComponent(before.id)}`
+      : options.after ? `?after=${options.after.createdAt}&afterId=${encodeURIComponent(options.after.id)}`
+      : options.around ? `?around=${encodeURIComponent(options.around)}`
+      : '';
+    return request(`/api/conversations/${conversationId}/messages${query}`);
+  },
+  getPins: (conversationId: string) => request(`/api/conversations/${conversationId}/pins`),
+  search: (query: string) => request(`/api/search?q=${encodeURIComponent(query)}`),
 
   uploadFile: async (file: File, conversationId: string, onProgress?: (progress: number) => void, durationMs?: number) => {
     const maxUploadBytes = await api.getUploadLimit();

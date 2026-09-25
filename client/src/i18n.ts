@@ -164,6 +164,23 @@ const en = {
   errLastTextChannel: 'The last text channel can’t be deleted.',
   errTooManyChannels: 'There are too many channels already.',
   errInvalidChannel: 'Give the channel a name.',
+  // Notifications
+  notifications: 'Notifications',
+  notifyAll: 'Everything',
+  notifyMentions: 'Only mentions and calls',
+  notifyOff: 'Off',
+  notifyPrompt: 'Get a notification when friends write or start a call?',
+  notifyTurnOn: 'Turn on',
+  notifyNotNow: 'Not now',
+  notifyTurnOnHere: 'Turn on notifications on this device',
+  notifyOnHere: 'Notifications are on for this device.',
+  notifyBlockedBrowser: 'Notifications are blocked for this site. To get them, allow notifications for this site in your browser’s settings.',
+  notifyBlockedApp: 'Notifications are blocked. To get them, allow notifications for Majlis in your phone’s settings.',
+  notifyUnsupported: 'This browser can’t show notifications.',
+  notifyUpdateApp: 'Update the Majlis app to get notifications.',
+  notifyAppNotReady: 'Notifications aren’t set up in this app yet.',
+  notifyIphoneHint: 'On iPhone, first add Majlis to your Home Screen (Share → Add to Home Screen), then open it from there.',
+  notifyFailed: 'Notifications couldn’t be turned on. Try again.',
 };
 
 const ar_: typeof en = {
@@ -327,6 +344,23 @@ const ar_: typeof en = {
   errLastTextChannel: 'لا يمكن حذف آخر قناة نصية.',
   errTooManyChannels: 'عدد القنوات كبير بالفعل.',
   errInvalidChannel: 'اكتب اسمًا للقناة.',
+  // Notifications
+  notifications: 'الإشعارات',
+  notifyAll: 'كل شيء',
+  notifyMentions: 'الإشارات والمكالمات فقط',
+  notifyOff: 'إيقاف',
+  notifyPrompt: 'هل تريد إشعارًا عندما يكتب أصدقاؤك أو يبدؤون مكالمة؟',
+  notifyTurnOn: 'تفعيل',
+  notifyNotNow: 'ليس الآن',
+  notifyTurnOnHere: 'تفعيل الإشعارات على هذا الجهاز',
+  notifyOnHere: 'الإشعارات مفعّلة على هذا الجهاز.',
+  notifyBlockedBrowser: 'الإشعارات محظورة لهذا الموقع. لتصلك، اسمح بالإشعارات لهذا الموقع من إعدادات المتصفح.',
+  notifyBlockedApp: 'الإشعارات محظورة. لتصلك، اسمح بإشعارات Majlis من إعدادات الهاتف.',
+  notifyUnsupported: 'هذا المتصفح لا يستطيع عرض الإشعارات.',
+  notifyUpdateApp: 'حدّث تطبيق Majlis لتصلك الإشعارات.',
+  notifyAppNotReady: 'الإشعارات غير مهيّأة في هذا التطبيق بعد.',
+  notifyIphoneHint: 'على iPhone، أضف Majlis أولًا إلى الشاشة الرئيسية (مشاركة ← إضافة إلى الشاشة الرئيسية)، ثم افتحه من هناك.',
+  notifyFailed: 'تعذّر تفعيل الإشعارات. حاول مرة أخرى.',
 };
 
 const translations: Record<Language, typeof en> = { en, ar: ar_ };

@@ -5,10 +5,12 @@ import type { Socket } from 'socket.io-client';
 import type { Channel, OnlineUser, User, VoiceCall } from './types';
 import { api, ApiError, session } from './api';
 import { connectSocket, disconnectSocket, getSocket } from './socket';
+import { channelToOpen, forgetThisDevice, startNotifications } from './notifications';
 import { useI18n } from './i18n';
 import Auth from './components/Auth.vue';
 import ChatView from './components/ChatView.vue';
 import MemberList from './components/MemberList.vue';
+import NotificationPrompt from './components/NotificationPrompt.vue';
 import ServerSidebar from './components/ServerSidebar.vue';
 
 // LiveKit makes up most of the app's code, so the call screen loads only when someone joins a voice
@@ -60,6 +62,13 @@ const callChannel = computed(() => channels.value.find(channel => channel.id ===
 const handsInCall = computed(() => calls.value.find(call => call.channelId === callChannelId.value)?.hands ?? []);
 const selectedCall = computed(() => calls.value.find(call => call.channelId === selectedChannel.value?.id) ?? null);
 let lastTextChannelId: string | null = null;
+// A tapped notification opens its channel, when the app starts or while it is already open.
+watch(channelToOpen, channelId => {
+  if (!channelId) return;
+  selectedId.value = channelId;
+  sidebarOpen.value = false;
+  channelToOpen.value = null;
+}, { immediate: true });
 watch(selectedChannel, channel => {
   if (channel?.kind === 'text') lastTextChannelId = channel.id;
   if (channel) store('lastChannel', channel.id);
@@ -78,7 +87,7 @@ function listen(socket: Socket, user: User) {
     connection.value = 'connected';
     // The server forgets who was in a call when a connection drops, so a call in progress is
     // announced again; the call screen itself reconnects to LiveKit on its own.
-    if (callChannelId.value) socket.emit('voice_join', { channelId: callChannelId.value });
+    if (callChannelId.value) socket.emit('voice_join', { channelId: callChannelId.value, rejoin: true });
   });
   socket.on('disconnect', reason => {
     if (reason === 'io client disconnect') return;
@@ -114,7 +123,9 @@ function listen(socket: Socket, user: User) {
 
 function enterServer(sessionToken: string, user: User) {
   currentUser.value = user;
-  listen(connectSocket(sessionToken), user);
+  const socket = connectSocket(sessionToken);
+  listen(socket, user);
+  void startNotifications(socket);
 }
 
 function joined(result: { token: string; user: User }) {
@@ -171,6 +182,7 @@ function endSession() {
 function signOut() {
   // Signing out also forgets the name and invite, so the next person on this device starts fresh.
   try { localStorage.removeItem('displayName'); localStorage.removeItem('inviteKey'); } catch { /* Private browsing. */ }
+  forgetThisDevice();
   endSession();
 }
 </script>
@@ -208,6 +220,7 @@ function signOut() {
       <div v-if="connection !== 'connected'" class="connection-banner" role="status">
         <WifiOff :size="15" />{{ connection === 'connecting' ? t('connecting') : t('reconnecting') }}
       </div>
+      <NotificationPrompt v-if="selectedChannel?.kind === 'text'" />
       <ChatView
         v-if="selectedChannel?.kind === 'text'"
         :channel="selectedChannel"

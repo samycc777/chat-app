@@ -23,7 +23,7 @@ export const session = {
 };
 const getToken = () => session.token;
 
-async function request(path: string, options: RequestInit = {}) {
+export async function request(path: string, options: RequestInit = {}) {
   const token = getToken();
   const headers: Record<string, string> = {
     ...options.headers as Record<string, string>,

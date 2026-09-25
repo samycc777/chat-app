@@ -7,6 +7,7 @@ import type { Channel, User, VoiceCall } from '../types';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import Avatar from './Avatar.vue';
+import NotificationSettings from './NotificationSettings.vue';
 
 const props = defineProps<{
   serverName: string;
@@ -174,6 +175,7 @@ onBeforeUnmount(() => { document.removeEventListener('keydown', closeOnEscape); 
               <button type="button" role="radio" :aria-checked="theme === 'dark'" :class="{ selected: theme === 'dark' }" @click="emit('set-theme', 'dark')"><Moon :size="15" />{{ t('themeDark') }}</button>
               <button type="button" role="radio" :aria-checked="theme === 'light'" :class="{ selected: theme === 'light' }" @click="emit('set-theme', 'light')"><Sun :size="15" />{{ t('themeLight') }}</button>
             </div>
+            <NotificationSettings />
             <button class="settings-row" type="button" @click="setLang(lang === 'en' ? 'ar' : 'en')"><Languages :size="17" />{{ lang === 'en' ? 'العربية' : 'English' }}</button>
             <button class="settings-row danger" type="button" @click="settingsOpen = false; emit('sign-out')"><LogOut :size="17" />{{ t('signOut') }}</button>
           </div>
@@ -462,6 +464,9 @@ onBeforeUnmount(() => { document.removeEventListener('keydown', closeOnEscape); 
   top: auto;
   bottom: calc(100% + 8px);
   inset-inline: 8px;
+  /* With the notification choices it can be taller than a small phone screen. */
+  max-height: calc(100dvh - 80px);
+  overflow-y: auto;
 }
 
 .display-label {

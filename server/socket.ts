@@ -8,6 +8,7 @@ import { ChannelKind, cleanChannelName, createChannel, deleteChannel, getChannel
 import { addToCall, allCalls, callOf, endCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
 import { roomService } from './livekit';
 import { messageById } from './messages';
+import { connectRecordings } from './recordings';
 
 const onlineUsers = new Map<string, Set<string>>();
 // Everyone is in every channel, so every connection joins this one Socket.IO room.
@@ -35,6 +36,9 @@ function callPayload(call: VoiceCall) {
     members: [...call.members.keys()].map(profile).filter(Boolean),
     hands: [...call.hands.entries()].sort((a, b) => a[1] - b[1])
       .map(([userId]) => ({ userId, displayName: profile(userId)?.displayName ?? '' })),
+    recording: call.recording
+      ? { userId: call.recording.userId, displayName: profile(call.recording.userId)?.displayName ?? '', startedAt: call.recording.startedAt }
+      : null,
   };
 }
 const voiceState = () => ({ calls: allCalls().map(callPayload) });
@@ -62,6 +66,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
 
   const broadcastVoice = () => io.to(EVERYONE).emit('voice_state', voiceState());
   const broadcastChannels = () => io.to(EVERYONE).emit('channels', { channels: listChannels() });
+  connectRecordings({ voiceChanged: broadcastVoice, messagePosted: message => io.to(EVERYONE).emit('new_message', message) });
 
   // A phone's screen connection is separate from its owner's, so it is closed on the server's side
   // too: otherwise a phone whose app was killed would keep showing its screen to the call.

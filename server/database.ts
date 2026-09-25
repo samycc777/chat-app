@@ -219,4 +219,23 @@ if (!userColumnsNow.some(column => column.name === 'notify_level')) {
   db.exec("ALTER TABLE users ADD COLUMN notify_level TEXT NOT NULL DEFAULT 'all'");
 }
 
+// A call recording is uploaded in pieces while it is made. Until its recorder posts it (or it is
+// posted for them after going quiet), it lives here; posting turns it into an attachment. The voice
+// channel is not a foreign key, because a recording outlives a channel deleted while it was made.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS recordings (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    voice_channel_id TEXT NOT NULL,
+    channel_name TEXT NOT NULL,
+    disk_name TEXT NOT NULL UNIQUE,
+    mime_type TEXT,
+    size INTEGER NOT NULL DEFAULT 0,
+    next_chunk INTEGER NOT NULL DEFAULT 0,
+    stopped INTEGER NOT NULL DEFAULT 0,
+    started_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+`);
+
 export default db;

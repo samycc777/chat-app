@@ -1,3 +1,10 @@
+/** A recording in progress, made in the browser of the person who started it. */
+export interface CallRecording {
+  id: string;
+  userId: string;
+  startedAt: number;
+}
+
 export interface VoiceCall {
   channelId: string;
   roomName: string;
@@ -8,6 +15,8 @@ export interface VoiceCall {
   hands: Map<string, number>;
   /** People who were given a pass for sharing their phone's screen, by user ID. */
   phoneScreens: Set<string>;
+  /** Everyone in the call is shown that it is being recorded, and by whom. */
+  recording?: CallRecording;
 }
 
 // The phone apps cannot share the screen from their web page, so the app's own Android code joins
@@ -49,6 +58,8 @@ export function removeFromCall(userId: string): VoiceCall | undefined {
   if (!call) return undefined;
   call.members.delete(userId);
   call.hands.delete(userId);
+  // A recording is made on its recorder's device, so it cannot go on once they have left.
+  if (call.recording?.userId === userId) call.recording = undefined;
   if (!call.members.size) calls.delete(call.channelId);
   return call;
 }

@@ -13,6 +13,15 @@ export const MAX_UPLOAD_BYTES = Number.isSafeInteger(configuredMaxUploadBytes) &
   ? configuredMaxUploadBytes
   : DEFAULT_MAX_UPLOAD_BYTES;
 
+// Call recordings are uploaded bit by bit while they are made, so they have their own limit rather
+// than the one for files chosen from a device. It is read on every use, like the invite key, so a
+// changed setting takes effect straight away.
+export const DEFAULT_MAX_RECORDING_BYTES = 2 * 1024 * 1024 * 1024;
+export function maxRecordingBytes(): number {
+  const configured = Number(process.env.MAX_RECORDING_BYTES);
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_MAX_RECORDING_BYTES;
+}
+
 // Phones often capitalize the first letter or type Arabic-Indic digits, so a key pasted or typed by
 // hand is compared without case, spaces, or digit-script differences.
 export function normalizeCode(value: string): string {

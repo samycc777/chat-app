@@ -9,6 +9,7 @@ import apiRouter from './routes';
 import { setupSocket } from './socket';
 import { serverName, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, production, UPLOADS_DIR } from './config';
 import { rateLimit } from './rateLimit';
+import { streamAttachment } from './stream';
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -42,6 +43,9 @@ app.get('/api/server', (_req, res) => res.json({ name: serverName() || null }));
 // Several friends may share one network address, so these per-address limits are generous;
 // signed-in requests are also limited per person in the API router.
 app.use('/api/auth', rateLimit(300, 15 * 60_000), authRouter);
+// A player opens sound and video with the pass in its link rather than a session header, so this
+// comes before the API's session check. Seeking asks for many small parts, hence the generous limit.
+app.get('/api/attachments/:id/stream', rateLimit(1200, 60_000), streamAttachment);
 app.use('/api', rateLimit(1200, 60_000), apiRouter);
 app.use('/uploads', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {

@@ -41,6 +41,23 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   next();
 }
 
+// A video element cannot send the session header, so a long recording is played from a link that
+// carries its own pass instead. The pass opens one file for one person for a few hours, and it has
+// no userId claim, so it can never be mistaken for a session.
+const STREAM_PASS_HOURS = 6;
+export function signStreamToken(attachmentId: string, userId: string): string {
+  return jwt.sign({ purpose: 'stream', attachmentId, sub: userId, code: keyFingerprint() }, JWT_SECRET, { expiresIn: `${STREAM_PASS_HOURS}h` });
+}
+
+export function verifyStreamToken(token: unknown, attachmentId: string): Session | null {
+  if (typeof token !== 'string' || !token) return null;
+  let claims: { purpose?: unknown; attachmentId?: unknown; sub?: unknown; code?: unknown };
+  try { claims = jwt.verify(token, JWT_SECRET) as typeof claims; } catch { return null; }
+  if (claims.purpose !== 'stream' || claims.attachmentId !== attachmentId || typeof claims.sub !== 'string' || claims.code !== keyFingerprint()) return null;
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(claims.sub) as { id: string } | undefined;
+  return user ? { userId: user.id } : null;
+}
+
 // Control and bidirectional-override characters could make a name render as someone else's.
 export function cleanDisplayName(value: unknown): string {
   if (typeof value !== 'string') return '';

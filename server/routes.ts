@@ -13,6 +13,8 @@ import { MESSAGE_SELECT, toMessage } from './messages';
 import { AccessToken, TrackSource } from 'livekit-server-sdk';
 import { liveKitConfig } from './livekit';
 import { rateLimit } from './rateLimit';
+import recordingsRouter from './recordings';
+import { streamLink } from './stream';
 
 const router = Router();
 router.use(authMiddleware);
@@ -171,6 +173,9 @@ router.post('/upload', rateLimit<AuthRequest>(20, 60_000, req => req.userId!), u
     durationMs,
   });
 });
+
+router.use('/recordings', recordingsRouter);
+router.get('/attachments/:id/stream-url', streamLink);
 
 router.get('/attachments/:id', (req: AuthRequest, res: Response) => {
   const attachment = db.prepare('SELECT * FROM attachments WHERE id = ?').get(req.params.id) as any;

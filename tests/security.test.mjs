@@ -181,6 +181,178 @@ test('sound and video can be shared, with their type and length, while other fil
   assert.equal(history.find(entry => entry.id === message.id).mimeType, 'audio/webm');
 });
 
+const recordingApi = (token, path, method = 'POST', body) => fetch(`${baseUrl}/api/recordings${path}`, {
+  method, headers: jsonAuth(token), body: body === undefined ? undefined : JSON.stringify(body),
+});
+const sendPiece = (token, id, index, bytes) => fetch(`${baseUrl}/api/recordings/${id}/chunks/${index}`, {
+  method: 'PUT', headers: { ...auth(token), 'Content-Type': 'application/octet-stream' }, body: bytes,
+});
+const webmStart = () => Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.from('lesson start')]);
+const recordingIn = (state, channelId) => state.calls.find(call => call.channelId === channelId)?.recording ?? null;
+// Later tests expect the voice channel to start empty.
+async function leaveCall(channelId, ...leaving) {
+  for (const socket of leaving) socket.emit('voice_leave');
+  const { getCall } = await import('../server/voice.ts');
+  assert.ok(await eventually(() => !getCall(channelId)));
+}
+
+test('anyone in a call can record it, everyone sees it, and it is posted as a video in the chosen channel', async () => {
+  const voice = firstChannel('voice');
+  const general = firstChannel('text');
+  const [teacher, student, outsider] = await Promise.all([join('Recording teacher'), join('Recording student'), join('Recording outsider')]);
+  const [teacherSocket, studentSocket] = await Promise.all([connect(teacher.token), connect(student.token)]);
+
+  // Only someone in the call can record it.
+  assert.equal((await recordingApi(outsider.token, '', 'POST', { voiceChannelId: voice })).status, 409);
+  assert.equal((await recordingApi(teacher.token, '', 'POST', { voiceChannelId: general })).status, 404);
+  await emitWithAck(teacherSocket, 'voice_join', { channelId: voice });
+  await emitWithAck(studentSocket, 'voice_join', { channelId: voice });
+
+  const badgeSeen = eventWhere(studentSocket, 'voice_state', state => recordingIn(state, voice));
+  const started = await recordingApi(teacher.token, '', 'POST', { voiceChannelId: voice });
+  assert.equal(started.status, 200);
+  const { id } = await started.json();
+  const badge = recordingIn(await badgeSeen, voice);
+  assert.equal(badge.displayName, 'Recording teacher');
+  assert.equal(badge.userId, teacher.user.id);
+  assert.equal(typeof badge.startedAt, 'number');
+  // Someone joining later is told as well.
+  const late = io(baseUrl, { auth: { token: (await join('Late student')).token }, transports: ['websocket'] });
+  sockets.push(late);
+  assert.equal(recordingIn(await nextEvent(late, 'voice_state'), voice).displayName, 'Recording teacher');
+
+  // One recording per call at a time.
+  const second = await recordingApi(student.token, '', 'POST', { voiceChannelId: voice });
+  assert.equal(second.status, 409);
+  assert.equal((await second.json()).error, 'Already recording');
+
+  // Pieces arrive in order and build one file; only the recorder may add to it.
+  const first = webmStart();
+  assert.equal((await sendPiece(teacher.token, id, 0, first)).status, 200);
+  assert.equal((await sendPiece(student.token, id, 1, Buffer.from('intruder'))).status, 403);
+  assert.equal((await sendPiece(teacher.token, id, 2, Buffer.from('skipped'))).status, 409);
+  assert.equal((await sendPiece(teacher.token, id, 0, first)).status, 200, 'a piece sent twice is accepted once');
+  assert.equal((await sendPiece(teacher.token, id, 1, Buffer.from(' and the rest'))).status, 200);
+  const row = db.prepare('SELECT disk_name, size, mime_type FROM recordings WHERE id = ?').get(id);
+  assert.equal(row.mime_type, 'video/webm');
+  const expected = Buffer.concat([first, Buffer.from(' and the rest')]);
+  assert.deepEqual(fs.readFileSync(path.join(tempDir, 'uploads', row.disk_name)), expected);
+
+  // Finishing belongs to the recorder, and only into a text channel.
+  assert.equal((await recordingApi(student.token, `/${id}/finish`, 'POST', { textChannelId: general, durationMs: 5000 })).status, 403);
+  assert.equal((await recordingApi(teacher.token, `/${id}/finish`, 'POST', { textChannelId: voice, durationMs: 5000 })).status, 404);
+  assert.equal((await recordingApi(teacher.token, `/${id}/finish`, 'POST', { textChannelId: 'nowhere', durationMs: 5000 })).status, 404);
+
+  const badgeGone = eventWhere(studentSocket, 'voice_state', state => !recordingIn(state, voice));
+  assert.equal((await recordingApi(teacher.token, `/${id}/stop`)).status, 200);
+  await badgeGone;
+  const posted = eventWhere(studentSocket, 'new_message', message => message.senderId === teacher.user.id && message.type === 'file');
+  const finished = await recordingApi(teacher.token, `/${id}/finish`, 'POST', { textChannelId: general, durationMs: 5000, name: 'Recording of General – 26 Sep 2026.webm' });
+  assert.equal(finished.status, 200);
+  const { attachmentId } = await finished.json();
+  const message = await posted;
+  assert.equal(message.conversationId, general);
+  assert.equal(message.attachmentId, attachmentId);
+  assert.deepEqual([message.mimeType, message.durationMs, message.fileName], ['video/webm', 5000, 'Recording of General – 26 Sep 2026.webm']);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM recordings WHERE id = ?').get(id).n, 0);
+  const download = await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth(student.token) });
+  assert.deepEqual(Buffer.from(await download.arrayBuffer()), expected);
+  await leaveCall(voice, teacherSocket, studentSocket);
+});
+
+test('a recording ends when its recorder leaves, and can be discarded or posted for them once it goes quiet', async () => {
+  const voice = firstChannel('voice');
+  const general = firstChannel('text');
+  const [recorder, watcher] = await Promise.all([join('Leaving recorder'), join('Recording watcher')]);
+  const [recorderSocket, watcherSocket] = await Promise.all([connect(recorder.token), connect(watcher.token)]);
+  await emitWithAck(recorderSocket, 'voice_join', { channelId: voice });
+  await emitWithAck(watcherSocket, 'voice_join', { channelId: voice });
+
+  const { id } = await (await recordingApi(recorder.token, '', 'POST', { voiceChannelId: voice })).json();
+  assert.equal((await sendPiece(recorder.token, id, 0, Buffer.from('not a video at all'))).status, 415);
+  assert.equal((await sendPiece(recorder.token, id, 0, webmStart())).status, 200);
+  const diskName = db.prepare('SELECT disk_name FROM recordings WHERE id = ?').get(id).disk_name;
+  const cleared = eventWhere(watcherSocket, 'voice_state', state => membersIn(state, voice).length === 1 && !recordingIn(state, voice));
+  recorderSocket.emit('voice_leave');
+  await cleared;
+  // Someone else may start a new one now; back in the call, the first recorder cannot bring back a
+  // badge that belongs to another recording.
+  const { id: other } = await (await recordingApi(watcher.token, '', 'POST', { voiceChannelId: voice })).json();
+  await emitWithAck(recorderSocket, 'voice_join', { channelId: voice });
+  assert.equal((await recordingApi(recorder.token, `/${id}/resume`)).status, 409);
+
+  // Discarding removes the file.
+  assert.equal((await recordingApi(watcher.token, `/${id}`, 'DELETE')).status, 403);
+  assert.equal((await recordingApi(recorder.token, `/${id}`, 'DELETE')).status, 200);
+  assert.equal(fs.existsSync(path.join(tempDir, 'uploads', diskName)), false);
+  assert.equal((await sendPiece(recorder.token, id, 1, Buffer.from('late'))).status, 404);
+
+  // A recording that goes quiet, because the recorder's browser died, is posted in the first text channel.
+  assert.equal((await sendPiece(watcher.token, other, 0, webmStart())).status, 200);
+  const { sweepIdleRecordings, IDLE_RECORDING_MS } = await import('../server/recordings.ts');
+  const posted = eventWhere(recorderSocket, 'new_message', message => message.senderId === watcher.user.id && message.type === 'file');
+  sweepIdleRecordings(Date.now() + IDLE_RECORDING_MS + 1000);
+  const message = await posted;
+  assert.equal(message.conversationId, general);
+  assert.equal(message.mimeType, 'video/webm');
+  assert.match(message.fileName, /^Recording of .+\.webm$/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM recordings WHERE id = ?').get(other).n, 0);
+  await leaveCall(voice, recorderSocket, watcherSocket);
+});
+
+test('a recording cannot grow past its size limit', async () => {
+  const voice = firstChannel('voice');
+  const recorder = await join('Big recorder');
+  const socket = await connect(recorder.token);
+  await emitWithAck(socket, 'voice_join', { channelId: voice });
+  const { id } = await (await recordingApi(recorder.token, '', 'POST', { voiceChannelId: voice })).json();
+  const previous = process.env.MAX_RECORDING_BYTES;
+  process.env.MAX_RECORDING_BYTES = '40';
+  try {
+    assert.equal((await sendPiece(recorder.token, id, 0, webmStart())).status, 200);
+    const refused = await sendPiece(recorder.token, id, 1, Buffer.alloc(30));
+    assert.equal(refused.status, 413);
+    assert.equal((await refused.json()).error, 'Recording too large');
+    // What was already recorded is kept.
+    assert.equal(db.prepare('SELECT size FROM recordings WHERE id = ?').get(id).size, webmStart().length);
+  } finally {
+    previous === undefined ? delete process.env.MAX_RECORDING_BYTES : process.env.MAX_RECORDING_BYTES = previous;
+  }
+  assert.equal((await sendPiece(recorder.token, id, 1, Buffer.alloc(17 * 1024 * 1024))).status, 413);
+  await recordingApi(recorder.token, `/${id}`, 'DELETE');
+  await leaveCall(voice, socket);
+});
+
+test('a video plays from a signed link that supports seeking, and a bad link is refused', async () => {
+  const general = firstChannel('text');
+  const viewer = await join('Video viewer');
+  const video = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.from('0123456789abcdefghij')]);
+  const form = new FormData();
+  form.append('conversationId', general);
+  form.append('file', new Blob([video], { type: 'video/webm' }), 'lesson.webm');
+  const { attachmentId } = await (await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth(viewer.token), body: form })).json();
+
+  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream-url`)).status, 401);
+  const { url } = await (await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream-url`, { headers: auth(viewer.token) })).json();
+  const whole = await fetch(`${baseUrl}${url}`);
+  assert.equal(whole.status, 200);
+  assert.equal(whole.headers.get('content-type'), 'video/webm');
+  assert.deepEqual(Buffer.from(await whole.arrayBuffer()), video);
+  const part = await fetch(`${baseUrl}${url}`, { headers: { Range: 'bytes=4-13' } });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get('content-range'), `bytes 4-13/${video.length}`);
+  assert.equal(await part.text(), '0123456789');
+
+  const token = new URL(url, baseUrl).searchParams.get('token');
+  // A link opens only its own file, and is never a session.
+  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream?token=nonsense`)).status, 401);
+  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream`)).status, 401);
+  assert.equal((await fetch(`${baseUrl}/api/me`, { headers: auth(token) })).status, 401);
+  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream?token=${encodeURIComponent(viewer.token)}`)).status, 401);
+  const forged = jwt.sign({ purpose: 'stream', attachmentId, sub: viewer.user.id }, 'some-other-secret-that-is-long-enough', { expiresIn: '1h' });
+  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream?token=${forged}`)).status, 401);
+});
+
 test('anyone can create, rename and delete channels, and the last text channel stays', async () => {
   const carol = await join('Carol');
   const socket = await connect(carol.token);

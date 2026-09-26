@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "260237133433",
+    "project_id": "majlis-3c104",
+    "storage_bucket": "majlis-3c104.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:260237133433:android:61d26f35bca4bc101376a8",
+        "android_client_info": {
+          "package_name": "com.samycc777.majlis"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBxiO8rEqd87H0_JtgUJZcJSS_7UMx4_GA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

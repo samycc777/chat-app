@@ -40,3 +40,6 @@ mobile/android/app/src/main/assets/capacitor.plugins.json
 *.aab
 .gradle/
 local.properties
+
+# Claude Code settings and helper workspaces on this computer
+.claude/

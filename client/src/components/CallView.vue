@@ -30,7 +30,8 @@ type Status = 'joining' | 'connected' | 'reconnecting' | 'disconnected';
 type CallMessage = { type: 'reaction'; emoji: string };
 type CallParticipant = { identity: string; name: string; local: boolean; micOn: boolean; speaking: boolean };
 
-const REACTIONS = ['👍', '❤️', '😂', '👏', '🎉', '😮'];
+// None of the reactions has a face.
+const REACTIONS = ['👍', '❤️', '👏', '🤲', '✅', '🎉'];
 const VOLUME_KEY = 'callVolume';
 const PERSON_VOLUMES_KEY = 'callVolumes';
 const ZOOM_HINT_KEY = 'zoomHintSeen';

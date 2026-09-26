@@ -26,11 +26,20 @@ function keyFrom(text: string) {
 }
 // The key arrives in the invite link. It is remembered and taken out of the address bar, so it does
 // not end up in a screenshot or a link copied from the address bar later.
-const linkKey = new URLSearchParams(window.location.search).get('invite');
+// An app added to an iPhone's Home Screen also starts with who this is and their name (see
+// homeScreen.ts), because it does not share Safari's storage. They never replace what this device
+// already knows, so a link cannot switch someone into another person.
+const params = new URLSearchParams(window.location.search);
+const linkKey = params.get('invite');
 if (linkKey) {
   store('inviteKey', linkKey);
+  const linkVisitor = params.get('visitor'), linkName = params.get('name');
+  if (linkVisitor && /^[0-9a-f-]{36}$/i.test(linkVisitor) && !stored('visitorId')) {
+    store('visitorId', linkVisitor);
+    if (linkName && !stored('displayName')) store('displayName', linkName.slice(0, 60));
+  }
   const url = new URL(window.location.href);
-  url.searchParams.delete('invite');
+  for (const key of ['invite', 'visitor', 'name']) url.searchParams.delete(key);
   window.history.replaceState(null, '', url);
 }
 

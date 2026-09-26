@@ -4,6 +4,7 @@ import { LoaderCircle, Menu, Volume2, WifiOff } from 'lucide-vue-next';
 import type { Socket } from 'socket.io-client';
 import type { Channel, Member, Message, OnlineUser, ReadState, User, VoiceCall } from './types';
 import { api, ApiError, session } from './api';
+import { forgetForHomeScreen, rememberForHomeScreen } from './homeScreen';
 import { connectSocket, disconnectSocket, getSocket } from './socket';
 import { channelToOpen, forgetThisDevice, startNotifications } from './notifications';
 import { useI18n } from './i18n';
@@ -156,6 +157,7 @@ function enterServer(sessionToken: string, user: User) {
   const socket = connectSocket(sessionToken);
   listen(socket, user);
   void startNotifications(socket);
+  rememberForHomeScreen(user.displayName);
 }
 
 function joined(result: { token: string; user: User }) {
@@ -228,6 +230,7 @@ function signOut() {
   // Signing out also forgets the name and invite, so the next person on this device starts fresh.
   try { localStorage.removeItem('displayName'); localStorage.removeItem('inviteKey'); } catch { /* Private browsing. */ }
   forgetThisDevice();
+  forgetForHomeScreen();
   endSession();
 }
 </script>

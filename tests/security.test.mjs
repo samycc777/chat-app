@@ -180,6 +180,20 @@ after(async () => {
 });
 
 
+test('the home screen app starts with the invite, identity and name only when the invite is right', async () => {
+  const visitor = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  const manifest = async query => (await fetch(`${baseUrl}/manifest.webmanifest${query}`)).json();
+  assert.equal((await manifest('')).start_url, '/');
+  assert.equal((await manifest(`?invite=wrong&visitor=${visitor}&name=Salma`)).start_url, '/');
+  const start = new URL((await manifest(`?invite=0000&visitor=${visitor}&name=${encodeURIComponent('Sal\u202Ema')}`)).start_url, baseUrl);
+  assert.equal(start.pathname, '/');
+  assert.equal(start.searchParams.get('invite'), '0000');
+  assert.equal(start.searchParams.get('visitor'), visitor);
+  assert.equal(start.searchParams.get('name'), 'Salma');
+  const badVisitor = new URL((await manifest('?invite=0000&visitor=nope')).start_url, baseUrl);
+  assert.equal(badVisitor.searchParams.get('visitor'), null);
+});
+
 test('everyone can read and post in text channels, see files, and nobody gets into unknown channels', async () => {
   const general = firstChannel('text');
   const alice = await join('Alice');

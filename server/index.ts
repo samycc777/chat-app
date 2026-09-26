@@ -4,10 +4,10 @@ import compression from 'compression';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
-import authRouter from './auth';
+import authRouter, { cleanDisplayName } from './auth';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
-import { serverName, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, production, UPLOADS_DIR } from './config';
+import { serverName, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, inviteKeyMatches, production, UPLOADS_DIR } from './config';
 import { rateLimit } from './rateLimit';
 import { streamAttachment } from './stream';
 
@@ -62,11 +62,26 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 // Named after the server, so someone who adds the app to their home screen sees its name.
-app.get('/manifest.webmanifest', (_req, res) => {
+// An iPhone keeps a Home Screen app's storage apart from Safari's, so the app would open knowing
+// nothing: no invite, no name. The page therefore asks for the manifest with its invite, visitor
+// identity and name, and the app's start link carries them, so it opens already signed in as the
+// same person. They are only echoed back when the invite is right, to someone who already has them.
+// It checks the invite, so it is limited like joining is, and cannot be used to guess the key.
+app.get('/manifest.webmanifest', rateLimit(300, 15 * 60_000), (req, res) => {
   const name = serverName() || 'Majlis';
+  const param = (key: string) => typeof req.query[key] === 'string' ? req.query[key] as string : '';
+  const invite = param('invite'), visitor = param('visitor'), person = cleanDisplayName(param('name')).slice(0, 60);
+  let startUrl = '/';
+  if (invite && inviteKeyMatches(invite)) {
+    const start = new URLSearchParams({ invite });
+    if (/^[0-9a-f-]{36}$/i.test(visitor)) start.set('visitor', visitor);
+    if (person) start.set('name', person);
+    startUrl = `/?${start}`;
+  }
   res.setHeader('Content-Type', 'application/manifest+json');
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
-    name, short_name: name, start_url: '/', scope: '/', display: 'standalone',
+    name, short_name: name, start_url: startUrl, scope: '/', display: 'standalone',
     background_color: '#313338', theme_color: '#1e1f22',
     icons: [
       { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },

@@ -12,4 +12,5 @@
     <string name="call_title">You are in a voice call</string>
     <string name="call_text">Your friends can still hear you while you use other apps.</string>
     <string name="call_leave">Leave call</string>
+    <string name="notification_channel">Messages and calls</string>
 </resources>

@@ -79,6 +79,11 @@ app.get('/manifest.webmanifest', (_req, res) => {
 // Built files carry a hash of their content in their names, so browsers may keep them for a year;
 // the page itself is revalidated on every visit, so a new deploy reaches everyone straight away.
 app.use('/assets', express.static(path.join(clientDist, 'assets'), { immutable: true, maxAge: '1y', fallthrough: false }));
+// The notification service worker must always be the newest one, and it caches nothing itself.
+app.get('/sw.js', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile('sw.js', { root: clientDist }, error => { if (error && !res.headersSent) res.status(404).end(); });
+});
 app.use(express.static(clientDist));
 app.get('/{*path}', (_req, res) => {
   res.setHeader('Cache-Control', 'no-cache');

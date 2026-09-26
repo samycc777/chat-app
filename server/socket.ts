@@ -5,9 +5,10 @@ import db from './database';
 import { verifyToken } from './auth';
 import { removeAttachmentIfUnused } from './attachments';
 import { ChannelKind, cleanChannelName, createChannel, deleteChannel, getChannel, isTextChannel, listChannels, renameChannel } from './channels';
-import { addToCall, allCalls, callOf, endCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
+import { addToCall, allCalls, callOf, endCall, getCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
 import { roomService } from './livekit';
 import { messageById } from './messages';
+import { forgetSocket, notifyCallStarted, notifyNewMessage, setAppActive } from './push';
 import { registerChatEvents } from './chat';
 import { connectRecordings } from './recordings';
 
@@ -140,6 +141,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       const message = messageById(id)!;
       io.to(EVERYONE).emit('new_message', message);
       callback?.({ id });
+      notifyNewMessage(message, getChannel(conversationId)!);
     });
 
     socket.on('edit_message', (data) => {
@@ -221,12 +223,22 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       if (channel?.kind !== 'voice') return reply({ error: 'Unknown channel' });
       const previous = callOf(userId);
       if (previous && previous.channelId !== channel.id) takeOutOfCall(userId);
+      const startsCall = !getCall(channel.id);
       const call = addToCall(channel.id, userId, socket.id);
       broadcastVoice();
       reply({ startedAt: call.startedAt });
+      // An app coming back after a dropped connection (or a server restart) rejoins its call, which
+      // is not news to anyone.
+      if (startsCall && (data as { rejoin?: unknown })?.rejoin !== true) notifyCallStarted(channel, userId);
     });
 
     socket.on('voice_leave', () => leaveCall(userId));
+
+    // Whether this page is in front of its owner; people are only notified while none of theirs is.
+    socket.on('app_active', (data: { active?: unknown }, callback?: unknown) => {
+      setAppActive(userId, socket.id, data?.active === true);
+      if (typeof callback === 'function') callback({ ok: true });
+    });
 
     socket.on('raise_hand', (data: { channelId: string; raised: boolean }) => {
       if (!data || typeof data.raised !== 'boolean') return;
@@ -238,6 +250,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     });
 
     socket.on('disconnect', () => {
+      forgetSocket(userId, socket.id);
       // The connection that joined a call carries it; if it drops, the app joins again when it
       // reconnects, so nobody is shown sitting in a call they have left.
       const call = callOf(userId);

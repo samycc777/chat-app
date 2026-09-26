@@ -241,6 +241,21 @@ screen, also turns the app sideways, even with the phone's rotation locked. Whil
 Back button only leaves it. The first time, Android shows its own "Viewing full screen" tip. An app
 installed before this existed shows full screen between the phone's bars until it is updated.
 
+**Notifications (app version 1.3 and newer).** The web view has no Web Push, so the apps use
+`@capacitor/push-notifications`: Firebase Cloud Messaging on Android, Apple's push service on iPhone. The
+page asks for permission and sends the device token to the server (`client/src/notifications.ts`), which
+sends notifications to it (`server/push.ts`). Tapping one opens its channel.
+
+- **Android** needs `android/app/google-services.json` from a Firebase project (the steps are in the main
+  README, "Setting up notifications for the phone apps"). Without it the app still builds and runs:
+  `PushSetupPlugin.kt` tells the page Firebase is missing, and Settings says notifications aren't set up
+  yet, because the push plugin would crash the app if it tried to register. The same plugin makes the
+  "Messages and calls" notification channel, which people can adjust in Android's settings. Android 13 and
+  newer ask for permission the first time someone taps Turn on.
+- **iPhone** has the Push Notifications entitlement (`ios/App/App/App.entitlements`) and the AppDelegate
+  hooks the plugin needs. With the paid developer account and Automatic signing, Xcode sets up the rest;
+  the server needs the Apple key described in the main README.
+
 ## Changing things
 
 - **The website**: just deploy it. Apps pick it up next time they open.

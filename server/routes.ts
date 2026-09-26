@@ -16,6 +16,7 @@ import { liveKitConfig } from './livekit';
 import { rateLimit } from './rateLimit';
 import recordingsRouter from './recordings';
 import { streamLink } from './stream';
+import { pushRouter } from './push';
 
 const router = Router();
 router.use(authMiddleware);
@@ -100,7 +101,7 @@ router.post('/livekit/screen-token', async (req: AuthRequest, res: Response) => 
 
 router.get('/me', (req: AuthRequest, res: Response) => {
   const user = db.prepare(
-    'SELECT id, username, display_name, avatar_color, status FROM users WHERE id = ?'
+    'SELECT id, username, display_name, avatar_color, status, notify_level FROM users WHERE id = ?'
   ).get(req.userId!) as any;
   if (!user) { res.status(404).json({ error: 'User not found' }); return; }
   res.json({
@@ -109,8 +110,11 @@ router.get('/me', (req: AuthRequest, res: Response) => {
     displayName: user.display_name,
     avatarColor: user.avatar_color,
     status: user.status,
+    notifyLevel: user.notify_level,
   });
 });
+
+router.use('/push', pushRouter);
 
 const MESSAGE_ID = /^[0-9a-f-]{36}$/i;
 const TIMESTAMP = /^\d+$/;

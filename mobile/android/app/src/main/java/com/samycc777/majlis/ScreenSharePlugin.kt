@@ -17,11 +17,15 @@ import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
+import io.livekit.android.room.track.CustomVideoPreset
+import io.livekit.android.room.track.VideoCaptureParameter
+import io.livekit.android.room.track.VideoEncoding
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import livekit.org.webrtc.RtpParameters
 
 // A web page inside an app is not allowed to capture the screen, so the call screen asks this
 // plugin instead. It joins the call a second time with a screen-only pass from the server and
@@ -60,6 +64,7 @@ class ScreenSharePlugin : Plugin() {
     }
     val sharing = LiveKit.create(context.applicationContext)
     room = sharing
+    lighten(sharing)
     starting = false
     // Android turns off an app's microphone while another app is on screen unless a notification
     // says it is in use, and showing another app is the point of sharing the screen.
@@ -86,6 +91,26 @@ class ScreenSharePlugin : Plugin() {
       // The server closes this connection when its owner leaves the call.
       sharing.events.collect { event -> if (event is RoomEvent.Disconnected) finish() }
     }
+  }
+
+  // Left alone, LiveKit sends the whole screen thirty times a second at up to 7 Mbps, far more than
+  // some of the class's internet can take. A lesson's screen is mostly still writing, so ten frames
+  // a second at full sharpness is plenty, and when the internet is short the frames get fewer rather
+  // than the writing blurrier. Two smaller copies go out too, and the server gives each person the
+  // largest one their internet can carry, so a slow connection still sees the lesson.
+  private fun lighten(sharing: Room) {
+    val participant = sharing.localParticipant
+    participant.screenShareTrackCaptureDefaults = participant.screenShareTrackCaptureDefaults.copy(
+      captureParams = VideoCaptureParameter(0, 0, 10),
+    )
+    participant.screenShareTrackPublishDefaults = participant.screenShareTrackPublishDefaults.copy(
+      videoEncoding = VideoEncoding(1_200_000, 10),
+      degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION,
+      simulcastLayers = listOf(
+        CustomVideoPreset(VideoCaptureParameter(640, 360, 3), VideoEncoding(120_000, 3)),
+        CustomVideoPreset(VideoCaptureParameter(1280, 720, 5), VideoEncoding(400_000, 5)),
+      ),
+    )
   }
 
   private fun finish() {

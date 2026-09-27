@@ -5,7 +5,7 @@ import {
   Square, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
-  ConnectionQuality, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
+  AudioPresets, ConnectionQuality, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPreset, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
   type RemoteTrack, type RemoteTrackPublication, type VideoTrack,
 } from 'livekit-client';
 import { api, ApiError } from '../api';
@@ -92,6 +92,9 @@ const raisedHands = computed(() => new Set(props.hands.map(hand => hand.userId))
 const reactions = ref<{ id: number; emoji: string; name: string; drift: number }[]>([]);
 const toast = ref('');
 const weakConnection = ref(false);
+// Once this device's internet has shown it cannot keep up, other people's cameras stop being
+// downloaded until the call is left, so what little there is goes to voices and the shared screen.
+const savingData = ref(false);
 const startedAt = ref(0);
 const now = ref(Date.now());
 // The tile shown full screen, alone over everything else, and whether its bar of buttons is showing.
@@ -509,7 +512,7 @@ watch(() => [micOn.value, status.value, props.visible, inMiniWindow.value] as co
 async function toggleCamera() {
   if (!room) return;
   try {
-    await room.localParticipant.setCameraEnabled(!cameraOn.value, { resolution: VideoPresets.h540.resolution, facingMode: 'user' });
+    await room.localParticipant.setCameraEnabled(!cameraOn.value, { resolution: VideoPresets.h360.resolution, facingMode: 'user' });
   } catch {
     showToast(t('cameraBlocked'));
   }
@@ -528,10 +531,24 @@ async function togglePhoneScreenShare() {
   }
   refresh();
 }
-// Downloading your own phone's screen would only use data to show it back to you.
+// Downloading your own phone's screen would only use data to show it back to you. A recording
+// made here needs the cameras, so they are kept even while saving data.
 function onTrackPublished(publication: RemoteTrackPublication, participant: RemoteParticipant) {
   if (participant.identity === myPhoneScreen()) publication.setSubscribed(recordingHere.value && publication.source === Track.Source.ScreenShare);
+  else if (publication.source === Track.Source.Camera) publication.setSubscribed(!savingData.value || recordingHere.value);
 }
+function saveData() {
+  if (savingData.value || !room) return;
+  savingData.value = true;
+  applySavingData();
+  showToast(t('camerasHiddenSlowInternet'), 6000);
+}
+function applySavingData() {
+  for (const participant of room?.remoteParticipants.values() ?? []) {
+    for (const publication of participant.trackPublications.values()) onTrackPublished(publication, participant);
+  }
+}
+watch(recordingHere, applySavingData);
 // Two short pulses when someone else joins the call, so a phone in a pocket feels it; there is no
 // sound. A friend whose connection dropped for a moment is coming back rather than joining.
 const leftAt = new Map<string, number>();
@@ -546,10 +563,11 @@ async function toggleScreenShare() {
   if (!canShareScreen) { showToast(t('screenShareUnsupported')); return; }
   if (phoneScreenShareAvailable) { await togglePhoneScreenShare(); return; }
   try {
-    // A shared browser tab can bring its sound along, for watching a video together.
+    // A shared browser tab can bring its sound along, for watching a video together. That sound
+    // keeps a fuller quality than a microphone's, since it is not always one clear voice.
     await room.localParticipant.setScreenShareEnabled(!sharingScreen.value, {
       audio: true, selfBrowserSurface: 'exclude', surfaceSwitching: 'include', systemAudio: 'include',
-    });
+    }, { audioPreset: AudioPresets.music });
   } catch { /* The browser's screen picker was closed. */ }
   refresh();
 }
@@ -638,7 +656,21 @@ async function connect() {
     startedAt.value = credentials.startedAt;
     // Adaptive streaming sends each tile only as much video as its size needs, and dynacast stops
     // sending camera layers nobody is watching, which keeps calls light on mobile data.
-    const connectingRoom = new Room({ adaptiveStream: true, dynacast: true, ...(audioContext ? { webAudioMix: { audioContext } } : {}) });
+    const connectingRoom = new Room({
+      adaptiveStream: true, dynacast: true, ...(audioContext ? { webAudioMix: { audioContext } } : {}),
+      // Everything is sent as lightly as it can be while staying clear, because some of the class
+      // have slow internet. Each video also goes out in smaller copies, and the server gives every
+      // person the largest copy their internet can take, so one slow connection slows nobody else.
+      // A voice needs far less than music; a shared browser tab's sound keeps music quality (see
+      // toggleScreenShare).
+      publishDefaults: {
+        audioPreset: AudioPresets.speech,
+        videoSimulcastLayers: [VideoPresets.h90, VideoPresets.h180],
+        // A screen is mostly still text, so a few frames a second keep it readable at a fraction of the data.
+        screenShareEncoding: { maxBitrate: 1_200_000, maxFramerate: 15 },
+        screenShareSimulcastLayers: [new VideoPreset(640, 360, 120_000, 3), new VideoPreset(1280, 720, 400_000, 5)],
+      },
+    });
     room = connectingRoom;
     // Events from a room that a rejoin has replaced are ignored.
     const current = () => !disposed && room === connectingRoom;
@@ -686,10 +718,14 @@ async function connect() {
     connectingRoom.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
       if (!current() || participant !== connectingRoom.localParticipant) return;
       clearTimeout(weakTimer);
-      if (quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost) weakTimer = setTimeout(() => { weakConnection.value = true; }, 3000);
+      if (quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost) weakTimer = setTimeout(() => { weakConnection.value = true; saveData(); }, 3000);
       else weakConnection.value = false;
     });
     connectingRoom.on(RoomEvent.TrackPublished, (publication, participant) => { if (current()) onTrackPublished(publication, participant); });
+    // The server pauses a video when this device's internet cannot carry it.
+    connectingRoom.on(RoomEvent.TrackStreamStateChanged, (publication, state) => {
+      if (current() && state === Track.StreamState.Paused && publication.kind === Track.Kind.Video && publication.isSubscribed) saveData();
+    });
     for (const event of [
       RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected, RoomEvent.ParticipantNameChanged,
       RoomEvent.TrackPublished, RoomEvent.TrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
@@ -697,6 +733,8 @@ async function connect() {
     ] as const) connectingRoom.on(event, () => { if (current()) refresh(); });
     await connectingRoom.connect(credentials.url, credentials.token);
     if (!current()) { connectingRoom.disconnect(); return; }
+    // A phone set to save data (Android's Data Saver in Chrome) is slow or on a limited plan from the start.
+    if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) savingData.value = true;
     status.value = 'connected';
     for (const participant of connectingRoom.remoteParticipants.values()) {
       for (const publication of participant.trackPublications.values()) {

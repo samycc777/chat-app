@@ -9,6 +9,8 @@ import { bridge } from './nativeScreenShare';
 // the background until the new app is installed.
 const plugin = bridge?.PluginHeaders?.find(header => header.name === 'Call');
 const available = Boolean(plugin);
+/** Whether leaving the app can shrink the call into a small window over other apps. */
+export const miniWindowAvailable = Boolean(plugin?.methods?.some(method => method.name === 'setMiniWindow'));
 /**
  * Whether the app can hide the phone's own bars and turn sideways for full screen. Apps from before
  * that still show full screen, just between the phone's bars.

@@ -16,7 +16,7 @@ import {
   bridge, onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
 } from '../nativeScreenShare';
 import {
-  endPhoneCall, inMiniWindow, keepPhoneCallGoing, onPhoneCallLeave, onPhoneFullScreenExit, phoneFullScreenAvailable, setMiniWindow,
+  endPhoneCall, inMiniWindow, keepPhoneCallGoing, miniWindowAvailable, onPhoneCallLeave, onPhoneFullScreenExit, phoneFullScreenAvailable, setMiniWindow,
   setPhoneFullScreen,
 } from '../nativeCall';
 import { canRecord, isRecording, startRecording, stopRecording } from '../callRecorder';
@@ -243,10 +243,13 @@ function refresh() {
 // Tells the Android app whether to shrink into the small window when its owner leaves it, and in
 // what shape. Wide or tall, the window matches the video, so none of it is cut off. The shape is
 // compared as text, so the app is only told when it really changes, not on every refresh.
+// The size of the picture the small window's video really shows, once it has arrived.
+const miniVideo = shallowRef<{ key: string; width: number; height: number } | null>(null);
 const miniShape = computed(() => {
   const tile = miniTile.value;
   if (!tile) return '';
-  const size = tile.dimensions ?? (tile.kind === 'screen' ? { width: 16, height: 9 } : { width: 4, height: 3 });
+  const size = (miniVideo.value?.key === tile.key ? miniVideo.value : null) ?? tile.dimensions
+    ?? (tile.kind === 'screen' ? { width: 16, height: 9 } : { width: 4, height: 3 });
   return `${size.width}x${size.height}`;
 });
 watch(miniShape, shape => {
@@ -822,16 +825,25 @@ onBeforeUnmount(cleanup);
 
 <template>
   <section v-show="visible || inMiniWindow" ref="root" class="call-view" :class="{ mini: inMiniWindow }" :aria-label="channelName">
-    <!-- The Android app's small window over other apps: just one video, or who is talking. -->
-    <div v-if="inMiniWindow" class="call-mini">
-      <CallTile v-if="miniTile && status === 'connected'" :tile="miniTile" :focused="false" small />
+    <!-- The Android app's small window over other apps: just one video, or who is talking. It and
+         the full call screen both stay on the page, only hidden, so going in and out of the small
+         window shows the video straight away. A video made anew stays empty until the picture next
+         changes, which for a teacher's still screen can take a long time. -->
+    <div v-if="miniWindowAvailable" v-show="inMiniWindow" class="call-mini">
+      <CallTile
+        v-if="miniTile && status === 'connected'"
+        :tile="miniTile"
+        :focused="false"
+        small
+        @video-size="size => miniVideo = { key: miniTile!.key, ...size }"
+      />
       <div v-else class="call-mini-card">
         <Avatar v-if="miniSpeaker" :name="miniSpeaker.name" :color="colorOf(miniSpeaker.identity)" size="small" />
         <Volume2 v-else :size="22" aria-hidden="true" />
         <bdi>{{ miniSpeaker?.name ?? channelName }}</bdi>
       </div>
     </div>
-    <template v-else>
+    <div v-show="!inMiniWindow" class="call-main">
       <header class="call-header">
         <button class="call-icon-btn menu-btn" type="button" :aria-label="t('channels')" @click="emit('menu')"><Menu :size="20" /></button>
         <Volume2 :size="20" class="call-header-icon" aria-hidden="true" />
@@ -996,7 +1008,7 @@ onBeforeUnmount(cleanup);
           </button>
         </section>
       </template>
-    </template>
+    </div>
   </section>
 </template>
 
@@ -1019,6 +1031,10 @@ onBeforeUnmount(cleanup);
   position: fixed;
   inset: 0;
   z-index: 1000;
+}
+
+.call-main {
+  display: contents;
 }
 
 .call-mini {

@@ -24,8 +24,9 @@ export interface Tile {
 // `full` is the tile shown full screen: it fills the screen alone, can be zoomed into, and leaves
 // its name and buttons to the call screen's own bar on top of it.
 const props = defineProps<{ tile: Tile; focused: boolean; small?: boolean; full?: boolean }>();
-const emit = defineEmits<{ focus: []; fullscreen: [] }>();
+const emit = defineEmits<{ focus: []; fullscreen: []; videoSize: [size: { width: number; height: number }] }>();
 const { t } = useI18n();
+const NO_POSTER = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 const root = ref<HTMLElement>();
 const video = ref<HTMLVideoElement>();
 let attached: VideoTrack | null = null;
@@ -45,6 +46,12 @@ function show(track: VideoTrack | null) {
   attached = track;
 }
 watch([() => props.tile.track, video], ([track]) => show(track), { immediate: true });
+// The size the sender announced when they started can be wrong, for example after the teacher's
+// tablet is turned, so the phone's small window takes its shape from the picture that really arrives.
+function reportSize() {
+  const { videoWidth: width, videoHeight: height } = video.value ?? {};
+  if (width && height) emit('videoSize', { width, height });
+}
 onBeforeUnmount(() => show(null));
 </script>
 
@@ -57,7 +64,8 @@ onBeforeUnmount(() => show(null));
     @click.capture="zoom.clickCapture"
   >
     <div class="call-tile-media" :style="zoom.style.value">
-      <video v-show="tile.track && !ownScreen" ref="video" autoplay playsinline muted />
+      <!-- The empty poster replaces the grey play button Android shows until the first picture arrives. -->
+      <video v-show="tile.track && !ownScreen" ref="video" autoplay playsinline muted :poster="NO_POSTER" @loadedmetadata="reportSize" @resize="reportSize" />
     </div>
     <div v-if="ownScreen" class="call-tile-placeholder">
       <ScreenShare :size="small ? 22 : 34" />

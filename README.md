@@ -15,7 +15,7 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
 - **Pinned messages.** Anyone can pin a message (hover or long-press, then Pin) so it stays easy to find, such as homework or the lesson times. The pin button at the top of a channel lists them; tap one to jump to it.
 - **Search.** The magnifying glass at the top searches every text channel. Vowel marks don't matter, so كتاب finds كِتَابٌ. Tap a result to open the conversation at that message.
 - **Who's around.** The member list shows everyone who has joined: who is online now, and for everyone else when they were last seen.
-- **Voice channels.** Tap a voice channel to join its call; your microphone starts on, and one tap mutes it. Everyone in the server sees who is in each voice channel, under its name in the channel list. In a call, anyone can:
+- **Voice channels.** Tap a voice channel to join its call; your microphone starts on, and one tap mutes it. If the microphone will not turn on, the call says why and what to change: the browser's permission, the computer's privacy settings (Windows or Mac), another app using it, or no microphone plugged in. Everyone in the server sees who is in each voice channel, under its name in the channel list. In a call, anyone can:
   - turn their camera on,
   - share their screen from a computer or the Android app (Android first asks "Share your screen with Hangout?"; a notification with a Stop sharing button stays while it lasts, and the voice keeps going while another app is shown). A shared browser tab on a computer can bring its sound along. iPhones and phone browsers cannot share their screen yet,
   - raise a hand and send reactions,

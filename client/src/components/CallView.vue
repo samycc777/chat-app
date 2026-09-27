@@ -5,7 +5,7 @@ import {
   Square, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
-  ConnectionQuality, DisconnectReason, Room, RoomEvent, Track, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
+  ConnectionQuality, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
   type RemoteTrack, type RemoteTrackPublication, type VideoTrack,
 } from 'livekit-client';
 import { api, ApiError } from '../api';
@@ -180,10 +180,10 @@ function onKeydown(event: KeyboardEvent) {
   if (sheet.value) sheet.value = null;
   else exitFullScreen();
 }
-function showToast(message: string) {
+function showToast(message: string, duration = 3500) {
   toast.value = message;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toast.value = ''; }, 3500);
+  toastTimer = setTimeout(() => { toast.value = ''; }, duration);
 }
 
 const myPhoneScreen = () => `${props.userId}${SCREEN_SUFFIX}`;
@@ -443,11 +443,24 @@ async function setMicrophone(enabled: boolean) {
     if (enabled) await cleanMicrophone();
     // The first time, the phone has only just been allowed to use the microphone.
     if (enabled) keepPhoneCallGoing();
-  } catch {
-    showToast(t('micBlocked'));
+  } catch (cause) {
+    // Instructions to follow take longer to read than a notice.
+    showToast(microphoneProblem(cause), 10_000);
   } finally {
     refresh();
   }
+}
+// A friend whose microphone will not turn on needs to know what to fix: the browser, the computer
+// (Windows can block every browser at once), another app holding it, or no microphone at all.
+function microphoneProblem(cause: unknown) {
+  const failure = cause instanceof Error ? MediaDeviceFailure.getFailure(cause) : undefined;
+  if (failure === MediaDeviceFailure.NotFound) return t('micNotFound');
+  if (failure === MediaDeviceFailure.DeviceInUse) return t('micInUse');
+  // Chrome and Edge say "Permission denied by system" when the computer, not the page, refused.
+  if (failure === MediaDeviceFailure.PermissionDenied && /system/i.test((cause as Error).message)) {
+    return t(/Mac/.test(navigator.userAgent) ? 'micBlockedByMac' : 'micBlockedByWindows');
+  }
+  return t('micBlocked');
 }
 // Talking while muted gets a reminder, as in Zoom. A copy of the microphone is listened to on this
 // device only; it is never sent, and it is let go as soon as the microphone is turned back on.
@@ -1348,6 +1361,11 @@ onBeforeUnmount(cleanup);
 
 .call-toast {
   top: 112px;
+  width: max-content;
+  max-width: min(460px, calc(100% - 32px));
+  border-radius: 14px;
+  white-space: normal;
+  text-align: center;
 }
 
 .call-reconnecting {

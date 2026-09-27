@@ -215,7 +215,9 @@ router.get('/attachments/:id', (req: AuthRequest, res: Response) => {
   res.setHeader('Content-Type', attachment.mime_type);
   res.setHeader('Content-Length', attachment.size);
   res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(attachment.original_name)}`);
-  res.setHeader('Cache-Control', 'private, no-store');
+  // A file never changes once uploaded, so each device keeps its copy instead of downloading a
+  // photo again every time the chat scrolls past it. Private keeps it out of shared caches.
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
   res.sendFile(diskPath);
 });
 

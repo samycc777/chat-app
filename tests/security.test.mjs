@@ -204,7 +204,10 @@ test('everyone can read and post in text channels, see files, and nobody gets in
   const uploaded = await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth(alice.token), body: form });
   assert.equal(uploaded.status, 200);
   const { attachmentId } = await uploaded.json();
-  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth(bob.token) })).status, 200);
+  const seen = await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth(bob.token) });
+  assert.equal(seen.status, 200);
+  // Kept by each device, so a slow connection downloads a photo once, but never by a shared cache.
+  assert.equal(seen.headers.get('cache-control'), 'private, max-age=31536000, immutable');
   assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth('invalid') })).status, 401);
   assert.equal((await fetch(`${baseUrl}/uploads/${attachmentId}`, { headers: auth('invalid') })).status, 404);
 

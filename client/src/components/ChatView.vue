@@ -37,6 +37,7 @@ import ArabicKeyboard from './ArabicKeyboard.vue';
 import Attachment from './Attachment.vue';
 import Avatar from './Avatar.vue';
 import VoiceNote from './VoiceNote.vue';
+import { shrinkPhoto } from '../shrinkPhoto';
 
 const props = defineProps<{
   channel: Channel;
@@ -558,7 +559,7 @@ async function upload(event: Event) {
   const element = event.target as HTMLInputElement;
   const file = element.files?.[0];
   if (!file) return;
-  await shareFile(file);
+  await shareFile(await shrinkPhoto(file));
   element.value = '';
 }
 

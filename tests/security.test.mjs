@@ -777,6 +777,21 @@ test('changing the invite key signs out everyone who does not have the new link'
   }
 });
 
+test('the plain address joins like the invite link only when joining is open', async () => {
+  const info = async () => (await fetch(`${baseUrl}/api/server`)).json();
+  assert.equal((await info()).invite, undefined);
+  const previous = process.env.OPEN_JOIN;
+  process.env.OPEN_JOIN = '1';
+  try {
+    const { invite } = await info();
+    assert.equal(invite, '0000');
+    assert.equal((await joinRequest({ inviteKey: invite, visitorId: nextVisitorId(), displayName: 'From the address' })).status, 200);
+  } finally {
+    previous === undefined ? delete process.env.OPEN_JOIN : process.env.OPEN_JOIN = previous;
+  }
+  assert.equal((await info()).invite, undefined);
+});
+
 test("the class app's chat becomes #general with its messages when Hangout first starts on its server", () => {
   const classDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hangout-class-'));
   try {

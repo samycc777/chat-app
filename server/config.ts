@@ -48,6 +48,12 @@ export function inviteKeyMatches(entered: string): boolean {
   return timingSafeEqual(digest(code), digest(inviteKey()));
 }
 
+// With OPEN_JOIN=1 the site's plain address works like the invite link: the join screen is given
+// the key, so anyone who opens the address can join. Read on every use, like the key itself.
+export function openJoin(): boolean {
+  return /^(1|true|yes|on)$/i.test((process.env.OPEN_JOIN || '').trim());
+}
+
 export function serverName(): string {
   return (process.env.SERVER_NAME || '').trim().slice(0, 80);
 }

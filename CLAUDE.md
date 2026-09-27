@@ -7,7 +7,7 @@ The friends are not all tech-savvy. Keep every flow simple: people join by openi
 ## Layout
 
 - `server/` — one Node.js process (Express 5, Socket.IO, better-sqlite3), TypeScript compiled to `dist/`.
-  - `index.ts` wires everything up; `config.ts` reads env vars (`INVITE_KEY`, `SERVER_NAME`, ...); `database.ts` holds the schema and migrations, including the `channels` table.
+  - `index.ts` wires everything up; `config.ts` reads env vars (`INVITE_KEY`, `OPEN_JOIN`, `SERVER_NAME`, ...); `database.ts` holds the schema and migrations, including the `channels` table.
   - `auth.ts` is joining with the invite key (`/api/auth/join`, rate-limited) and month-long session tokens.
   - `channels.ts` creates, renames and deletes channels. A text channel is also a `conversations` row, so messages and attachments keep their tables.
   - `voice.ts` keeps who is in each voice channel's call, in memory, including who is recording it. Each voice channel is one LiveKit room, `voice-<channelId>`.

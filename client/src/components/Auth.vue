@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { api, session } from '../api';
 import { useI18n } from '../i18n';
 import type { User } from '../types';
 const emit = defineEmits<{ auth: [result: { token: string; user: User }]; 'toggle-theme': [] }>();
-const props = defineProps<{ theme: 'light' | 'dark'; serverName: string; notice?: string }>();
+const props = defineProps<{ theme: 'light' | 'dark'; serverName: string; notice?: string; openInvite?: string }>();
 const { t, lang, setLang, translateError } = useI18n();
 
 // iOS Safari before 15.4 has no randomUUID, so build the same version 4 format from random bytes.
@@ -51,6 +51,7 @@ const pastedLink = ref('');
 const displayName = ref(savedName.value), error = ref(''), loading = ref(false);
 const needsName = computed(() => !savedName.value);
 async function submit() {
+  if (loading.value) return;
   error.value = ''; loading.value = true;
   const key = inviteKey.value || keyFrom(pastedLink.value);
   try {
@@ -63,13 +64,24 @@ async function submit() {
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : '';
     // A key that stopped working (because it was changed) is forgotten, so the new link can be pasted.
-    if (message === 'Invalid invite link') { inviteKey.value = ''; store('inviteKey', ''); }
+    if (message === 'Invalid invite link') {
+      inviteKey.value = props.openInvite && props.openInvite !== key ? props.openInvite : '';
+      store('inviteKey', inviteKey.value);
+    }
     error.value = translateError(message);
   } finally { loading.value = false; }
 }
 function changeName() { savedName.value = ''; displayName.value = ''; store('displayName', ''); }
 // Someone who has been here before, on this device, goes straight back in.
 onMounted(() => { if (inviteKey.value && savedName.value && !props.notice) void submit(); });
+// When the site lets anyone join from its plain address, the server gives the key, and the address
+// then works as the invite link would. A key this device already has is kept, unless it stopped working.
+watch(() => props.openInvite, key => {
+  if (!key || inviteKey.value) return;
+  inviteKey.value = key;
+  store('inviteKey', key);
+  if (savedName.value && !props.notice) void submit();
+}, { immediate: true });
 </script>
 <template>
   <div class="auth-container"><form class="auth-card" @submit.prevent="submit">

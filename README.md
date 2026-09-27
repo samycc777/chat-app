@@ -6,7 +6,7 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
 
 ## What everyone can do
 
-- **Join with the invite link.** Open the link a friend sent and type your name once. Nobody types a code: the key is inside the link. The app remembers you, so next time it opens straight into the server. The invite button (the person with a +) next to the server's name copies the link, or opens the share sheet on a phone.
+- **Join with the invite link.** Open the link a friend sent and type your name once. Nobody types a code: the key is inside the link. The app remembers you, so next time it opens straight into the server. The invite button (the person with a +) next to the server's name copies the link, or opens the share sheet on a phone. When the server has `OPEN_JOIN` on, the site's plain address works the same way, without the invite part; anyone who finds the address can then join.
 - **Text channels.** Messages, replies, edits, links, images and PDFs, in channels such as #general. Everyone can delete their own messages. Earlier history loads a page at a time.
 - **Unread messages.** A channel with messages you haven't read yet is shown in bold with a white dot, and a red number counts messages that mention you. When you open it, a red **New** line shows where you stopped reading. What you've read is remembered on every device you use, and someone who joins later starts with the old history already read. On a phone, a red dot on the ☰ button means another channel has something new.
 - **Voice messages.** When the message box is empty, the send button becomes a microphone. Tap it, talk, then tap send (or the bin to throw it away). A voice message can be up to five minutes long, and plays inside the chat with one tap. Handy for reading practice: a student sends their reading, and the teacher answers with the right pronunciation. Sound and video files can also be shared with the paperclip.
@@ -49,6 +49,7 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
 | `DATA_DIR` | production | Persistent directory for the SQLite database and uploads (a Railway Volume). |
 | `ALLOWED_ORIGINS` | production | Comma-separated exact origins allowed to use the site, such as `https://your-app.up.railway.app`. |
 | `INVITE_KEY` | production | The secret inside the invite link, at least 12 characters. Nobody types it, so make it long and random. The invite link is `https://<your site>/?invite=<INVITE_KEY>`. |
+| `OPEN_JOIN` | no | Set to `1` to let the site's plain address work like the invite link, so anyone who opens it can join. Leave it unset to keep the invite link needed. To close the server again afterwards, unset it and change `INVITE_KEY`. |
 | `SERVER_NAME` | no | Name shown at the top of the channel list, on the join screen, in the browser tab and under the home-screen icon. |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | for calls | Credentials of a LiveKit Cloud project. Without them the text channels work but calls cannot start. |
 | `MAX_UPLOAD_BYTES` | no | Largest upload in bytes; 100 MB by default. |

@@ -57,6 +57,8 @@ const callView = ref<{ toggleMicrophone: () => void; leave: () => void } | null>
 const sidebarOpen = ref(false);
 const membersOpen = ref(window.innerWidth >= 1000);
 const serverName = ref('');
+// Given only when the site lets anyone join from its plain address (see Auth.vue).
+const openInvite = ref('');
 // Discord is dark by default, and so is this app until someone picks the light theme.
 const theme = ref<'light' | 'dark'>(stored('theme') === 'light' ? 'light' : 'dark');
 watch(theme, value => store('theme', value));
@@ -182,7 +184,7 @@ async function restoreSession() {
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange);
-  api.getServerInfo().then(info => { serverName.value = info.name || ''; }).catch(() => {});
+  api.getServerInfo().then(info => { serverName.value = info.name || ''; openInvite.value = info.invite || ''; }).catch(() => {});
   void restoreSession();
 });
 
@@ -244,7 +246,7 @@ function signOut() {
     </template>
     <LoaderCircle v-else class="boot-spinner" :size="30" :aria-label="t('pleaseWait')" />
   </div>
-  <Auth v-else-if="!token || !currentUser" :theme="theme" :server-name="serverName" @auth="joined" @toggle-theme="theme = theme === 'light' ? 'dark' : 'light'" />
+  <Auth v-else-if="!token || !currentUser" :theme="theme" :server-name="serverName" :open-invite="openInvite" @auth="joined" @toggle-theme="theme = theme === 'light' ? 'dark' : 'light'" />
   <main v-else class="server-layout" :class="{ 'sidebar-open': sidebarOpen, 'members-open': membersOpen }">
     <ServerSidebar
       :server-name="serverName"

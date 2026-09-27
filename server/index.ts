@@ -7,7 +7,7 @@ import fs from 'fs';
 import authRouter, { cleanDisplayName } from './auth';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
-import { serverName, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, inviteKeyMatches, production, UPLOADS_DIR } from './config';
+import { inviteKey, openJoin, serverName, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, inviteKeyMatches, production, UPLOADS_DIR } from './config';
 import { rateLimit } from './rateLimit';
 import { streamAttachment } from './stream';
 
@@ -37,8 +37,12 @@ app.use((_req, res, next) => {
 app.use(compression());
 app.use(express.json({ limit: '64kb' }));
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
-// The server's name is shown on the join screen, before anyone has joined.
-app.get('/api/server', (_req, res) => res.json({ name: serverName() || null }));
+// The server's name is shown on the join screen, before anyone has joined. When joining is open,
+// the key comes along, so the plain address joins exactly as the invite link does.
+app.get('/api/server', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ name: serverName() || null, ...(openJoin() ? { invite: inviteKey() } : {}) });
+});
 
 // Several friends may share one network address, so these per-address limits are generous;
 // signed-in requests are also limited per person in the API router.

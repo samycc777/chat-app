@@ -42,7 +42,7 @@ export async function request(path: string, options: RequestInit = {}) {
 }
 
 export const api = {
-  getServerInfo: (): Promise<{ name: string | null }> => request('/api/server'),
+  getServerInfo: (): Promise<{ name: string | null; invite?: string }> => request('/api/server'),
   getLiveKitToken: (channelId: string): Promise<LiveKitCredentials> =>
     request('/api/livekit/token', { method: 'POST', body: JSON.stringify({ channelId }) }),
   getScreenToken: (channelId: string): Promise<{ url: string; token: string }> =>

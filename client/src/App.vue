@@ -30,6 +30,20 @@ const loadCallView = () => import('./components/CallView.vue')
     throw error;
   });
 const CallView = defineAsyncComponent(loadCallView);
+// Joining a call used to wait for the call screen and the noise filter to download, which on slow
+// internet took several seconds. They are fetched quietly once the chat has had time to load, so
+// joining later reads them from the device. A failed download here is simply tried again on joining.
+let preloaded = false;
+function preloadCall() {
+  if (preloaded) return;
+  preloaded = true;
+  setTimeout(() => {
+    import('./components/CallView.vue')
+      .then(() => import('./cleanVoice'))
+      .then(module => module.preloadCleanVoice())
+      .catch(() => {});
+  }, 4000);
+}
 
 const { t, translateError } = useI18n();
 const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
@@ -53,6 +67,8 @@ const selectedId = ref<string | null>(stored('lastChannel'));
 const callChannelId = ref<string | null>(null);
 const callState = ref({ micOn: false, cameraOn: false, sharing: false, speaking: [] as string[] });
 const callError = ref('');
+// The voice channel being joined, while the server is told and the call screen loads.
+const joiningId = ref<string | null>(null);
 const callView = ref<{ toggleMicrophone: () => void; leave: () => void } | null>(null);
 const sidebarOpen = ref(false);
 const membersOpen = ref(window.innerWidth >= 1000);
@@ -160,6 +176,7 @@ function enterServer(sessionToken: string, user: User) {
   listen(socket, user);
   void startNotifications(socket);
   rememberForHomeScreen(user.displayName);
+  preloadCall();
 }
 
 function joined(result: { token: string; user: User }) {
@@ -207,13 +224,26 @@ const unreadElsewhere = computed(() => [...reads.value.values()]
 function select(channel: Channel) {
   selectedId.value = channel.id;
   sidebarOpen.value = false;
-  if (channel.kind !== 'voice' || channel.id === callChannelId.value) return;
+  if (channel.kind !== 'voice' || channel.id === callChannelId.value || channel.id === joiningId.value) return;
+  const socket = getSocket();
+  if (!socket) return;
   callError.value = '';
-  // Loading the call screen starts now, while the server is still being told.
-  loadCallView().catch(() => {});
-  getSocket()?.emit('voice_join', { channelId: channel.id }, (result: { error?: string }) => {
+  joiningId.value = channel.id;
+  // Loading the call screen starts now, while the server is still being told. The call only opens
+  // once both are done, so "Joining the call…" shows the whole time instead of an empty screen.
+  // A server that never answers, as on a connection that has quietly died, gives the button back.
+  const told = new Promise<{ error?: string }>((resolve, reject) => {
+    socket.timeout(30_000).emit('voice_join', { channelId: channel.id }, (timedOut: Error | null, result: { error?: string }) => {
+      if (timedOut) reject(timedOut); else resolve(result);
+    });
+  });
+  void Promise.all([told, loadCallView()]).then(([result]) => {
+    if (joiningId.value !== channel.id) return;
+    joiningId.value = null;
     if (result?.error) { callError.value = translateError(result.error); return; }
     callChannelId.value = channel.id;
+  }, () => {
+    if (joiningId.value === channel.id) { joiningId.value = null; callError.value = t('callConnectFailed'); }
   });
 }
 function leftCall() {
@@ -224,7 +254,7 @@ function leftCall() {
 }
 function endSession() {
   disconnectSocket(); session.token = null; token.value = null;
-  currentUser.value = null; callChannelId.value = null; channels.value = []; calls.value = [];
+  currentUser.value = null; callChannelId.value = null; joiningId.value = null; channels.value = []; calls.value = [];
   members.value = new Map(); reads.value = new Map(); searchOpen.value = false;
   onlineUsers.value = new Map(); connection.value = 'connecting'; restoreFailed.value = false;
 }
@@ -315,7 +345,8 @@ function signOut() {
           <p v-if="!selectedCall?.members.length">{{ t('callEmptyBody') }}</p>
           <p v-else class="voice-lobby-names"><bdi v-for="member in selectedCall.members" :key="member.id">{{ member.displayName }}</bdi></p>
           <p v-if="callError" class="voice-lobby-error" role="alert">{{ callError }}</p>
-          <button class="auth-btn" type="button" @click="select(selectedChannel)">{{ t('joinCall') }}</button>
+          <p v-if="joiningId === selectedChannel.id" class="voice-lobby-joining" role="status">{{ t('joiningCall') }}</p>
+          <button v-else class="auth-btn" type="button" @click="select(selectedChannel)">{{ t('joinCall') }}</button>
         </div>
       </section>
     </div>
@@ -470,6 +501,14 @@ function signOut() {
 
 .voice-lobby-error {
   color: #f23f43 !important;
+}
+
+.voice-lobby-body .voice-lobby-joining {
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  color: #f2f3f5;
+  font-size: 15px;
 }
 
 .voice-lobby-body .auth-btn {

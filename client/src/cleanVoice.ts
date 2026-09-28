@@ -51,6 +51,15 @@ function loadFilterBinary() {
 export async function prepareCleanVoice() {
   return Boolean(await loadFilterBinary());
 }
+/**
+ * Downloads everything the noise filter needs while the app is idle, so joining a call later does
+ * not wait for it: on slow internet those files took seconds, and the microphone waited with them.
+ */
+export function preloadCleanVoice() {
+  void loadFilterBinary();
+  // The browser keeps this file for a year, so turning the filter on later reads it from the device.
+  if (typeof AudioWorkletNode === 'function') void fetch(rnnoiseWorkletUrl).catch(() => {});
+}
 function loadFilter(context: BaseAudioContext) {
   let loaded = filterLoaded.get(context);
   if (!loaded) {

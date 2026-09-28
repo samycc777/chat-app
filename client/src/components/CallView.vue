@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import {
-  Ellipsis, Hand, Maximize, Mic, MicOff, Minimize, PhoneOff, RotateCcw, ScreenShare, ScreenShareOff,
-  Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
+  Ellipsis, Hand, Maximize, MessageSquare, Mic, MicOff, Minimize, PhoneOff, RotateCcw, ScreenShare, ScreenShareOff,
+  SendHorizontal, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
   AudioPresets, ConnectionQuality, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPreset, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
@@ -19,11 +19,12 @@ import {
   endPhoneCall, inMiniWindow, keepPhoneCallGoing, miniWindowAvailable, onPhoneCallLeave, onPhoneFullScreenExit, phoneFullScreenAvailable, setMiniWindow,
   setPhoneFullScreen,
 } from '../nativeCall';
+import { callChat, onCallChatMessage, sendCallChat } from '../callChat';
 import type { OnlineUser } from '../types';
 import Avatar from './Avatar.vue';
 import CallTile, { type Tile } from './CallTile.vue';
 
-type Sheet = 'participants' | 'more';
+type Sheet = 'participants' | 'more' | 'chat';
 type Status = 'joining' | 'connected' | 'reconnecting' | 'disconnected';
 type CallMessage = { type: 'reaction'; emoji: string };
 type CallParticipant = { identity: string; name: string; local: boolean; micOn: boolean; speaking: boolean };
@@ -121,6 +122,41 @@ let disposed = false;
 let rejoinWhenVisible = false;
 let lastAutoRejoinAt = 0;
 const detachedAudio: HTMLMediaElement[] = [];
+
+// The call's chat: to everyone, or privately to one person in the call (chatTo, their user ID).
+const chatTo = ref<string | null>(null);
+const chatDraft = ref('');
+const chatSending = ref(false);
+const chatUnread = ref(0);
+const chatList = ref<HTMLElement>();
+const chatPeople = computed(() => participants.value.filter(person => !person.local));
+const stopChatListener = onCallChatMessage(message => {
+  if (message.from.id === props.userId || sheet.value === 'chat') return;
+  chatUnread.value++;
+  const text = message.text.length > 80 ? `${message.text.slice(0, 80)}…` : message.text;
+  showToast(`${message.from.displayName}: ${text}`, 5000);
+});
+function scrollChatToEnd() {
+  void nextTick(() => { if (chatList.value) chatList.value.scrollTop = chatList.value.scrollHeight; });
+}
+watch(sheet, open => { if (open === 'chat') { chatUnread.value = 0; scrollChatToEnd(); } });
+watch(() => callChat.value.length, () => { if (sheet.value === 'chat') scrollChatToEnd(); });
+// Someone who leaves the call can no longer be written to.
+watch(chatPeople, people => { if (chatTo.value && !people.some(person => person.identity === chatTo.value)) chatTo.value = null; });
+function messagePrivately(identity: string) {
+  chatTo.value = identity;
+  sheet.value = 'chat';
+}
+async function sendChat() {
+  const text = chatDraft.value.trim();
+  if (!text || chatSending.value) return;
+  chatSending.value = true;
+  const failure = await sendCallChat(text, chatTo.value);
+  chatSending.value = false;
+  if (failure) { showToast(t('chatSendFailed')); return; }
+  chatDraft.value = '';
+}
+const chatTime = (sentAt: number) => new Date(sentAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
 const myHandRaised = computed(() => raisedHands.value.has(props.userId));
 const elapsed = computed(() => {
@@ -757,6 +793,7 @@ function cleanup() {
   void wakeLock?.release().catch(() => {});
   // The phone's screen is a separate connection, so it would keep going after the call closes.
   if (sharingScreen.value && phoneScreenShareAvailable) void stopPhoneScreenShare().catch(() => {});
+  stopChatListener();
   void phoneShareListener?.remove();
   void phoneLeaveListener?.remove();
   void phoneFullScreenListener?.remove();
@@ -826,6 +863,9 @@ onBeforeUnmount(cleanup);
         </button>
         <button class="call-icon-btn" type="button" :title="t('participants')" :aria-label="t('participantsCount', { count: participants.length })" @click="openSheet('participants')">
           <Users :size="20" /><span class="call-count">{{ participants.length }}</span>
+        </button>
+        <button class="call-icon-btn" type="button" :aria-pressed="sheet === 'chat'" :title="t('chat')" :aria-label="chatUnread ? t('chatWithCount', { count: chatUnread }) : t('chat')" @click="openSheet('chat')">
+          <MessageSquare :size="20" /><span v-if="chatUnread" class="call-chat-badge">{{ chatUnread > 99 ? '99+' : chatUnread }}</span>
         </button>
       </header>
 
@@ -938,10 +978,53 @@ onBeforeUnmount(cleanup);
                 </label>
               </div>
               <span v-if="raisedHands.has(person.identity)" class="call-person-hand">✋</span>
+              <button v-if="!person.local" class="call-icon-btn" type="button" :title="t('messagePrivately', { name: person.name })" :aria-label="t('messagePrivately', { name: person.name })" @click="messagePrivately(person.identity)">
+                <MessageSquare :size="18" />
+              </button>
               <Mic v-if="person.micOn" :size="18" class="call-person-mic" :class="{ on: person.speaking }" />
               <MicOff v-else :size="18" class="call-person-mic off" />
             </li>
           </ul>
+        </section>
+
+        <section v-else-if="sheet === 'chat'" class="call-sheet side call-chat" :aria-label="t('chat')">
+          <div class="call-sheet-head">
+            <strong>{{ t('chat') }}</strong>
+            <button class="call-icon-btn" type="button" :aria-label="t('close')" @click="sheet = null"><X :size="18" /></button>
+          </div>
+          <ol ref="chatList" class="call-chat-list">
+            <li v-if="!callChat.length" class="call-chat-empty">{{ t('chatEmpty') }}</li>
+            <li v-for="message in callChat" :key="message.id" class="call-chat-message" :class="{ private: message.to, mine: message.from.id === userId }">
+              <div class="call-chat-meta">
+                <bdi class="call-chat-name">{{ message.from.id === userId ? t('youLabel') : message.from.displayName }}</bdi>
+                <span>{{ chatTime(message.sentAt) }}</span>
+              </div>
+              <button
+                v-if="message.to"
+                class="call-chat-private"
+                type="button"
+                @click="chatTo = message.from.id === userId ? message.to.id : message.from.id"
+              >
+                <bdi>{{ message.from.id === userId ? t('chatPrivateTo', { name: message.to.displayName }) : t('chatPrivateFrom', { name: message.from.displayName }) }}</bdi>
+              </button>
+              <p dir="auto">{{ message.text }}</p>
+            </li>
+          </ol>
+          <form class="call-chat-form" @submit.prevent="sendChat">
+            <label class="call-chat-to">
+              <span>{{ t('chatTo') }}</span>
+              <select v-model="chatTo" :class="{ private: chatTo }">
+                <option :value="null">{{ t('chatEveryone') }}</option>
+                <option v-for="person in chatPeople" :key="person.identity" :value="person.identity">{{ person.name }}</option>
+              </select>
+            </label>
+            <div class="call-chat-compose">
+              <input v-model="chatDraft" type="text" dir="auto" maxlength="2000" :placeholder="t('chatPlaceholder')" :aria-label="t('chatPlaceholder')" enterkeyhint="send">
+              <button class="call-chat-send" type="submit" :disabled="!chatDraft.trim() || chatSending" :title="t('sendMessage')" :aria-label="t('sendMessage')">
+                <SendHorizontal :size="20" />
+              </button>
+            </div>
+          </form>
         </section>
 
         <section v-else-if="sheet === 'more'" class="call-sheet" :aria-label="t('more')">
@@ -1374,6 +1457,158 @@ onBeforeUnmount(cleanup);
   12% { opacity: 1; transform: translateY(-20px) scale(1); }
   75% { opacity: 1; }
   100% { opacity: 0; transform: translateY(-38dvh); }
+}
+
+/* The call's chat: messages above, and who they go to and what they say below. */
+.call-chat-badge {
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #da373c;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.call-sheet.call-chat {
+  overflow: hidden;
+}
+
+.call-chat-list {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 12px 0;
+  list-style: none;
+}
+
+.call-chat-empty {
+  margin: auto 0;
+  color: #b5bac1;
+  font-size: 14px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.call-chat-message {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.call-chat-message.private {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(88, 101, 242, 0.18);
+}
+
+.call-chat-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: #949ba4;
+  font-size: 12px;
+}
+
+.call-chat-name {
+  color: #f2f3f5;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.call-chat-message.mine .call-chat-name {
+  color: #949ba4;
+}
+
+.call-chat-private {
+  align-self: flex-start;
+  color: #a5b0ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.call-chat-message p {
+  color: #dbdee1;
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.call-chat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.call-chat-to {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #b5bac1;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.call-chat-to select {
+  min-width: 0;
+  flex: 1;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #f2f3f5;
+  background: #1e1f22;
+  font-size: 14px;
+}
+
+.call-chat-to select.private {
+  border-color: #5865f2;
+}
+
+.call-chat-compose {
+  display: flex;
+  gap: 8px;
+}
+
+.call-chat-compose input {
+  min-width: 0;
+  flex: 1;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  color: #f2f3f5;
+  background: #1e1f22;
+  /* 16px keeps iPhones from zooming in on the box. */
+  font-size: 16px;
+}
+
+.call-chat-send {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #ffffff;
+  background: #5865f2;
+}
+
+.call-chat-send:disabled {
+  opacity: 0.45;
+}
+
+[dir='rtl'] .call-chat-send svg {
+  transform: scaleX(-1);
 }
 
 /* Sheets: bottom sheets on phones; the participants list docks to the side on wide screens. */

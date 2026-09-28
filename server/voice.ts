@@ -5,6 +5,15 @@ export interface CallRecording {
   startedAt: number;
 }
 
+/** A message in a call's chat, to everyone in it or to one person (toId). */
+export interface CallChatMessage {
+  id: string;
+  fromId: string;
+  toId: string | null;
+  text: string;
+  sentAt: number;
+}
+
 export interface VoiceCall {
   channelId: string;
   roomName: string;
@@ -17,6 +26,8 @@ export interface VoiceCall {
   phoneScreens: Set<string>;
   /** Everyone in the call is shown that it is being recorded, and by whom. */
   recording?: CallRecording;
+  /** The call's chat. It is kept only here, so it is gone as soon as the last person leaves. */
+  chat: CallChatMessage[];
 }
 
 // The phone apps cannot share the screen from their web page, so the app's own Android code joins
@@ -45,7 +56,7 @@ export function addToCall(channelId: string, userId: string, socketId: string): 
   let call = calls.get(channelId);
   if (!call) {
     // The room name is fixed per channel, so everyone who joins the channel meets in one LiveKit room.
-    call = { channelId, roomName: `voice-${channelId}`, startedAt: Date.now(), members: new Map(), hands: new Map(), phoneScreens: new Set() };
+    call = { channelId, roomName: `voice-${channelId}`, startedAt: Date.now(), members: new Map(), hands: new Map(), phoneScreens: new Set(), chat: [] };
     calls.set(channelId, call);
   }
   call.members.set(userId, socketId);

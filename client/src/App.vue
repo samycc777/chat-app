@@ -7,6 +7,7 @@ import { api, session } from './api';
 import { rememberForHomeScreen } from './homeScreen';
 import { connectSocket, disconnectSocket, getSocket } from './socket';
 import { startNotifications } from './notifications';
+import { clearCallChat, listenForCallChat } from './callChat';
 import { useI18n } from './i18n';
 import Auth from './components/Auth.vue';
 import CallLobby from './components/CallLobby.vue';
@@ -83,6 +84,7 @@ function listen(socket: Socket) {
   });
   socket.on('channels', ({ channels: list }: { channels: Channel[] }) => { channels.value = list; });
   socket.on('voice_state', ({ calls: list }: { calls: VoiceCall[] }) => { calls.value = list; });
+  listenForCallChat(socket);
 }
 
 function joined(result: { token: string; user: User }) {
@@ -113,11 +115,13 @@ function joinCall(choice: { mic: boolean; camera: boolean }) {
 function leftCall() {
   getSocket()?.emit('voice_leave');
   inCall.value = null;
+  clearCallChat();
 }
 function backToName() {
   disconnectSocket(); session.token = null;
   currentUser.value = null; inCall.value = null; channels.value = []; calls.value = [];
   onlineUsers.value = new Map(); connection.value = 'connecting'; callError.value = '';
+  clearCallChat();
 }
 </script>
 <template>

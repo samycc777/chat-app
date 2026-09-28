@@ -5,7 +5,7 @@ import db from './database';
 import { verifyToken } from './auth';
 import { removeAttachmentIfUnused } from './attachments';
 import { ChannelKind, cleanChannelName, createChannel, deleteChannel, getChannel, isTextChannel, listChannels, renameChannel } from './channels';
-import { addToCall, allCalls, callOf, endCall, getCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
+import { addToCall, allCalls, CallChatMessage, callOf, endCall, getCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
 import { roomService } from './livekit';
 import { messageById } from './messages';
 import { forgetSocket, notifyCallStarted, notifyNewMessage, setAppActive } from './push';
@@ -44,6 +44,19 @@ function callPayload(call: VoiceCall) {
   };
 }
 const voiceState = () => ({ calls: allCalls().map(callPayload) });
+
+// A long call's chat stays bounded; the oldest messages go first.
+const MAX_CALL_CHAT = 500;
+const MAX_CALL_CHAT_TEXT = 2000;
+const person = (userId: string) => ({ id: userId, displayName: profile(userId)?.displayName ?? '' });
+function callChatPayload(message: CallChatMessage) {
+  return {
+    id: message.id, from: person(message.fromId), to: message.toId ? person(message.toId) : null,
+    text: message.text, sentAt: message.sentAt,
+  };
+}
+// A private message is seen only by the two people in it.
+const canSee = (message: CallChatMessage, userId: string) => !message.toId || message.fromId === userId || message.toId === userId;
 
 export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = []) {
   const io = new Server(httpServer, {
@@ -227,12 +240,36 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       const call = addToCall(channel.id, userId, socket.id);
       broadcastVoice();
       reply({ startedAt: call.startedAt });
+      // Someone joining (or coming back) sees the chat so far, as far as it is theirs to see.
+      socket.emit('call_chat_history', { messages: call.chat.filter(message => canSee(message, userId)).map(callChatPayload) });
       // An app coming back after a dropped connection (or a server restart) rejoins its call, which
       // is not news to anyone.
       if (startsCall && (data as { rejoin?: unknown })?.rejoin !== true) notifyCallStarted(channel, userId);
     });
 
     socket.on('voice_leave', () => leaveCall(userId));
+
+    // The call's chat, to everyone in the call or privately to one of them. Only people in the call
+    // can write in it, and only to people who are in it too.
+    socket.on('call_chat_send', (data: { text?: unknown; to?: unknown }, callback?: unknown) => {
+      const reply = (payload: object) => { if (typeof callback === 'function') callback(payload); };
+      const call = callOf(userId);
+      if (!call) return reply({ error: 'Not in a call' });
+      const text = typeof data?.text === 'string' ? data.text.trim() : '';
+      if (!text || text.length > MAX_CALL_CHAT_TEXT) return reply({ error: 'Invalid message' });
+      const toId = data?.to == null ? null : data.to;
+      if (toId !== null && (typeof toId !== 'string' || toId === userId || !call.members.has(toId))) return reply({ error: 'Not in the call' });
+      const message: CallChatMessage = { id: uuid(), fromId: userId, toId, text, sentAt: Date.now() };
+      call.chat.push(message);
+      if (call.chat.length > MAX_CALL_CHAT) call.chat.shift();
+      const payload = callChatPayload(message);
+      const readers = toId ? [userId, toId] : [...call.members.keys()];
+      for (const reader of readers) {
+        const socketId = call.members.get(reader);
+        if (socketId) io.to(socketId).emit('call_chat_message', payload);
+      }
+      reply({ ok: true });
+    });
 
     // Whether this page is in front of its owner; people are only notified while none of theirs is.
     socket.on('app_active', (data: { active?: unknown }, callback?: unknown) => {

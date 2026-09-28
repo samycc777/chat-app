@@ -699,6 +699,53 @@ test('a phone shares its screen through a screen-only pass that ends when its ow
   assert.equal((await screenToken(gina.token, voice)).status, 409);
 });
 
+test("a call's chat reaches everyone in it, private messages reach only their two people, and it is gone when the call empties", async () => {
+  const [hana, ivan, jade, outsider] = await Promise.all(['Hana', 'Ivan', 'Jade', 'Outsider'].map(name => join(name)));
+  const [hanaSocket, ivanSocket, jadeSocket, outsiderSocket] = await Promise.all([hana, ivan, jade, outsider].map(person => connect(person.token)));
+  const room = (await emitWithAck(hanaSocket, 'create_channel', { name: 'Chat room', kind: 'voice' })).channel.id;
+  const hanaHistory = nextEvent(hanaSocket, 'call_chat_history');
+  await emitWithAck(hanaSocket, 'voice_join', { channelId: room });
+  assert.deepEqual((await hanaHistory).messages, []);
+  await emitWithAck(ivanSocket, 'voice_join', { channelId: room });
+
+  // Only people in the call write in its chat, and only to people in it.
+  assert.deepEqual(await emitWithAck(outsiderSocket, 'call_chat_send', { text: 'hi' }), { error: 'Not in a call' });
+  assert.deepEqual(await emitWithAck(hanaSocket, 'call_chat_send', { text: 'psst', to: outsider.user.id }), { error: 'Not in the call' });
+  assert.deepEqual(await emitWithAck(hanaSocket, 'call_chat_send', { text: '   ' }), { error: 'Invalid message' });
+
+  const ivanHears = nextEvent(ivanSocket, 'call_chat_message');
+  const outsiderHearsNothing = quietFor(outsiderSocket, 'call_chat_message');
+  assert.deepEqual(await emitWithAck(hanaSocket, 'call_chat_send', { text: ' Salam everyone ' }), { ok: true });
+  const group = await ivanHears;
+  assert.equal(group.text, 'Salam everyone');
+  assert.equal(group.from.displayName, 'Hana');
+  assert.equal(group.to, null);
+  assert.ok(await outsiderHearsNothing);
+
+  // A private message reaches its two people; someone who joins later sees only the group's messages.
+  await emitWithAck(jadeSocket, 'voice_join', { channelId: room });
+  const jadeHearsNothing = quietFor(jadeSocket, 'call_chat_message');
+  const hanaGetsIt = nextEvent(hanaSocket, 'call_chat_message');
+  const ivanGetsOwn = nextEvent(ivanSocket, 'call_chat_message');
+  assert.deepEqual(await emitWithAck(ivanSocket, 'call_chat_send', { text: 'Just for you', to: hana.user.id }), { ok: true });
+  assert.equal((await hanaGetsIt).to.displayName, 'Hana');
+  assert.equal((await ivanGetsOwn).text, 'Just for you');
+  assert.ok(await jadeHearsNothing);
+  const jadeHistory = nextEvent(jadeSocket, 'call_chat_history');
+  await emitWithAck(jadeSocket, 'voice_join', { channelId: room, rejoin: true });
+  assert.deepEqual((await jadeHistory).messages.map(message => message.text), ['Salam everyone']);
+  const hanaBack = nextEvent(hanaSocket, 'call_chat_history');
+  await emitWithAck(hanaSocket, 'voice_join', { channelId: room, rejoin: true });
+  assert.deepEqual((await hanaBack).messages.map(message => message.text), ['Salam everyone', 'Just for you']);
+
+  // Once everyone has left, the chat is gone, even for the same people coming back.
+  await leaveCall(room, hanaSocket, ivanSocket, jadeSocket);
+  const fresh = nextEvent(hanaSocket, 'call_chat_history');
+  await emitWithAck(hanaSocket, 'voice_join', { channelId: room });
+  assert.deepEqual((await fresh).messages, []);
+  await leaveCall(room, hanaSocket);
+});
+
 test('a person is in one voice channel at a time, and deleting a voice channel closes its call', async () => {
   const frank = await join('Frank');
   const socket = await connect(frank.token);

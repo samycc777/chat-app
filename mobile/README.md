@@ -148,9 +148,29 @@ without the "unknown source" warning of an APK. Random people cannot find or ins
 
 Google also asks for a privacy policy address: use `https://<the site>/privacy.html`.
 
-For each new version, raise `versionCode` (and `versionName`) in `android/app/build.gradle`, build again
-and create a new release. Only changes in this `mobile/` folder need a new version; website changes reach
-the app by themselves.
+Only changes in this `mobile/` folder need a new version; website changes reach the app by themselves.
+
+### Releasing automatically
+
+After the first release, new versions go out with one command, without opening Play Console:
+
+```sh
+cd mobile
+npm run release:android                     # or: npm run release:android -- "What changed"
+```
+
+It asks Google Play for the highest version number uploaded so far, builds the next one (signed with the
+release key), uploads it to internal testing and rolls it out; testers then get the update from Google
+Play. It needs, once per computer:
+
+- `~/.config/google-play/service-account.json`: a Google service account key. Majlis uses the Firebase
+  project's own account, `firebase-adminsdk-fbsvc@majlis-3c104.iam.gserviceaccount.com`. Its Google Cloud
+  project must have the [Google Play Android Developer API](https://console.cloud.google.com/apis/library/androidpublisher.googleapis.com?project=majlis-3c104)
+  enabled, and the account must be invited in Play Console → **Users and permissions** with **Release to
+  testing tracks** and **View app information**. The same key works for every app in the developer account.
+- `android/keystore.properties`, the release signing key (above).
+- `mobile/release.json`, `{"hangoutUrl": "https://<the site>/?invite=<INVITE_KEY>"}`, or `HANGOUT_URL` set.
+  It is kept out of git because the link holds the invite key.
 
 ## iPhone: send the app to friends with TestFlight
 

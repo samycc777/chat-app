@@ -26,6 +26,8 @@ mobile/ios/App/App/capacitor.config.json
 xcuserdata/
 *.xcuserstate
 mobile/android/keystore.properties
+# The live invite link that release builds open (see mobile/README.md).
+mobile/release.json
 mobile/android/.gradle/
 mobile/android/build/
 mobile/android/app/build/

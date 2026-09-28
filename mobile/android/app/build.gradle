@@ -17,8 +17,9 @@ android {
         applicationId "com.samycc777.majlis"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 5
-        versionName "1.4"
+        // npm run release:android picks the next number from Google Play and passes it in.
+        versionCode project.hasProperty('versionCode') ? project.property('versionCode').toInteger() : 5
+        versionName project.hasProperty('versionName') ? project.property('versionName') : "1.4"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

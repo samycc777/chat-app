@@ -23,7 +23,14 @@ const TREBLE_DB = -3;
 // teacher app did, and a limiter keeps the loudest words from crackling. A compressor was tried
 // here too, but it brought the leftover noise between words back up.
 const LOUDER_DB = 4;
-const LIMIT_DB = -3;
+const LIMIT_DB = -6;
+// Chrome's limiter quietly adds its own boost after limiting, and lets the start of each loud word
+// through before it reacts. With the limit at -3 dB, that pushed ordinary speech past full scale,
+// where it is cut off when sent: the crackling students heard in a lesson in September 2026. The
+// voice is turned back down after the limiter so its loudest peaks stay about 1 dB below full scale,
+// and a gentle ceiling rounds off anything that still gets through instead of cutting it off.
+const AFTER_LIMIT_DB = -2;
+const CEILING_FROM = 0.9;
 
 export type CleanVoice = TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> & {
   /** Whether the noise filter is running, rather than only the tone and loudness shaping. */
@@ -31,6 +38,17 @@ export type CleanVoice = TrackProcessor<Track.Kind.Audio, AudioProcessorOptions>
   /** The microphone as recorded; LiveKit's own track for it is this processor's output. */
   readonly recordedTrack: MediaStreamTrack | undefined;
 };
+
+// Leaves the voice untouched up to CEILING_FROM of full scale, then bends smoothly towards it.
+const ceilingCurve = (() => {
+  const curve = new Float32Array(2049);
+  for (let i = 0; i < curve.length; i++) {
+    const x = i / 1024 - 1;
+    const size = Math.abs(x);
+    curve[i] = Math.sign(x) * (size <= CEILING_FROM ? size : CEILING_FROM + (1 - CEILING_FROM) * Math.tanh((size - CEILING_FROM) / (1 - CEILING_FROM)));
+  }
+  return curve;
+})();
 
 let filterBinary: Promise<ArrayBuffer | null> | undefined;
 const filterLoaded = new WeakMap<BaseAudioContext, Promise<boolean>>();
@@ -97,9 +115,11 @@ export function cleanVoice(): CleanVoice {
     const bass = new BiquadFilterNode(context, { type: 'lowshelf', frequency: BASS_HZ, gain: BASS_DB });
     const treble = new BiquadFilterNode(context, { type: 'highshelf', frequency: TREBLE_HZ, gain: TREBLE_DB });
     const louder = new GainNode(context, { gain: 10 ** (LOUDER_DB / 20) });
-    const limiter = new DynamicsCompressorNode(context, { threshold: LIMIT_DB, knee: 0, ratio: 20, attack: 0.002, release: 0.1 });
+    const limiter = new DynamicsCompressorNode(context, { threshold: LIMIT_DB, knee: 0, ratio: 20, attack: 0.003, release: 0.25 });
+    const afterLimit = new GainNode(context, { gain: 10 ** (AFTER_LIMIT_DB / 20) });
+    const ceiling = new WaveShaperNode(context, { curve: ceilingCurve });
     const destination = context.createMediaStreamDestination();
-    nodes = [source, lowCut, ...(noiseFilter ? [noiseFilter] : []), bass, treble, louder, limiter, destination];
+    nodes = [source, lowCut, ...(noiseFilter ? [noiseFilter] : []), bass, treble, louder, limiter, afterLimit, ceiling, destination];
     nodes.reduce((from, to) => from.connect(to));
     denoising = Boolean(noiseFilter);
     processor.processedTrack = destination.stream.getAudioTracks()[0];

@@ -58,7 +58,7 @@ In production the server refuses to start if a required variable is missing or t
 
 ### Deploying on Railway
 
-1. Create a Railway service from this repository. `railway.json` already sets the build (`npm run build`), the start command, and the `/api/health` health check.
+1. Create a Railway service from this repository. `railway.json` already sets the build (`npm run build`), the start command, and the `/api/health` health check. It also redeploys only when the website or server changes (`watchPatterns`), because a redeploy disconnects every call; changes in `mobile/` alone leave the site running.
 2. Add a Volume and set `DATA_DIR` to its mount path.
 3. Set the variables above as service variables, including a public domain in `ALLOWED_ORIGINS`.
 4. For calls, create a LiveKit Cloud project and copy its URL, API key and API secret into the `LIVEKIT_*` variables. Leave LiveKit's own recording (egress) off: calls are recorded in the browser of whoever presses Record.

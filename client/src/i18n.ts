@@ -363,7 +363,7 @@ const ar_: typeof en = {
   errUploadCancelled: 'تم إلغاء الرفع.',
   appName: 'Majlis',
   welcomeTitle: 'أنت مدعو!',
-  welcomeBody: 'اكتب اسمك للانضمام إلى {name}.',
+  welcomeBody: 'اكتب اسمك للدخول إلى {name}.',
   needInvite: 'افتح رابط الدعوة الذي أرسله لك صديقك، أو الصقه هنا.',
   inviteLink: 'رابط الدعوة',
   inviteLinkPlaceholder: 'الصق رابط الدعوة',

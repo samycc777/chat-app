@@ -25,6 +25,19 @@ const loadCallView = () => import('./components/CallView.vue')
     throw error;
   });
 const CallView = defineAsyncComponent(loadCallView);
+// Joining a call used to wait for the call screen and the noise filter to download, which on slow
+// internet took several seconds. They are fetched quietly while the person is still choosing their
+// microphone and camera, so joining reads them from the device. A failed download here is simply
+// tried again on joining.
+let preloaded = false;
+function preloadCall() {
+  if (preloaded) return;
+  preloaded = true;
+  loadCallView()
+    .then(() => import('./cleanVoice'))
+    .then(module => module.preloadCleanVoice())
+    .catch(() => {});
+}
 
 // The app is three screens: your name, then who is in the call with your microphone and camera
 // choices, then the call. Every opening starts at the name, filled in from last time.
@@ -93,8 +106,7 @@ function joined(result: { token: string; user: User }) {
   listen(socket);
   void startNotifications(socket);
   rememberForHomeScreen(result.user.displayName);
-  // Loading the call screen starts now, so joining is quick.
-  loadCallView().catch(() => {});
+  preloadCall();
 }
 
 onMounted(() => {
@@ -103,13 +115,25 @@ onMounted(() => {
 
 function joinCall(choice: { mic: boolean; camera: boolean }) {
   const channel = voiceChannel.value;
-  if (!channel || joining.value) return;
+  const socket = getSocket();
+  if (!channel || !socket || joining.value) return;
   callError.value = '';
   joining.value = true;
-  getSocket()?.emit('voice_join', { channelId: channel.id }, (result: { error?: string }) => {
+  // The call opens once the server knows and the call screen has loaded, so "Joining the call…"
+  // shows the whole time instead of an empty screen. A server that never answers, as on a
+  // connection that has quietly died, gives the button back.
+  const told = new Promise<{ error?: string }>((resolve, reject) => {
+    socket.timeout(30_000).emit('voice_join', { channelId: channel.id }, (timedOut: Error | null, result: { error?: string }) => {
+      if (timedOut) reject(timedOut); else resolve(result);
+    });
+  });
+  void Promise.all([told, loadCallView()]).then(([result]) => {
+    if (!joining.value) return;
     joining.value = false;
     if (result?.error) { callError.value = translateError(result.error); return; }
     inCall.value = choice;
+  }, () => {
+    if (joining.value) { joining.value = false; callError.value = t('callConnectFailed'); }
   });
 }
 function leftCall() {
@@ -119,7 +143,7 @@ function leftCall() {
 }
 function backToName() {
   disconnectSocket(); session.token = null;
-  currentUser.value = null; inCall.value = null; channels.value = []; calls.value = [];
+  currentUser.value = null; inCall.value = null; joining.value = false; channels.value = []; calls.value = [];
   onlineUsers.value = new Map(); connection.value = 'connecting'; callError.value = '';
   clearCallChat();
 }

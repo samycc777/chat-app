@@ -121,6 +121,8 @@ let lastReactionAt = 0;
 let disposed = false;
 let rejoinWhenVisible = false;
 let lastAutoRejoinAt = 0;
+// How many times in a row joining has failed and been tried again by itself.
+let joinRetries = 0;
 const detachedAudio: HTMLMediaElement[] = [];
 
 // The call's chat: to everyone, or privately to one person in the call (chatTo, their user ID).
@@ -659,6 +661,7 @@ function onVisibilityChange() {
 }
 
 async function connect() {
+  let attempt: Room | undefined;
   try {
     const credentials = await api.getLiveKitToken(props.channelId);
     if (disposed) return;
@@ -680,7 +683,7 @@ async function connect() {
         screenShareSimulcastLayers: [new VideoPreset(640, 360, 120_000, 3), new VideoPreset(1280, 720, 400_000, 5)],
       },
     });
-    room = connectingRoom;
+    room = attempt = connectingRoom;
     // Events from a room that a rejoin has replaced are ignored.
     const current = () => !disposed && room === connectingRoom;
     connectingRoom.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
@@ -705,7 +708,8 @@ async function connect() {
     connectingRoom.on(RoomEvent.ParticipantConnected, participant => { if (current()) onParticipantConnected(participant); });
     connectingRoom.on(RoomEvent.ParticipantDisconnected, participant => { leftAt.set(participant.identity, Date.now()); });
     connectingRoom.on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
-      if (!current() || error.value) return;
+      // A join that fails is tried again by connect() itself.
+      if (!current() || error.value || status.value === 'joining') return;
       status.value = 'disconnected';
       // A deleted channel, or the call opened on another device, stays closed. Anything else, such
       // as the browser putting the page to sleep while its owner was in another app, is rejoined as
@@ -736,11 +740,13 @@ async function connect() {
       RoomEvent.TrackPublished, RoomEvent.TrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
       RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished, RoomEvent.ActiveSpeakersChanged,
     ] as const) connectingRoom.on(event, () => { if (current()) refresh(); });
-    await connectingRoom.connect(credentials.url, credentials.token);
+    // A slow connection gets twice LiveKit's usual time to join before it counts as failed.
+    await connectingRoom.connect(credentials.url, credentials.token, { websocketTimeout: 30_000, peerConnectionTimeout: 30_000, maxRetries: 2 });
     if (!current()) { connectingRoom.disconnect(); return; }
     // A phone set to save data (Android's Data Saver in Chrome) is slow or on a limited plan from the start.
     if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) savingData.value = true;
     status.value = 'connected';
+    joinRetries = 0;
     for (const participant of connectingRoom.remoteParticipants.values()) {
       for (const publication of participant.trackPublications.values()) {
         onTrackPublished(publication, participant);
@@ -755,6 +761,16 @@ async function connect() {
     if (props.startCamera && !disposed) await toggleCamera();
   } catch (cause) {
     if (disposed) return;
+    // On weak internet a join often fails once and works the next time, so it is tried twice more
+    // by itself, still showing "Joining the call…", before the Rejoin button is offered.
+    if (!(cause instanceof ApiError) && status.value === 'joining' && joinRetries < 2) {
+      joinRetries++;
+      if (room === attempt) room = null;
+      void attempt?.disconnect();
+      setTimeout(() => { if (!disposed && !room && status.value === 'joining') void connect(); }, 2000);
+      return;
+    }
+    joinRetries = 0;
     error.value = cause instanceof ApiError ? translateError(cause.message) : t('callConnectFailed');
   }
 }

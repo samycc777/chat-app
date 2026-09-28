@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import {
-  Circle, Ellipsis, Hand, Maximize, Menu, Mic, MicOff, Minimize, PhoneOff, RotateCcw, ScreenShare, ScreenShareOff,
-  Square, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
+  Ellipsis, Hand, Maximize, Mic, MicOff, Minimize, PhoneOff, RotateCcw, ScreenShare, ScreenShareOff,
+  Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
   AudioPresets, ConnectionQuality, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPreset, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
@@ -19,9 +19,7 @@ import {
   endPhoneCall, inMiniWindow, keepPhoneCallGoing, miniWindowAvailable, onPhoneCallLeave, onPhoneFullScreenExit, phoneFullScreenAvailable, setMiniWindow,
   setPhoneFullScreen,
 } from '../nativeCall';
-import { canRecord, isRecording, startRecording, stopRecording } from '../callRecorder';
-import { recordingState } from '../recordingState';
-import type { OnlineUser, VoiceCall } from '../types';
+import type { OnlineUser } from '../types';
 import Avatar from './Avatar.vue';
 import CallTile, { type Tile } from './CallTile.vue';
 
@@ -60,11 +58,11 @@ const props = defineProps<{
   channelId: string; channelName: string; userId: string; visible: boolean;
   people: Map<string, OnlineUser>;
   hands: { userId: string; displayName: string }[];
-  /** Who is recording this call, as the server tells everyone in it. */
-  recording?: VoiceCall['recording'];
+  /** Chosen before joining: whether the microphone and camera start on. */
+  startMic: boolean; startCamera: boolean;
 }>();
 const emit = defineEmits<{
-  leave: []; menu: [];
+  leave: [];
   state: [state: { micOn: boolean; cameraOn: boolean; sharing: boolean; speaking: string[] }];
 }>();
 const { t, translateError } = useI18n();
@@ -125,7 +123,6 @@ let lastAutoRejoinAt = 0;
 const detachedAudio: HTMLMediaElement[] = [];
 
 const myHandRaised = computed(() => raisedHands.value.has(props.userId));
-const recordingHere = computed(() => recordingState.phase === 'recording' && recordingState.voiceChannelId === props.channelId);
 const elapsed = computed(() => {
   if (!startedAt.value) return '';
   const seconds = Math.max(0, Math.floor((now.value - startedAt.value) / 1000));
@@ -293,31 +290,6 @@ function toggleHand() {
   getSocket()?.emit('raise_hand', { channelId: props.channelId, raised: !myHandRaised.value });
   sheet.value = null;
 }
-// Anyone can record the call, one recording at a time. It is made on this device, so it stops when
-// this device leaves the call; everyone in the call sees who is recording.
-async function toggleRecording() {
-  sheet.value = null;
-  if (recordingHere.value) { stopRecording(); return; }
-  if (!canRecord) { showToast(t('recordingUnsupported')); return; }
-  if (props.recording) { showToast(t('recordingAlreadyOn')); return; }
-  try {
-    await startRecording({ getRoom: () => room, screenLabel: name => t('screenOf', { name }), userId: props.userId, voiceChannelId: props.channelId, channelName: props.channelName });
-    if (recordingHere.value) showToast(t('recordingStarted'));
-  } catch (cause) {
-    const message = cause instanceof ApiError ? cause.message : '';
-    showToast(message === 'Already recording' ? t('recordingAlreadyOn') : message ? translateError(message) : t('recordingFailed'));
-  }
-}
-watch(() => props.recording, (next, previous) => {
-  if (next && next.userId !== props.userId && next.userId !== previous?.userId) showToast(t('recordingStartedBy', { name: next.displayName }));
-});
-// The Android app's own shared screen is normally not downloaded to the phone sharing it, but a
-// recording made on that phone needs it.
-function syncOwnPhoneScreen() {
-  const screen = room?.remoteParticipants.get(myPhoneScreen());
-  for (const publication of screen?.trackPublications.values() ?? []) onTrackPublished(publication, screen!);
-}
-watch(recordingHere, syncOwnPhoneScreen);
 watch(() => props.hands, (next, previous) => {
   const before = new Set(previous.map(hand => hand.userId));
   const raised = next.find(hand => !before.has(hand.userId) && hand.userId !== props.userId);
@@ -534,11 +506,10 @@ async function togglePhoneScreenShare() {
   }
   refresh();
 }
-// Downloading your own phone's screen would only use data to show it back to you. A recording
-// made here needs the cameras, so they are kept even while saving data.
+// Downloading your own phone's screen would only use data to show it back to you.
 function onTrackPublished(publication: RemoteTrackPublication, participant: RemoteParticipant) {
-  if (participant.identity === myPhoneScreen()) publication.setSubscribed(recordingHere.value && publication.source === Track.Source.ScreenShare);
-  else if (publication.source === Track.Source.Camera) publication.setSubscribed(!savingData.value || recordingHere.value);
+  if (participant.identity === myPhoneScreen()) publication.setSubscribed(false);
+  else if (publication.source === Track.Source.Camera) publication.setSubscribed(!savingData.value);
 }
 function saveData() {
   if (savingData.value || !room) return;
@@ -551,7 +522,6 @@ function applySavingData() {
     for (const publication of participant.trackPublications.values()) onTrackPublished(publication, participant);
   }
 }
-watch(recordingHere, applySavingData);
 // Two short pulses when someone else joins the call, so a phone in a pocket feels it; there is no
 // sound. A friend whose connection dropped for a moment is coming back rather than joining.
 const leftAt = new Map<string, number>();
@@ -705,11 +675,7 @@ async function connect() {
       // as the browser putting the page to sleep while its owner was in another app, is rejoined as
       // soon as the page is looked at. A call that keeps dropping straight after a rejoin is left
       // to be rejoined by hand.
-      if (reason === DisconnectReason.ROOM_DELETED || reason === DisconnectReason.PARTICIPANT_REMOVED || reason === DisconnectReason.DUPLICATE_IDENTITY) {
-        // The call is over for this device, so its recording ends and is offered for posting.
-        if (isRecording(props.channelId)) stopRecording();
-        return;
-      }
+      if (reason === DisconnectReason.ROOM_DELETED || reason === DisconnectReason.PARTICIPANT_REMOVED || reason === DisconnectReason.DUPLICATE_IDENTITY) return;
       if (Date.now() - lastAutoRejoinAt < 15_000) return;
       lastAutoRejoinAt = Date.now();
       if (document.visibilityState === 'visible') void rejoin();
@@ -748,8 +714,9 @@ async function connect() {
     refresh();
     // Started before the microphone, so the call's sound keeps going even if the microphone is refused.
     keepPhoneCallGoing();
-    // Like Discord, you join a voice channel with your microphone on; one tap mutes it.
-    await setMicrophone(true);
+    // The microphone and camera start as chosen on the screen before the call.
+    if (props.startMic) await setMicrophone(true);
+    if (props.startCamera && !disposed) await toggleCamera();
   } catch (cause) {
     if (disposed) return;
     error.value = cause instanceof ApiError ? translateError(cause.message) : t('callConnectFailed');
@@ -775,8 +742,6 @@ async function rejoin() {
 function cleanup() {
   if (disposed) return;
   disposed = true;
-  // Leaving the call ends a recording made here; the person then chooses where to post it.
-  if (isRecording(props.channelId)) stopRecording();
   exitFullScreen();
   stopListeningWhileMuted?.();
   void listeningContext?.close().catch(() => {});
@@ -845,14 +810,9 @@ onBeforeUnmount(cleanup);
     </div>
     <div v-show="!inMiniWindow" class="call-main">
       <header class="call-header">
-        <button class="call-icon-btn menu-btn" type="button" :aria-label="t('channels')" @click="emit('menu')"><Menu :size="20" /></button>
         <Volume2 :size="20" class="call-header-icon" aria-hidden="true" />
         <h2><bdi>{{ channelName }}</bdi></h2>
         <bdi v-if="elapsed" class="call-clock">{{ elapsed }}</bdi>
-        <span v-if="recording" class="call-recording" role="status">
-          <span class="call-recording-dot" aria-hidden="true" />
-          <bdi>{{ recording.userId === userId ? t('recordingByYou') : t('recordingBy', { name: recording.displayName }) }}</bdi>
-        </span>
         <span class="call-header-spacer" />
         <button
           class="call-icon-btn"
@@ -884,10 +844,6 @@ onBeforeUnmount(cleanup);
         </div>
         <div v-else-if="fullTile" class="call-full" :class="{ idle: !fullBarShown }" @pointermove="$event.pointerType === 'mouse' && showFullBar()">
           <CallTile ref="fullTileView" :tile="fullTile" focused full @click="toggleFullBar" />
-          <span v-if="recording" class="call-recording call-full-recording" role="status">
-            <span class="call-recording-dot" aria-hidden="true" />
-            <bdi>{{ recording.userId === userId ? t('recordingByYou') : t('recordingBy', { name: recording.displayName }) }}</bdi>
-          </span>
           <div class="call-full-bar top" :class="{ hidden: !fullBarShown }">
             <span class="call-full-name">
               <ScreenShare v-if="fullTile.kind === 'screen'" :size="16" aria-hidden="true" />
@@ -1002,10 +958,6 @@ onBeforeUnmount(cleanup);
           <button v-if="fullScreenChoice" class="call-sheet-row" type="button" @click="enterFullScreen(fullScreenChoice.key)">
             <Maximize :size="20" />{{ t('fullscreen') }}
           </button>
-          <button class="call-sheet-row" :class="{ 'call-record-stop': recordingHere }" type="button" :disabled="status !== 'connected' || recordingState.phase === 'starting'" @click="toggleRecording">
-            <template v-if="recordingHere"><Square :size="20" />{{ t('stopRecording') }}</template>
-            <template v-else><Circle :size="20" class="call-record-icon" />{{ t('record') }}</template>
-          </button>
         </section>
       </template>
     </div>
@@ -1103,55 +1055,6 @@ onBeforeUnmount(cleanup);
   font-variant-numeric: tabular-nums;
 }
 
-.call-recording {
-  min-width: 0;
-  display: inline-flex;
-  flex: 0 1 auto;
-  align-items: center;
-  gap: 6px;
-  overflow: hidden;
-  padding: 3px 10px;
-  border-radius: 999px;
-  color: #ffffff;
-  background: #da373c;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.call-recording bdi {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.call-recording-dot {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-radius: 50%;
-  background: #ffffff;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .call-recording-dot {
-    animation: call-recording-pulse 1.6s ease-in-out infinite;
-  }
-}
-
-@keyframes call-recording-pulse {
-  50% { opacity: 0.35; }
-}
-
-/* Stays on in full screen, even while the bars are hidden, so nobody forgets they are recorded. */
-.call-full-recording {
-  max-width: calc(100% - 24px);
-  position: absolute;
-  z-index: 1;
-  bottom: max(14px, env(safe-area-inset-bottom));
-  inset-inline-start: max(12px, env(safe-area-inset-left));
-  pointer-events: none;
-}
-
 .call-icon-btn {
   min-width: 36px;
   height: 36px;
@@ -1172,10 +1075,6 @@ onBeforeUnmount(cleanup);
 .call-count {
   font-size: 13px;
   font-weight: 700;
-}
-
-.menu-btn {
-  display: none;
 }
 
 .call-stage {
@@ -1653,15 +1552,6 @@ onBeforeUnmount(cleanup);
   opacity: 0.45;
 }
 
-.call-record-icon {
-  color: #f23f43;
-  fill: #f23f43;
-}
-
-.call-sheet-row.call-record-stop {
-  color: #f23f43;
-}
-
 .call-sheet-row {
   min-height: 48px;
   display: flex;
@@ -1691,10 +1581,6 @@ onBeforeUnmount(cleanup);
 }
 
 @media (max-width: 768px) {
-  .menu-btn {
-    display: inline-flex;
-  }
-
   .call-controls {
     gap: 8px;
   }

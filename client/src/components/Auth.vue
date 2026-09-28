@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 import { api, session } from '../api';
 import { useI18n } from '../i18n';
 import type { User } from '../types';
 const emit = defineEmits<{ auth: [result: { token: string; user: User }]; 'toggle-theme': [] }>();
-const props = defineProps<{ theme: 'light' | 'dark'; serverName: string; notice?: string; openInvite?: string }>();
+const props = defineProps<{ theme: 'light' | 'dark'; serverName: string; openInvite?: string }>();
 const { t, lang, setLang, translateError } = useI18n();
 
 // iOS Safari before 15.4 has no randomUUID, so build the same version 4 format from random bytes.
@@ -43,19 +43,19 @@ if (linkKey) {
   window.history.replaceState(null, '', url);
 }
 
-const savedName = ref(stored('displayName'));
 const visitorId = stored('visitorId') || randomId();
 store('visitorId', visitorId);
 const inviteKey = ref(stored('inviteKey'));
 const pastedLink = ref('');
-const displayName = ref(savedName.value), error = ref(''), loading = ref(false);
-const needsName = computed(() => !savedName.value);
+// The name box always shows, filled in with the name used last time on this device, so opening
+// the app is one tap to confirm it (or a chance to change it).
+const displayName = ref(stored('displayName')), error = ref(''), loading = ref(false);
 async function submit() {
   if (loading.value) return;
   error.value = ''; loading.value = true;
   const key = inviteKey.value || keyFrom(pastedLink.value);
   try {
-    const name = (needsName.value ? displayName.value : savedName.value).trim();
+    const name = displayName.value.trim();
     const result = await api.join(key, visitorId, name);
     store('inviteKey', key);
     store('displayName', result.user.displayName);
@@ -71,16 +71,12 @@ async function submit() {
     error.value = translateError(message);
   } finally { loading.value = false; }
 }
-function changeName() { savedName.value = ''; displayName.value = ''; store('displayName', ''); }
-// Someone who has been here before, on this device, goes straight back in.
-onMounted(() => { if (inviteKey.value && savedName.value && !props.notice) void submit(); });
 // When the site lets anyone join from its plain address, the server gives the key, and the address
 // then works as the invite link would. A key this device already has is kept, unless it stopped working.
 watch(() => props.openInvite, key => {
   if (!key || inviteKey.value) return;
   inviteKey.value = key;
   store('inviteKey', key);
-  if (savedName.value && !props.notice) void submit();
 }, { immediate: true });
 </script>
 <template>
@@ -89,11 +85,9 @@ watch(() => props.openInvite, key => {
     <div class="auth-eyebrow"><bdi>{{ serverName || t('appName') }}</bdi></div><h1>{{ t('welcomeTitle') }}</h1>
     <p>{{ inviteKey ? t('welcomeBody', { name: serverName || t('appName') }) : t('needInvite') }}</p>
     <div v-if="error" class="auth-error" role="alert">{{ error }}</div>
-    <div v-else-if="notice" class="auth-notice" role="status">{{ notice }}</div>
     <div v-if="!inviteKey" class="input-group"><label for="invite-link">{{ t('inviteLink') }}</label><input id="invite-link" v-model="pastedLink" type="text" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="300" required :placeholder="t('inviteLinkPlaceholder')"></div>
-    <div v-if="needsName" class="input-group"><label for="display-name">{{ t('displayName') }}</label><input id="display-name" v-model="displayName" :placeholder="t('yourName')" autocomplete="name" maxlength="60" required :autofocus="Boolean(inviteKey)"></div>
-    <div v-else class="saved-name">{{ t('joiningAs', { name: savedName }) }} <button type="button" @click="changeName">{{ t('changeName') }}</button></div>
-    <button class="auth-btn" type="submit" :disabled="loading">{{ loading ? t('pleaseWait') : t('join') }}</button>
+    <div class="input-group"><label for="display-name">{{ t('displayName') }}</label><input id="display-name" v-model="displayName" :placeholder="t('yourName')" autocomplete="name" maxlength="60" required></div>
+    <button class="auth-btn" type="submit" :disabled="loading">{{ loading ? t('pleaseWait') : t('continue') }}</button>
   </form></div>
 </template>
 
@@ -232,28 +226,6 @@ watch(() => props.openInvite, key => {
   color: var(--danger);
   background: var(--danger-soft);
   font-size: 13px;
-}
-
-.auth-notice {
-  margin-bottom: 14px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--text-accent) 26%, transparent);
-  border-radius: 12px;
-  color: var(--text-primary);
-  background: var(--accent-soft);
-  font-size: 13px;
-}
-
-.saved-name {
-  padding: 9px 0 4px;
-  color: var(--text-secondary);
-  font-size: 14px;
-}
-
-.saved-name button {
-  color: var(--text-accent);
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 [dir='rtl'] .auth-eyebrow {

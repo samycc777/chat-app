@@ -16,6 +16,8 @@ export interface CallChatMessage {
 
 export interface VoiceCall {
   channelId: string;
+  /** The room whose call this is; only people in that room see it or can join it. */
+  roomId: string;
   roomName: string;
   startedAt: number;
   /** Who is in the call, by user ID, with the socket that joined it. */
@@ -44,19 +46,19 @@ export function getCall(channelId: string): VoiceCall | undefined {
   return calls.get(channelId);
 }
 
-export function allCalls(): VoiceCall[] {
-  return [...calls.values()];
+export function allCalls(roomId?: string): VoiceCall[] {
+  return [...calls.values()].filter(call => roomId === undefined || call.roomId === roomId);
 }
 
 export function callOf(userId: string): VoiceCall | undefined {
   return allCalls().find(call => call.members.has(userId));
 }
 
-export function addToCall(channelId: string, userId: string, socketId: string): VoiceCall {
+export function addToCall(channelId: string, roomId: string, userId: string, socketId: string): VoiceCall {
   let call = calls.get(channelId);
   if (!call) {
     // The room name is fixed per channel, so everyone who joins the channel meets in one LiveKit room.
-    call = { channelId, roomName: `voice-${channelId}`, startedAt: Date.now(), members: new Map(), hands: new Map(), phoneScreens: new Set(), chat: [] };
+    call = { channelId, roomId, roomName: `voice-${channelId}`, startedAt: Date.now(), members: new Map(), hands: new Map(), phoneScreens: new Set(), chat: [] };
     calls.set(channelId, call);
   }
   call.members.set(userId, socketId);

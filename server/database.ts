@@ -263,4 +263,37 @@ db.exec(`
   );
 `);
 
+// Each customer has a room of their own, with its own invite key and its own call. The room this
+// server started with (the friends' and the class's) is not a row here: it is the home room, whose
+// key stays in the deployment settings, and its channels have no room_id.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS rooms (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    invite_key TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
+  );
+
+  -- Who has joined each room, so notifications and member lists stay inside it. The home room's
+  -- ID is 'home'.
+  CREATE TABLE IF NOT EXISTS room_members (
+    room_id TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    joined_at INTEGER NOT NULL,
+    PRIMARY KEY (room_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_room_members_user ON room_members(user_id);
+`);
+const channelColumns = db.pragma('table_info(channels)') as { name: string }[];
+if (!channelColumns.some(column => column.name === 'room_id')) {
+  db.exec('ALTER TABLE channels ADD COLUMN room_id TEXT REFERENCES rooms(id) ON DELETE CASCADE');
+}
+// Everyone who joined before rooms existed joined the home room.
+if (!db.prepare("SELECT 1 FROM app_settings WHERE key = 'room_members_started'").get()) {
+  db.transaction(() => {
+    db.prepare("INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) SELECT 'home', id, ? FROM users").run(Date.now());
+    db.prepare("INSERT INTO app_settings (key, value) VALUES ('room_members_started', '1')").run();
+  })();
+}
+
 export default db;

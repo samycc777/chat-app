@@ -6,28 +6,35 @@ import { removeAttachmentIfUnused } from './attachments';
 export type ChannelKind = 'text' | 'voice';
 export interface Channel { id: string; name: string; kind: ChannelKind; position: number; }
 
-export function listChannels(): Channel[] {
-  return db.prepare('SELECT id, name, kind, position FROM channels ORDER BY position, created_at').all() as Channel[];
+// The room the server started with, whose channels have no room_id (see database.ts). Text channels
+// exist only there; every other room has just its call.
+export const HOME_ROOM = 'home';
+const IN_ROOM = "COALESCE(room_id, 'home') = ?";
+
+// Everything here stays inside one room, so nobody can reach another room's channels by their ID.
+export function listChannels(roomId = HOME_ROOM): Channel[] {
+  return db.prepare(`SELECT id, name, kind, position FROM channels WHERE ${IN_ROOM} ORDER BY position, created_at`).all(roomId) as Channel[];
 }
 
-export function getChannel(id: unknown): Channel | undefined {
+export function getChannel(id: unknown, roomId = HOME_ROOM): Channel | undefined {
   if (typeof id !== 'string') return undefined;
-  return db.prepare('SELECT id, name, kind, position FROM channels WHERE id = ?').get(id) as Channel | undefined;
+  return db.prepare(`SELECT id, name, kind, position FROM channels WHERE id = ? AND ${IN_ROOM}`).get(id, roomId) as Channel | undefined;
 }
 
 export const isTextChannel = (id: unknown) => getChannel(id)?.kind === 'text';
-export const isVoiceChannel = (id: unknown) => getChannel(id)?.kind === 'voice';
+export const isVoiceChannel = (id: unknown, roomId = HOME_ROOM) => getChannel(id, roomId)?.kind === 'voice';
 
 export function cleanChannelName(value: unknown): string {
   return cleanDisplayName(value).slice(0, 40);
 }
 
-export function createChannel(name: string, kind: ChannelKind): Channel {
+export function createChannel(name: string, kind: ChannelKind, roomId = HOME_ROOM): Channel {
   const id = uuid();
-  const position = (db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM channels').get() as { next: number }).next;
+  const position = (db.prepare(`SELECT COALESCE(MAX(position), -1) + 1 AS next FROM channels WHERE ${IN_ROOM}`).get(roomId) as { next: number }).next;
   db.transaction(() => {
     if (kind === 'text') db.prepare("INSERT INTO conversations (id, type, name) VALUES (?, 'group', ?)").run(id, name);
-    db.prepare('INSERT INTO channels (id, name, kind, position, created_at) VALUES (?, ?, ?, ?, ?)').run(id, name, kind, position, Date.now());
+    db.prepare('INSERT INTO channels (id, name, kind, position, created_at, room_id) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, name, kind, position, Date.now(), roomId === HOME_ROOM ? null : roomId);
   })();
   return { id, name, kind, position };
 }

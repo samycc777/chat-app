@@ -3,7 +3,9 @@ import jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
 import { v4 as uuid } from 'uuid';
 import db from './database';
-import { inviteKey, inviteKeyMatches, production } from './config';
+import { production } from './config';
+import { HOME_ROOM } from './channels';
+import { addRoomMember, getRoom, roomForKey } from './rooms';
 import { createLimiter } from './rateLimit';
 
 const JWT_SECRET = process.env.JWT_SECRET || (production
@@ -15,21 +17,25 @@ const AVATAR_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#
 // a mangled link, while the hourly cap keeps guessing a key impractically slow.
 const failedJoinLimits = [createLimiter(10, 60_000), createLimiter(100, 60 * 60_000)];
 
-export interface Session { userId: string; }
-export interface AuthRequest extends Request { userId?: string; }
+export interface Session { userId: string; roomId: string; }
+export interface AuthRequest extends Request { userId?: string; roomId?: string; }
 
 // A session stays valid only while the invite key it was opened with is unchanged, so changing the
-// key in the deployment settings signs out everyone who does not have the new link.
-function keyFingerprint() {
-  return createHmac('sha256', JWT_SECRET).update(`invite:${inviteKey()}`).digest('base64url').slice(0, 22);
+// key in the deployment settings signs out everyone who does not have the new link. A room that no
+// longer exists has no fingerprint, which ends its sessions too.
+function keyFingerprint(roomId = HOME_ROOM) {
+  const room = getRoom(roomId);
+  return room ? createHmac('sha256', JWT_SECRET).update(`invite:${room.key}`).digest('base64url').slice(0, 22) : null;
 }
 
 export function verifyToken(token: string): Session | null {
-  let claims: { userId?: unknown; code?: unknown };
+  let claims: { userId?: unknown; roomId?: unknown; code?: unknown };
   try { claims = jwt.verify(token, JWT_SECRET) as typeof claims; } catch { return null; }
-  if (typeof claims.userId !== 'string' || claims.code !== keyFingerprint()) return null;
+  // Sessions from before rooms existed carry no room; they were all opened in the home room.
+  const roomId = claims.roomId === undefined ? HOME_ROOM : claims.roomId;
+  if (typeof claims.userId !== 'string' || typeof roomId !== 'string' || !claims.code || claims.code !== keyFingerprint(roomId)) return null;
   const user = db.prepare('SELECT id FROM users WHERE id = ?').get(claims.userId) as { id: string } | undefined;
-  return user ? { userId: user.id } : null;
+  return user ? { userId: user.id, roomId } : null;
 }
 
 export function authMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
@@ -38,6 +44,7 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   const session = verifyToken(token);
   if (!session) { res.status(401).json({ error: 'Invalid or expired session' }); return; }
   req.userId = session.userId;
+  req.roomId = session.roomId;
   next();
 }
 
@@ -55,7 +62,8 @@ export function verifyStreamToken(token: unknown, attachmentId: string): Session
   try { claims = jwt.verify(token, JWT_SECRET) as typeof claims; } catch { return null; }
   if (claims.purpose !== 'stream' || claims.attachmentId !== attachmentId || typeof claims.sub !== 'string' || claims.code !== keyFingerprint()) return null;
   const user = db.prepare('SELECT id FROM users WHERE id = ?').get(claims.sub) as { id: string } | undefined;
-  return user ? { userId: user.id } : null;
+  // Files belong to the home room's text channels, so a pass is only ever made there.
+  return user ? { userId: user.id, roomId: HOME_ROOM } : null;
 }
 
 // Control and bidirectional-override characters could make a name render as someone else's.
@@ -76,7 +84,8 @@ router.post('/join', (req: Request, res: Response) => {
     res.setHeader('Retry-After', lockout.retryAfterSeconds);
     res.status(429).json({ error: 'Too many attempts' }); return;
   }
-  if (!inviteKeyMatches(typeof body.inviteKey === 'string' ? body.inviteKey : '')) {
+  const room = roomForKey(typeof body.inviteKey === 'string' ? body.inviteKey : '');
+  if (!room) {
     for (const limit of failedJoinLimits) limit.hit(ip);
     res.status(401).json({ error: 'Invalid invite link' }); return;
   }
@@ -101,10 +110,11 @@ router.post('/join', (req: Request, res: Response) => {
       SELECT ?, c.id, (SELECT COALESCE(MAX(m.rowid), 0) FROM messages m WHERE m.conversation_id = c.id) FROM channels c WHERE c.kind = 'text'`).run(id);
     user = { id, username, display_name: displayName, avatar_color: avatarColor, status: '' };
   }
+  addRoomMember(room.id, user.id);
   // Friends open the app from their home screen for weeks, so a session lasts a month; changing
   // the invite key still ends every session at once.
-  const token = jwt.sign({ userId: user.id, code: keyFingerprint() }, JWT_SECRET, { expiresIn: '30d' });
-  res.json({ token, user: {
+  const token = jwt.sign({ userId: user.id, roomId: room.id, code: keyFingerprint(room.id) }, JWT_SECRET, { expiresIn: '30d' });
+  res.json({ token, room: { id: room.id, name: room.name || null }, user: {
     id: user.id, username: user.username, displayName: user.display_name,
     avatarColor: user.avatar_color, status: user.status || '',
   } });

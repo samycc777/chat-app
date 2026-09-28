@@ -4,7 +4,8 @@ import { v4 as uuid } from 'uuid';
 import db from './database';
 import { verifyToken } from './auth';
 import { removeAttachmentIfUnused } from './attachments';
-import { ChannelKind, cleanChannelName, createChannel, deleteChannel, getChannel, isTextChannel, listChannels, renameChannel } from './channels';
+import { ChannelKind, cleanChannelName, createChannel, deleteChannel, getChannel, HOME_ROOM, isTextChannel, listChannels, renameChannel } from './channels';
+import { roomChannel } from './rooms';
 import { addToCall, allCalls, CallChatMessage, callOf, endCall, getCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
 import { roomService } from './livekit';
 import { messageById } from './messages';
@@ -12,9 +13,10 @@ import { forgetSocket, notifyCallStarted, notifyNewMessage, setAppActive } from 
 import { registerChatEvents } from './chat';
 import { connectRecordings } from './recordings';
 
-const onlineUsers = new Map<string, Set<string>>();
-// Everyone is in every channel, so every connection joins this one Socket.IO room.
-const EVERYONE = 'everyone';
+// Who is online in each room, by room ID, then by user ID with their connections. Everyone in a
+// room is in every one of its channels, so each connection joins its room's Socket.IO room.
+const onlineByRoom = new Map<string, Map<string, Set<string>>>();
+const HOME = roomChannel(HOME_ROOM);
 
 // Typing is throttled by the client, so normal use stays far below the soft limit. Events over it
 // are dropped with an error reply instead of silently cutting someone off; only a client far
@@ -43,7 +45,7 @@ function callPayload(call: VoiceCall) {
       : null,
   };
 }
-const voiceState = () => ({ calls: allCalls().map(callPayload) });
+const voiceState = (roomId: string) => ({ calls: allCalls(roomId).map(callPayload) });
 
 // A long call's chat stays bounded; the oldest messages go first.
 const MAX_CALL_CHAT = 500;
@@ -76,12 +78,14 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     const session = typeof token === 'string' ? verifyToken(token) : null;
     if (!session) return next(new Error('Invalid session'));
     socket.data.userId = session.userId;
+    socket.data.roomId = session.roomId;
     next();
   });
 
-  const broadcastVoice = () => io.to(EVERYONE).emit('voice_state', voiceState());
-  const broadcastChannels = () => io.to(EVERYONE).emit('channels', { channels: listChannels() });
-  connectRecordings({ voiceChanged: broadcastVoice, messagePosted: message => io.to(EVERYONE).emit('new_message', message) });
+  const broadcastVoice = (roomId: string) => io.to(roomChannel(roomId)).emit('voice_state', voiceState(roomId));
+  const broadcastChannels = () => io.to(HOME).emit('channels', { channels: listChannels() });
+  // Recordings and text channels exist only in the home room.
+  connectRecordings({ voiceChanged: () => broadcastVoice(HOME_ROOM), messagePosted: message => io.to(HOME).emit('new_message', message) });
 
   // A phone's screen connection is separate from its owner's, so it is closed on the server's side
   // too: otherwise a phone whose app was killed would keep showing its screen to the call.
@@ -93,11 +97,14 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     return call;
   }
   function leaveCall(userId: string) {
-    if (takeOutOfCall(userId)) broadcastVoice();
+    const call = takeOutOfCall(userId);
+    if (call) broadcastVoice(call.roomId);
   }
 
   io.on('connection', (socket) => {
     const userId = socket.data.userId as string;
+    const roomId = socket.data.roomId as string;
+    const room = roomChannel(roomId);
     const me = profile(userId);
     const eventTimes: number[] = [];
     socket.use((packet, next) => {
@@ -113,18 +120,42 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       next();
     });
 
+    if (!onlineByRoom.has(roomId)) onlineByRoom.set(roomId, new Map());
+    const onlineUsers = onlineByRoom.get(roomId)!;
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId)!.add(socket.id);
     db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
-    socket.join(EVERYONE);
+    socket.join(room);
     socket.join(`user:${userId}`);
 
-    // Everything a client needs to draw the server is sent on every (re)connection, so state missed
+    // Everything a client needs to draw the room is sent on every (re)connection, so state missed
     // while offline, or lost when the server restarted, is replaced rather than left stale.
     socket.emit('presence_state', { users: [...onlineUsers.keys()].map(profile).filter(Boolean) });
-    socket.emit('channels', { channels: listChannels() });
-    socket.emit('voice_state', voiceState());
-    socket.to(EVERYONE).emit('presence', { userId, online: true, user: me });
+    socket.emit('channels', { channels: listChannels(roomId) });
+    socket.emit('voice_state', voiceState(roomId));
+    socket.to(room).emit('presence', { userId, online: true, user: me });
+
+    // Calls, their chat and raised hands work in every room; what follows is for the rest.
+    registerCallEvents();
+    socket.on('disconnect', () => {
+      forgetSocket(userId, socket.id);
+      // The connection that joined a call carries it; if it drops, the app joins again when it
+      // reconnects, so nobody is shown sitting in a call they have left.
+      const call = callOf(userId);
+      if (call?.members.get(userId) === socket.id) leaveCall(userId);
+      const sockets = onlineUsers.get(userId);
+      if (!sockets) return;
+      sockets.delete(socket.id);
+      if (sockets.size) return;
+      onlineUsers.delete(userId);
+      if (!onlineUsers.size) onlineByRoom.delete(roomId);
+      db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
+      io.to(room).emit('presence', { userId, online: false, lastSeen: Date.now() });
+    });
+
+    // Text channels, which the app no longer shows, and managing channels belong to the home room
+    // only, so nobody in a customer's room can read or change the friends' messages.
+    if (roomId !== HOME_ROOM) return;
     registerChatEvents(io, socket, userId);
 
     socket.on('send_message', (data, callback) => {
@@ -152,7 +183,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       `).run(id, conversationId, userId, safeType === 'text' ? content : (safeType === 'file' ? attachment.original_name : null), safeType, attachment?.original_name || null, replyTo || null, createdAt, attachment?.id || null);
 
       const message = messageById(id)!;
-      io.to(EVERYONE).emit('new_message', message);
+      io.to(HOME).emit('new_message', message);
       callback?.({ id });
       notifyNewMessage(message, getChannel(conversationId)!);
     });
@@ -165,7 +196,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
 
       const editedAt = Date.now();
       db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(content, editedAt, messageId);
-      io.to(EVERYONE).emit('message_edited', { messageId, content, editedAt });
+      io.to(HOME).emit('message_edited', { messageId, content, editedAt });
     });
 
     // Nobody moderates the server, so everyone can delete only their own messages.
@@ -177,17 +208,17 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
 
       db.prepare('UPDATE messages SET deleted = 1, content = NULL, file_name = NULL, attachment_id = NULL WHERE id = ?').run(messageId);
       if (msg.attachment_id) removeAttachmentIfUnused(msg.attachment_id);
-      io.to(EVERYONE).emit('message_deleted', { messageId });
+      io.to(HOME).emit('message_deleted', { messageId });
     });
 
     socket.on('typing', (data) => {
       if (!data || !isTextChannel(data.conversationId)) return;
-      socket.to(EVERYONE).emit('user_typing', { conversationId: data.conversationId, userId, displayName: me?.displayName });
+      socket.to(HOME).emit('user_typing', { conversationId: data.conversationId, userId, displayName: me?.displayName });
     });
 
     socket.on('stop_typing', (data) => {
       if (!data || !isTextChannel(data.conversationId)) return;
-      socket.to(EVERYONE).emit('user_stop_typing', { conversationId: data.conversationId, userId });
+      socket.to(HOME).emit('user_stop_typing', { conversationId: data.conversationId, userId });
     });
 
     // Anyone can make, rename and delete channels, as friends would on a server they share.
@@ -223,83 +254,73 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
         const call = endCall(channel.id);
         // Closing the room disconnects anyone still in the call of a channel that no longer exists.
         if (call) roomService()?.deleteRoom(call.roomName).catch(() => { /* The room may never have been opened. */ });
-        broadcastVoice();
+        broadcastVoice(HOME_ROOM);
       }
       broadcastChannels();
       reply({ ok: true });
     });
 
-    // Like Discord, a person is in at most one voice channel; joining another moves them.
-    socket.on('voice_join', (data: { channelId: unknown }, callback?: unknown) => {
-      const reply = (payload: object) => { if (typeof callback === 'function') callback(payload); };
-      const channel = getChannel(data?.channelId);
-      if (channel?.kind !== 'voice') return reply({ error: 'Unknown channel' });
-      const previous = callOf(userId);
-      if (previous && previous.channelId !== channel.id) takeOutOfCall(userId);
-      const startsCall = !getCall(channel.id);
-      const call = addToCall(channel.id, userId, socket.id);
-      broadcastVoice();
-      reply({ startedAt: call.startedAt });
-      // Someone joining (or coming back) sees the chat so far, as far as it is theirs to see.
-      socket.emit('call_chat_history', { messages: call.chat.filter(message => canSee(message, userId)).map(callChatPayload) });
-      // An app coming back after a dropped connection (or a server restart) rejoins its call, which
-      // is not news to anyone.
-      if (startsCall && (data as { rejoin?: unknown })?.rejoin !== true) notifyCallStarted(channel, userId);
-    });
+    function registerCallEvents() {
+      // Like Discord, a person is in at most one voice channel; joining another moves them.
+      socket.on('voice_join', (data: { channelId: unknown }, callback?: unknown) => {
+        const reply = (payload: object) => { if (typeof callback === 'function') callback(payload); };
+        const channel = getChannel(data?.channelId, roomId);
+        if (channel?.kind !== 'voice') return reply({ error: 'Unknown channel' });
+        const previous = callOf(userId);
+        if (previous && previous.channelId !== channel.id) {
+          takeOutOfCall(userId);
+          if (previous.roomId !== roomId) broadcastVoice(previous.roomId);
+        }
+        const startsCall = !getCall(channel.id);
+        const call = addToCall(channel.id, roomId, userId, socket.id);
+        broadcastVoice(roomId);
+        reply({ startedAt: call.startedAt });
+        // Someone joining (or coming back) sees the chat so far, as far as it is theirs to see.
+        socket.emit('call_chat_history', { messages: call.chat.filter(message => canSee(message, userId)).map(callChatPayload) });
+        // An app coming back after a dropped connection (or a server restart) rejoins its call, which
+        // is not news to anyone.
+        if (startsCall && (data as { rejoin?: unknown })?.rejoin !== true) notifyCallStarted(channel, roomId, userId);
+      });
 
-    socket.on('voice_leave', () => leaveCall(userId));
+      socket.on('voice_leave', () => leaveCall(userId));
 
-    // The call's chat, to everyone in the call or privately to one of them. Only people in the call
-    // can write in it, and only to people who are in it too.
-    socket.on('call_chat_send', (data: { text?: unknown; to?: unknown }, callback?: unknown) => {
-      const reply = (payload: object) => { if (typeof callback === 'function') callback(payload); };
-      const call = callOf(userId);
-      if (!call) return reply({ error: 'Not in a call' });
-      const text = typeof data?.text === 'string' ? data.text.trim() : '';
-      if (!text || text.length > MAX_CALL_CHAT_TEXT) return reply({ error: 'Invalid message' });
-      const toId = data?.to == null ? null : data.to;
-      if (toId !== null && (typeof toId !== 'string' || toId === userId || !call.members.has(toId))) return reply({ error: 'Not in the call' });
-      const message: CallChatMessage = { id: uuid(), fromId: userId, toId, text, sentAt: Date.now() };
-      call.chat.push(message);
-      if (call.chat.length > MAX_CALL_CHAT) call.chat.shift();
-      const payload = callChatPayload(message);
-      const readers = toId ? [userId, toId] : [...call.members.keys()];
-      for (const reader of readers) {
-        const socketId = call.members.get(reader);
-        if (socketId) io.to(socketId).emit('call_chat_message', payload);
-      }
-      reply({ ok: true });
-    });
+      // The call's chat, to everyone in the call or privately to one of them. Only people in the call
+      // can write in it, and only to people who are in it too.
+      socket.on('call_chat_send', (data: { text?: unknown; to?: unknown }, callback?: unknown) => {
+        const reply = (payload: object) => { if (typeof callback === 'function') callback(payload); };
+        const call = callOf(userId);
+        if (!call) return reply({ error: 'Not in a call' });
+        const text = typeof data?.text === 'string' ? data.text.trim() : '';
+        if (!text || text.length > MAX_CALL_CHAT_TEXT) return reply({ error: 'Invalid message' });
+        const toId = data?.to == null ? null : data.to;
+        if (toId !== null && (typeof toId !== 'string' || toId === userId || !call.members.has(toId))) return reply({ error: 'Not in the call' });
+        const message: CallChatMessage = { id: uuid(), fromId: userId, toId, text, sentAt: Date.now() };
+        call.chat.push(message);
+        if (call.chat.length > MAX_CALL_CHAT) call.chat.shift();
+        const payload = callChatPayload(message);
+        const readers = toId ? [userId, toId] : [...call.members.keys()];
+        for (const reader of readers) {
+          const socketId = call.members.get(reader);
+          if (socketId) io.to(socketId).emit('call_chat_message', payload);
+        }
+        reply({ ok: true });
+      });
 
-    // Whether this page is in front of its owner; people are only notified while none of theirs is.
-    socket.on('app_active', (data: { active?: unknown }, callback?: unknown) => {
-      setAppActive(userId, socket.id, data?.active === true);
-      if (typeof callback === 'function') callback({ ok: true });
-    });
+      // Whether this page is in front of its owner; people are only notified while none of theirs is.
+      socket.on('app_active', (data: { active?: unknown }, callback?: unknown) => {
+        setAppActive(userId, socket.id, data?.active === true);
+        if (typeof callback === 'function') callback({ ok: true });
+      });
 
-    socket.on('raise_hand', (data: { channelId: string; raised: boolean }) => {
-      if (!data || typeof data.raised !== 'boolean') return;
-      const call = callOf(userId);
-      if (!call || call.channelId !== data.channelId || data.raised === call.hands.has(userId)) return;
-      if (data.raised) call.hands.set(userId, Date.now());
-      else call.hands.delete(userId);
-      broadcastVoice();
-    });
-
-    socket.on('disconnect', () => {
-      forgetSocket(userId, socket.id);
-      // The connection that joined a call carries it; if it drops, the app joins again when it
-      // reconnects, so nobody is shown sitting in a call they have left.
-      const call = callOf(userId);
-      if (call?.members.get(userId) === socket.id) leaveCall(userId);
-      const sockets = onlineUsers.get(userId);
-      if (!sockets) return;
-      sockets.delete(socket.id);
-      if (sockets.size) return;
-      onlineUsers.delete(userId);
-      db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
-      io.to(EVERYONE).emit('presence', { userId, online: false, lastSeen: Date.now() });
-    });
+      socket.on('raise_hand', (data: { channelId: string; raised: boolean }) => {
+        if (!data || typeof data.raised !== 'boolean') return;
+        const call = callOf(userId);
+        if (!call || call.channelId !== data.channelId || data.raised === call.hands.has(userId)) return;
+        if (data.raised) call.hands.set(userId, Date.now());
+        else call.hands.delete(userId);
+        broadcastVoice(call.roomId);
+      });
+    }
   });
 
   return io;

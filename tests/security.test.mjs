@@ -120,7 +120,7 @@ async function join(displayName, inviteKey = '0000') {
 }
 const auth = token => ({ Authorization: `Bearer ${token}` });
 const jsonAuth = token => ({ ...auth(token), 'Content-Type': 'application/json' });
-const firstChannel = kind => db.prepare('SELECT id FROM channels WHERE kind = ? ORDER BY position LIMIT 1').get(kind).id;
+const firstChannel = kind => db.prepare('SELECT id FROM channels WHERE kind = ? AND room_id IS NULL ORDER BY position LIMIT 1').get(kind).id;
 const callToken = (token, channelId) => fetch(`${baseUrl}/api/livekit/token`, {
   method: 'POST', headers: jsonAuth(token), body: JSON.stringify({ channelId }),
 });
@@ -837,6 +837,124 @@ test('the plain address joins like the invite link only when joining is open', a
     previous === undefined ? delete process.env.OPEN_JOIN : process.env.OPEN_JOIN = previous;
   }
   assert.equal((await info()).invite, undefined);
+});
+
+const createRoom = body => fetch(`${baseUrl}/api/rooms`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+});
+
+test('a room is made only with the creation key once one is set, and gets its own long invite key', async () => {
+  const previous = process.env.ROOM_CREATION_KEY;
+  process.env.ROOM_CREATION_KEY = 'owner-only-key';
+  try {
+    assert.equal((await createRoom({ name: 'Acme' })).status, 403);
+    assert.equal((await createRoom({ name: 'Acme', creationKey: 'guess' })).status, 403);
+    assert.equal((await createRoom({ name: '   ', creationKey: 'owner-only-key' })).status, 400);
+    const made = await createRoom({ name: '  Acme\u202e Ltd ', creationKey: 'OWNER-ONLY-KEY' });
+    assert.equal(made.status, 200);
+    const room = await made.json();
+    assert.equal(room.name, 'Acme Ltd');
+    assert.match(room.invite, /^[0-9a-f]{30}$/);
+  } finally {
+    previous === undefined ? delete process.env.ROOM_CREATION_KEY : process.env.ROOM_CREATION_KEY = previous;
+  }
+});
+
+test("a room's people see and hear only each other, and never the home room's channels or messages", async () => {
+  const room = await (await createRoom({ name: 'Bakery' })).json();
+  const homeVoice = firstChannel('voice');
+  const general = firstChannel('text');
+
+  // The welcome screen and the home-screen app are named after the room of the invite.
+  assert.equal((await (await fetch(`${baseUrl}/api/server?invite=${room.invite}`)).json()).name, 'Bakery');
+  const manifest = await (await fetch(`${baseUrl}/manifest.webmanifest?invite=${room.invite}`)).json();
+  assert.equal(manifest.name, 'Bakery');
+  assert.equal(manifest.start_url, `/?invite=${room.invite}`);
+
+  const baker = await join('Baker', room.invite.toUpperCase());
+  assert.deepEqual(baker.room, { id: room.id, name: 'Bakery' });
+  const customer = await join('Customer', room.invite);
+  const friend = await join('Home friend');
+  const [bakerSocket, customerSocket, friendSocket] = await Promise.all([baker, customer, friend].map(person => connect(person.token)));
+
+  // The room has its own call and nothing else, and its people see only who is online there.
+  const channels = await new Promise(resolve => {
+    const late = io(baseUrl, { auth: { token: customer.token }, transports: ['websocket'] });
+    sockets.push(late);
+    late.once('channels', ({ channels: list }) => resolve(list));
+  });
+  assert.equal(channels.length, 1);
+  assert.equal(channels[0].kind, 'voice');
+  const roomVoice = channels[0].id;
+  const presence = await new Promise(resolve => {
+    const late = io(baseUrl, { auth: { token: baker.token }, transports: ['websocket'] });
+    sockets.push(late);
+    late.once('presence_state', ({ users }) => resolve(users.map(user => user.displayName)));
+  });
+  assert.ok(presence.includes('Customer'));
+  assert.ok(!presence.includes('Home friend'));
+
+  // Nobody reaches the other room's call, even with its channel's ID.
+  assert.deepEqual(await emitWithAck(bakerSocket, 'voice_join', { channelId: homeVoice }), { error: 'Unknown channel' });
+  assert.deepEqual(await emitWithAck(friendSocket, 'voice_join', { channelId: roomVoice }), { error: 'Unknown channel' });
+  assert.equal((await callToken(baker.token, homeVoice)).status, 404);
+
+  const friendHearsNothing = quietFor(friendSocket, 'voice_state');
+  const customerSees = eventWhere(customerSocket, 'voice_state', state => membersIn(state, roomVoice).includes('Baker'));
+  await emitWithAck(bakerSocket, 'voice_join', { channelId: roomVoice });
+  await customerSees;
+  assert.ok(await friendHearsNothing);
+  const credentials = await (await callToken(baker.token, roomVoice)).json();
+  assert.equal(credentials.roomName, `voice-${roomVoice}`);
+  assert.equal(jwt.decode(credentials.token).video.room, `voice-${roomVoice}`);
+
+  // The home room's messages, files and member list are out of reach.
+  assert.equal((await fetch(`${baseUrl}/api/conversations/${general}/messages`, { headers: auth(baker.token) })).status, 404);
+  assert.equal((await fetch(`${baseUrl}/api/search?q=hello`, { headers: auth(baker.token) })).status, 404);
+  await assert.rejects(bakerSocket.timeout(200).emitWithAck('send_message', { conversationId: general, content: 'Hi', type: 'text' }));
+  await assert.rejects(bakerSocket.timeout(200).emitWithAck('create_channel', { name: 'Sneaky', kind: 'text' }));
+  const homeMembers = await new Promise(resolve => {
+    const late = io(baseUrl, { auth: { token: friend.token }, transports: ['websocket'] });
+    sockets.push(late);
+    late.once('members', ({ users }) => resolve(users.map(user => user.displayName)));
+  });
+  assert.ok(homeMembers.includes('Home friend'));
+  assert.ok(!homeMembers.includes('Baker'));
+  bakerSocket.emit('voice_leave');
+});
+
+test("a room's call is announced only to people who joined that room", async () => {
+  const room = await (await createRoom({ name: 'Studio' })).json();
+  const [host, guest] = [await join('Host', room.invite), await join('Guest', room.invite)];
+  const homeFriend = await join('Friend at home');
+  const guestSub = browserSubscription('rooms-guest');
+  const friendSub = browserSubscription('rooms-friend');
+  assert.equal((await subscribe(guest.token, guestSub)).status, 200);
+  assert.equal((await subscribe(homeFriend.token, friendSub)).status, 200);
+
+  const hostSocket = await connect(host.token);
+  const studio = db.prepare('SELECT id FROM channels WHERE room_id = ?').get(room.id).id;
+  await emitWithAck(hostSocket, 'voice_join', { channelId: studio });
+  assert.ok(await eventually(() => pushesTo(guestSub).length === 1));
+  assert.equal(pushesTo(guestSub)[0].title, 'Host started a call in 🔊 Studio');
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(pushesTo(friendSub).length, 0);
+  hostSocket.emit('voice_leave');
+});
+
+test('sessions from before rooms existed stay in the home room', async () => {
+  const friend = await join('Signed in last month');
+  // Old sessions carried only the person and the home invite's fingerprint.
+  const code = crypto.createHmac('sha256', process.env.JWT_SECRET).update('invite:0000').digest('base64url').slice(0, 22);
+  const oldToken = jwt.sign({ userId: friend.user.id, code }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  assert.equal((await fetch(`${baseUrl}/api/me`, { headers: auth(oldToken) })).status, 200);
+  const socket = await connect(oldToken);
+  const joined = await emitWithAck(socket, 'voice_join', { channelId: firstChannel('voice') });
+  assert.equal(typeof joined.startedAt, 'number');
+  socket.emit('voice_leave');
+  // A session naming a room that does not exist is refused.
+  const madeUp = jwt.sign({ userId: friend.user.id, roomId: 'nowhere', code }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  assert.equal((await fetch(`${baseUrl}/api/me`, { headers: auth(madeUp) })).status, 401);
 });
 
 test("the class app's chat becomes #general with its messages when Hangout first starts on its server", () => {

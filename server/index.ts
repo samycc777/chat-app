@@ -7,7 +7,8 @@ import fs from 'fs';
 import authRouter, { cleanDisplayName } from './auth';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
-import { inviteKey, openJoin, serverName, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, inviteKeyMatches, production, UPLOADS_DIR } from './config';
+import { inviteKey, openJoin, serverName, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, production, UPLOADS_DIR } from './config';
+import { roomForKey, roomsRouter } from './rooms';
 import { rateLimit } from './rateLimit';
 import { streamAttachment } from './stream';
 
@@ -37,16 +38,20 @@ app.use((_req, res, next) => {
 app.use(compression());
 app.use(express.json({ limit: '64kb' }));
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
-// The server's name is shown on the join screen, before anyone has joined. When joining is open,
-// the key comes along, so the plain address joins exactly as the invite link does.
-app.get('/api/server', (_req, res) => {
+// The room's name is shown on the join screen, before anyone has joined: the room of the invite
+// the page has, or else the home room. When joining is open, the home room's key comes along, so
+// the plain address joins exactly as the invite link does. It checks invites, so it is limited
+// like joining is, and cannot be used to guess a key.
+app.get('/api/server', rateLimit(300, 15 * 60_000), (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ name: serverName() || null, ...(openJoin() ? { invite: inviteKey() } : {}) });
+  const room = typeof req.query.invite === 'string' ? roomForKey(req.query.invite) : undefined;
+  res.json({ name: (room ? room.name : serverName()) || null, ...(openJoin() ? { invite: inviteKey() } : {}) });
 });
 
 // Several friends may share one network address, so these per-address limits are generous;
 // signed-in requests are also limited per person in the API router.
 app.use('/api/auth', rateLimit(300, 15 * 60_000), authRouter);
+app.use('/api/rooms', rateLimit(60, 15 * 60_000), roomsRouter);
 // A player opens sound and video with the pass in its link rather than a session header, so this
 // comes before the API's session check. Seeking asks for many small parts, hence the generous limit.
 app.get('/api/attachments/:id/stream', rateLimit(1200, 60_000), streamAttachment);
@@ -65,18 +70,19 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 });
 
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
-// Named after the server, so someone who adds the app to their home screen sees its name.
+// Named after the room, so someone who adds the app to their home screen sees its name.
 // An iPhone keeps a Home Screen app's storage apart from Safari's, so the app would open knowing
 // nothing: no invite, no name. The page therefore asks for the manifest with its invite, visitor
 // identity and name, and the app's start link carries them, so it opens already signed in as the
 // same person. They are only echoed back when the invite is right, to someone who already has them.
 // It checks the invite, so it is limited like joining is, and cannot be used to guess the key.
 app.get('/manifest.webmanifest', rateLimit(300, 15 * 60_000), (req, res) => {
-  const name = serverName() || 'Majlis';
   const param = (key: string) => typeof req.query[key] === 'string' ? req.query[key] as string : '';
   const invite = param('invite'), visitor = param('visitor'), person = cleanDisplayName(param('name')).slice(0, 60);
+  const room = invite ? roomForKey(invite) : undefined;
+  const name = (room ? room.name : serverName()) || 'Majlis';
   let startUrl = '/';
-  if (invite && inviteKeyMatches(invite)) {
+  if (room) {
     const start = new URLSearchParams({ invite });
     if (/^[0-9a-f-]{36}$/i.test(visitor)) start.set('visitor', visitor);
     if (person) start.set('name', person);

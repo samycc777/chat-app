@@ -1,4 +1,4 @@
-import { Response, Router } from 'express';
+import { NextFunction, Response, Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import multer from 'multer';
 import path from 'path';
@@ -6,7 +6,7 @@ import fs from 'fs';
 import db from './database';
 import { AuthRequest, authMiddleware } from './auth';
 import { getCall, screenIdentity } from './voice';
-import { isTextChannel, isVoiceChannel } from './channels';
+import { HOME_ROOM, isTextChannel, isVoiceChannel } from './channels';
 import { MAX_UPLOAD_BYTES, UPLOADS_DIR } from './config';
 import { detectMime } from './attachments';
 import { MESSAGE_SELECT, toMessage } from './messages';
@@ -41,7 +41,7 @@ router.get('/upload-config', (_req: AuthRequest, res: Response) => {
 // without showing up in the sidebar.
 router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
   const channelId = req.body?.channelId;
-  if (!isVoiceChannel(channelId)) { res.status(404).json({ error: 'Unknown channel' }); return; }
+  if (!isVoiceChannel(channelId, req.roomId)) { res.status(404).json({ error: 'Unknown channel' }); return; }
   const call = getCall(channelId);
   if (!call?.members.has(req.userId!)) { res.status(409).json({ error: 'Not in this voice channel' }); return; }
 
@@ -73,7 +73,7 @@ router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
 // no extra download to the phone that is already in the call.
 router.post('/livekit/screen-token', async (req: AuthRequest, res: Response) => {
   const channelId = req.body?.channelId;
-  if (!isVoiceChannel(channelId)) { res.status(404).json({ error: 'Unknown channel' }); return; }
+  if (!isVoiceChannel(channelId, req.roomId)) { res.status(404).json({ error: 'Unknown channel' }); return; }
   const call = getCall(channelId);
   if (!call?.members.has(req.userId!)) { res.status(409).json({ error: 'Not in this voice channel' }); return; }
 
@@ -115,6 +115,13 @@ router.get('/me', (req: AuthRequest, res: Response) => {
 });
 
 router.use('/push', pushRouter);
+
+// Messages, files and recordings belong to the home room's text channels, which no other room has.
+function homeOnly(req: AuthRequest, res: Response, next: NextFunction) {
+  if (req.roomId === HOME_ROOM) return next();
+  res.status(404).json({ error: 'Not found' });
+}
+router.use(['/conversations', '/search', '/upload', '/recordings', '/attachments'], homeOnly);
 
 const MESSAGE_ID = /^[0-9a-f-]{36}$/i;
 const TIMESTAMP = /^\d+$/;

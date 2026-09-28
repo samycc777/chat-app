@@ -1,6 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import db, { searchText } from './database';
-import { getChannel } from './channels';
+import { getChannel, HOME_ROOM } from './channels';
+import { roomChannel } from './rooms';
 import { MESSAGE_SELECT, reactionsOf, toMessage } from './messages';
 
 // Reactions are a short fixed set, none with faces, so every message's reactions stay tidy.
@@ -31,9 +32,11 @@ const markReadQuery = db.prepare(`
 
 const MEMBER_COLUMNS = (db.pragma('table_info(users)') as { name: string }[]).map(column => column.name);
 // People the Arabic class app removed stay out of the member list and the mention picker.
+// Text channels are only in the home room, so its members are the ones listed.
 const membersQuery = db.prepare(`
   SELECT id, display_name AS displayName, avatar_color AS avatarColor, last_seen AS lastSeen FROM users
-  ${MEMBER_COLUMNS.includes('removed_at') ? 'WHERE removed_at IS NULL' : ''}
+  WHERE id IN (SELECT user_id FROM room_members WHERE room_id = '${HOME_ROOM}')
+  ${MEMBER_COLUMNS.includes('removed_at') ? 'AND removed_at IS NULL' : ''}
   ORDER BY display_name COLLATE NOCASE
 `);
 export const members = () => membersQuery.all();
@@ -63,7 +66,7 @@ export function registerChatEvents(io: Server, socket: Socket, userId: string) {
     } else {
       db.prepare('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(data.messageId, userId, data.emoji);
     }
-    io.to('everyone').emit('reactions', { messageId: data.messageId, reactions: reactionsOf(data.messageId) });
+    io.to(roomChannel(HOME_ROOM)).emit('reactions', { messageId: data.messageId, reactions: reactionsOf(data.messageId) });
   });
 
   // Anyone can pin, as everyone can do everything on this server.
@@ -78,7 +81,7 @@ export function registerChatEvents(io: Server, socket: Socket, userId: string) {
     }
     const pinnedAt = data.pinned ? Date.now() : null;
     db.prepare('UPDATE messages SET pinned_at = ?, pinned_by = ? WHERE id = ?').run(pinnedAt, data.pinned ? userId : null, data.messageId);
-    io.to('everyone').emit('message_pinned', { messageId: data.messageId, conversationId: message.conversation_id, pinnedAt });
+    io.to(roomChannel(HOME_ROOM)).emit('message_pinned', { messageId: data.messageId, conversationId: message.conversation_id, pinnedAt });
     reply({ ok: true });
   });
 }

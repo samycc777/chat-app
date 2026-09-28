@@ -6,7 +6,7 @@ import webpush from 'web-push';
 import { v4 as uuid } from 'uuid';
 import db from './database';
 import { AuthRequest } from './auth';
-import { Channel } from './channels';
+import { Channel, HOME_ROOM } from './channels';
 import { mentionedUserIds, mentionsEveryone, plainText } from './messages';
 import { rateLimit } from './rateLimit';
 
@@ -323,10 +323,11 @@ function deliver(subscription: Subscription, notice: Notice) {
     .catch(error => console.warn(`Notification (${subscription.kind}) not delivered: ${error?.message ?? 'unknown error'}`));
 }
 
+// Only people who have joined the room hear about what happens in it.
 const subscriptionsQuery = db.prepare(`
   SELECT s.id, s.user_id, s.kind, s.endpoint, s.keys, u.notify_level
   FROM push_subscriptions s JOIN users u ON u.id = s.user_id
-  WHERE s.user_id != ?
+  WHERE s.user_id != ? AND s.user_id IN (SELECT user_id FROM room_members WHERE room_id = ?)
 `);
 const langOf = (subscription: Subscription): Lang => {
   try { return JSON.parse(subscription.keys || '{}').lang === 'ar' ? 'ar' : 'en'; } catch { return 'en'; }
@@ -350,13 +351,13 @@ function messageBody(message: NewMessage, lang: Lang) {
   return shorten(plainText(message.content));
 }
 
-/** Tells everyone who is away about a new message, or only those it mentions, as each person chose. */
+/** Tells everyone in the home room (where text channels are) who is away about a new message, or only those it mentions, as each person chose. */
 export function notifyNewMessage(message: NewMessage, channel: Channel) {
   setImmediate(() => {
     try {
       const mentioned = new Set(mentionedUserIds(message.content));
       const everyone = mentionsEveryone(message.content);
-      for (const subscription of subscriptionsQuery.all(message.senderId) as Subscription[]) {
+      for (const subscription of subscriptionsQuery.all(message.senderId, HOME_ROOM) as Subscription[]) {
         const mentionsThem = everyone || mentioned.has(subscription.user_id);
         if (subscription.notify_level === 'off' || isAppActive(subscription.user_id)) continue;
         if (subscription.notify_level === 'mentions' && !mentionsThem) continue;
@@ -376,14 +377,14 @@ export function notifyNewMessage(message: NewMessage, channel: Channel) {
 const lastCallNotice = new Map<string, number>();
 
 /** Tells everyone who is away that someone started a call, at most once per channel every 5 minutes. */
-export function notifyCallStarted(channel: Channel, starterId: string) {
+export function notifyCallStarted(channel: Channel, roomId: string, starterId: string) {
   const now = Date.now();
   if (now - (lastCallNotice.get(channel.id) ?? 0) < CALL_NOTICE_GAP_MS) return;
   lastCallNotice.set(channel.id, now);
   setImmediate(() => {
     try {
       const starter = db.prepare('SELECT display_name FROM users WHERE id = ?').get(starterId) as { display_name: string } | undefined;
-      for (const subscription of subscriptionsQuery.all(starterId) as Subscription[]) {
+      for (const subscription of subscriptionsQuery.all(starterId, roomId) as Subscription[]) {
         if (subscription.notify_level === 'off' || isAppActive(subscription.user_id)) continue;
         const lang = langOf(subscription);
         deliver(subscription, {

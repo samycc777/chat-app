@@ -7,6 +7,13 @@ export interface User {
   lastSeen?: number;
 }
 
+/** What joining a room returns: the session, who you are, and which room it opened. */
+export interface JoinResult {
+  token: string;
+  user: User;
+  room?: { id: string; name: string | null };
+}
+
 export interface OnlineUser {
   id: string;
   displayName: string;

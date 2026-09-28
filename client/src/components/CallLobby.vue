@@ -50,6 +50,16 @@ function join() {
   stopPreview();
   emit('join', { mic: micOn.value, camera: cameraOn.value });
 }
+
+// Whoever is here can bring others in: the invite link is the one this device joined with.
+const inviteCopied = ref(false);
+async function copyInvite() {
+  const invite = (() => { try { return localStorage.getItem('inviteKey') || ''; } catch { return ''; } })();
+  if (!invite) return;
+  try { await navigator.clipboard.writeText(`${window.location.origin}/?invite=${encodeURIComponent(invite)}`); } catch { return; }
+  inviteCopied.value = true;
+  setTimeout(() => { inviteCopied.value = false; }, 4000);
+}
 </script>
 
 <template>
@@ -88,6 +98,8 @@ function join() {
       <button class="auth-btn" type="button" :disabled="joining || !canJoin" @click="join">
         {{ joining ? t('joiningCall') : t('joinCall') }}
       </button>
+      <button class="lobby-invite" type="button" @click="copyInvite">{{ t('copyInviteLink') }}</button>
+      <p v-if="inviteCopied" class="lobby-copied" role="status">{{ t('inviteCopied') }}</p>
       <button class="lobby-change-name" type="button" @click="emit('change-name')">{{ t('changeName') }}</button>
     </div>
   </section>
@@ -201,6 +213,22 @@ function join() {
   color: #f23f43;
   font-size: 14px;
   line-height: 1.5;
+}
+
+.lobby-invite {
+  min-height: 48px;
+  border: 1px solid #4e5058;
+  border-radius: 14px;
+  color: #f2f3f5;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.lobby-copied {
+  color: #b5bac1;
+  font-size: 14px;
+  text-align: center;
 }
 
 .lobby-change-name {

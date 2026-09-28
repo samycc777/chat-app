@@ -2,8 +2,8 @@
 import { ref, watch } from 'vue';
 import { api, session } from '../api';
 import { useI18n } from '../i18n';
-import type { User } from '../types';
-const emit = defineEmits<{ auth: [result: { token: string; user: User }]; 'toggle-theme': [] }>();
+import type { JoinResult } from '../types';
+const emit = defineEmits<{ auth: [result: JoinResult]; 'toggle-theme': [] }>();
 const props = defineProps<{ theme: 'light' | 'dark'; serverName: string; openInvite?: string }>();
 const { t, lang, setLang, translateError } = useI18n();
 

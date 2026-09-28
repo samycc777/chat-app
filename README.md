@@ -4,11 +4,14 @@ Majlis (called Hangout in the code) is one call room for a group of friends and 
 
 It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web app, with calls carried by [LiveKit](https://livekit.io). The same web app is wrapped as an iPhone app and an Android app in `mobile/`, so all three look and work the same.
 
+Since September 2026 one server can hold many rooms, one per customer, as the first step to Majlis being a call app anyone can pay for. Each room has its own name, invite link and call, and nobody in one room can see or hear anyone in another. The friends' and the class's room is the **home room**: its link and everything in it is unchanged, and it is never billed. See [Rooms](#rooms).
+
 Until September 2026 Majlis was a Discord-style server with text channels, voice messages, search, pins, notifications of messages and call recording. The app no longer shows any of that; the server still has the code and keeps the old messages, but nothing in the app reaches them.
 
 ## What everyone can do
 
 - **Type your name.** Every time the app opens, it asks for your name, already filled in with the one you used last time on that device, so it is one tap to go on. Change it there if you like. The first time, you open the invite link a friend sent; nobody types a code, because the key is inside the link. When the server has `OPEN_JOIN` on, the site's plain address works the same way.
+- **Invite someone.** Before joining, **Copy invite link** copies the link to the room you are in, ready to send.
 - **See who is in the call, then join.** The next screen shows who is in the call right now, and two big switches for your microphone and camera, so you choose before anyone hears or sees you. With the camera on you see yourself first. Your choice is remembered for next time. Then tap **Join call**.
 - **In the call**, anyone can:
   - mute and unmute, and turn their camera on and off. If the microphone will not turn on, the call says why and what to change: the browser's permission, the computer's privacy settings (Windows or Mac), another app using it, or no microphone plugged in,
@@ -41,7 +44,8 @@ Until September 2026 Majlis was a Discord-style server with text channels, voice
 | `ALLOWED_ORIGINS` | production | Comma-separated exact origins allowed to use the site, such as `https://your-app.up.railway.app`. |
 | `INVITE_KEY` | production | The secret inside the invite link, at least 12 characters. Nobody types it, so make it long and random. The invite link is `https://<your site>/?invite=<INVITE_KEY>`. |
 | `OPEN_JOIN` | no | Set to `1` to let the site's plain address work like the invite link, so anyone who opens it can join. Leave it unset to keep the invite link needed. To close the server again afterwards, unset it and change `INVITE_KEY`. |
-| `SERVER_NAME` | no | Name shown at the top of the channel list, on the join screen, in the browser tab and under the home-screen icon. |
+| `SERVER_NAME` | no | The home room's name, shown on the join screen, in the browser tab and under the home-screen icon. |
+| `ROOM_CREATION_KEY` | to make rooms | The secret that lets you make new rooms on the live site at `https://<your site>/new?key=<ROOM_CREATION_KEY>`. Without it, making rooms is closed on the live site. |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | for calls | Credentials of a LiveKit Cloud project. Without them the text channels work but calls cannot start. |
 | `MAX_UPLOAD_BYTES` | no | Largest upload in bytes; 100 MB by default. |
 | `MAX_RECORDING_BYTES` | no | Largest call recording in bytes; 2 GB by default (about eight hours). A recording that reaches it stops, and what was recorded is kept. |
@@ -91,6 +95,14 @@ The server turns each route on by itself once its variables are set; redeploy (o
 ### Privacy
 
 Uploaded files are only served to signed-in members, and their contents are checked to be real images, PDFs, sound or video. Call audio and video pass through LiveKit Cloud, encrypted in transit; LiveKit's end-to-end encryption is turned off. A call is recorded only when someone in it presses Record, and everyone in the call then sees a red "Recording" sign with that person's name. The recording is made in that person's browser, not by LiveKit, and is posted in a text channel for all members like any other file. Otherwise nothing from a call is stored. A video is played from a link with a pass for that one file that lasts six hours. Deleting a message removes its text and file from the server. For notifications, the server keeps each device's notification address (from the browser, Google or Apple) until the person signs out or the service says it is no longer valid; a notification's text passes through the browser's push service (encrypted), or through Google's or Apple's service for the phone apps.
+
+## Rooms
+
+The home room is the one the server started with. Its invite key is `INVITE_KEY` and its name is `SERVER_NAME`; it alone keeps the old text channels, files and recordings. Sessions from before rooms existed belong to it, so nobody was signed out when rooms arrived.
+
+Any other room is made at `/new`: type a name and the page gives the room's invite link, `https://<your site>/?invite=<key>`, with a key of 30 random letters and digits. Until paying for a room exists, the live site makes rooms only with `ROOM_CREATION_KEY` (open `/new?key=<ROOM_CREATION_KEY>` once; the device remembers it). On a developer's computer anyone can make one.
+
+Each room has one call, and everything stays inside it: who is online, who is in the call, raised hands, the call chat and call notifications. A device is in one room at a time: opening another room's link moves it there. The same person keeps their name across rooms.
 
 ## Development
 

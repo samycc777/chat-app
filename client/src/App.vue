@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, onMounted, ref, watch, watchEffect } from 'vue';
 import { WifiOff } from 'lucide-vue-next';
 import type { Socket } from 'socket.io-client';
-import type { Channel, OnlineUser, User, VoiceCall } from './types';
+import type { Channel, JoinResult, OnlineUser, User, VoiceCall } from './types';
 import { api, session } from './api';
 import { rememberForHomeScreen } from './homeScreen';
 import { connectSocket, disconnectSocket, getSocket } from './socket';
@@ -11,6 +11,7 @@ import { clearCallChat, listenForCallChat } from './callChat';
 import { useI18n } from './i18n';
 import Auth from './components/Auth.vue';
 import CallLobby from './components/CallLobby.vue';
+import CreateRoom from './components/CreateRoom.vue';
 
 // LiveKit makes up most of the app's code, so the call screen loads only when someone joins the
 // call. A page left open across a deploy asks for files the new version no longer has, so it
@@ -40,7 +41,9 @@ function preloadCall() {
 }
 
 // The app is three screens: your name, then who is in the call with your microphone and camera
-// choices, then the call. Every opening starts at the name, filled in from last time.
+// choices, then the call. Every opening starts at the name, filled in from last time. The address
+// /new is apart from them: it makes a new room, and its link then leads to those three screens.
+const creatingRoom = window.location.pathname === '/new';
 const { t, translateError } = useI18n();
 const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 const store = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* Private browsing. */ } };
@@ -100,8 +103,9 @@ function listen(socket: Socket) {
   listenForCallChat(socket);
 }
 
-function joined(result: { token: string; user: User }) {
+function joined(result: JoinResult) {
   currentUser.value = result.user;
+  if (result.room) serverName.value = result.room.name || '';
   const socket = connectSocket(result.token);
   listen(socket);
   void startNotifications(socket);
@@ -110,7 +114,8 @@ function joined(result: { token: string; user: User }) {
 }
 
 onMounted(() => {
-  api.getServerInfo().then(info => { serverName.value = info.name || ''; openInvite.value = info.invite || ''; }).catch(() => {});
+  // Auth.vue has already kept the invite from the link, so the name shown is that invite's room's.
+  api.getServerInfo(stored('inviteKey') || undefined).then(info => { serverName.value = info.name || ''; openInvite.value = info.invite || ''; }).catch(() => {});
 });
 
 function joinCall(choice: { mic: boolean; camera: boolean }) {
@@ -150,7 +155,8 @@ function backToName() {
 </script>
 <template>
   <div class="app-shell" :data-theme="theme">
-    <Auth v-if="!currentUser" :theme="theme" :server-name="serverName" :open-invite="openInvite" @auth="joined" @toggle-theme="theme = theme === 'light' ? 'dark' : 'light'" />
+    <CreateRoom v-if="creatingRoom" :theme="theme" @toggle-theme="theme = theme === 'light' ? 'dark' : 'light'" />
+    <Auth v-else-if="!currentUser" :theme="theme" :server-name="serverName" :open-invite="openInvite" @auth="joined" @toggle-theme="theme = theme === 'light' ? 'dark' : 'light'" />
     <main v-else class="main-pane">
       <div v-if="connection !== 'connected'" class="connection-banner" role="status">
         <WifiOff :size="15" />{{ connection === 'connecting' ? t('connecting') : t('reconnecting') }}

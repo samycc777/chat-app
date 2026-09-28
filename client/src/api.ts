@@ -42,7 +42,11 @@ export async function request(path: string, options: RequestInit = {}) {
 }
 
 export const api = {
-  getServerInfo: (): Promise<{ name: string | null; invite?: string }> => request('/api/server'),
+  // With an invite, the name is that invite's room's.
+  getServerInfo: (invite?: string): Promise<{ name: string | null; invite?: string }> =>
+    request(`/api/server${invite ? `?invite=${encodeURIComponent(invite)}` : ''}`),
+  createRoom: (name: string, creationKey: string): Promise<{ id: string; name: string; invite: string }> =>
+    request('/api/rooms', { method: 'POST', body: JSON.stringify({ name, creationKey }) }),
   getLiveKitToken: (channelId: string): Promise<LiveKitCredentials> =>
     request('/api/livekit/token', { method: 'POST', body: JSON.stringify({ channelId }) }),
   getScreenToken: (channelId: string): Promise<{ url: string; token: string }> =>

@@ -699,6 +699,44 @@ test('a phone shares its screen through a screen-only pass that ends when its ow
   assert.equal((await screenToken(gina.token, voice)).status, 409);
 });
 
+test("a phone's screen keeps going while its owner's connection drops for a moment, and stops if they do not come back", async () => {
+  const { sweepDroppedScreens, DROPPED_SCREEN_MS } = await import('../server/socket.ts');
+  const voice = firstChannel('voice');
+  const teacher = await join('Tablet teacher');
+  const removed = () => liveKitCalls('RemoveParticipant').some(call => call.data.identity === `${teacher.user.id}:screen`);
+  const later = () => Date.now() + DROPPED_SCREEN_MS + 1000;
+
+  // The connection drops and comes back: the screen is still his, and still going.
+  const first = await connect(teacher.token);
+  await emitWithAck(first, 'voice_join', { channelId: voice });
+  assert.equal((await screenToken(teacher.token, voice)).status, 200);
+  first.disconnect();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  sweepDroppedScreens();
+  assert.equal(removed(), false);
+  const second = await connect(teacher.token);
+  await emitWithAck(second, 'voice_join', { channelId: voice, rejoin: true });
+  sweepDroppedScreens(later());
+  assert.equal(removed(), false);
+
+  // Leaving on purpose still stops it straight away.
+  second.emit('voice_leave');
+  assert.ok(await eventually(removed));
+
+  // A connection that never comes back stops the screen once the wait is over.
+  const third = await connect(teacher.token);
+  await emitWithAck(third, 'voice_join', { channelId: voice });
+  assert.equal((await screenToken(teacher.token, voice)).status, 200);
+  const removals = () => liveKitCalls('RemoveParticipant').filter(call => call.data.identity === `${teacher.user.id}:screen`).length;
+  const before = removals();
+  third.disconnect();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  sweepDroppedScreens();
+  assert.equal(removals(), before);
+  sweepDroppedScreens(later());
+  assert.ok(await eventually(() => removals() > before));
+});
+
 test("a call's chat reaches everyone in it, private messages reach only their two people, and it is gone when the call empties", async () => {
   const [hana, ivan, jade, outsider] = await Promise.all(['Hana', 'Ivan', 'Jade', 'Outsider'].map(name => join(name)));
   const [hanaSocket, ivanSocket, jadeSocket, outsiderSocket] = await Promise.all([hana, ivan, jade, outsider].map(person => connect(person.token)));

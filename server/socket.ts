@@ -60,6 +60,24 @@ function callChatPayload(message: CallChatMessage) {
 // A private message is seen only by the two people in it.
 const canSee = (message: CallChatMessage, userId: string) => !message.toId || message.fromId === userId || message.toId === userId;
 
+// A phone's screen connection is separate from its owner's. When the owner's connection drops, as
+// it does for a moment on weak internet, the app joins the call again by itself, so the screen is
+// kept going for a while instead of stopping in the middle of a lesson. It stops only if they do
+// not come back, for example because the app was killed.
+export const DROPPED_SCREEN_MS = 2 * 60_000;
+const droppedScreens = new Map<string, { call: VoiceCall; since: number }>();
+function endPhoneScreen(userId: string, call: VoiceCall) {
+  roomService()?.removeParticipant(call.roomName, screenIdentity(userId)).catch(() => { /* It had already stopped sharing. */ });
+}
+export function sweepDroppedScreens(now = Date.now()) {
+  for (const [userId, dropped] of droppedScreens) {
+    if (now - dropped.since < DROPPED_SCREEN_MS) continue;
+    droppedScreens.delete(userId);
+    endPhoneScreen(userId, dropped.call);
+  }
+}
+setInterval(sweepDroppedScreens, 15_000).unref();
+
 export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = []) {
   const io = new Server(httpServer, {
     cors: {
@@ -87,17 +105,18 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
   // Recordings and text channels exist only in the home room.
   connectRecordings({ voiceChanged: () => broadcastVoice(HOME_ROOM), messagePosted: message => io.to(HOME).emit('new_message', message) });
 
-  // A phone's screen connection is separate from its owner's, so it is closed on the server's side
-  // too: otherwise a phone whose app was killed would keep showing its screen to the call.
-  function takeOutOfCall(userId: string) {
+  // A phone's screen connection is closed on the server's side too when its owner leaves:
+  // otherwise a phone whose app was killed would keep showing its screen to the call.
+  function takeOutOfCall(userId: string, dropped = false) {
     const call = removeFromCall(userId);
     if (call?.phoneScreens.delete(userId)) {
-      roomService()?.removeParticipant(call.roomName, screenIdentity(userId)).catch(() => { /* It had already stopped sharing. */ });
+      if (dropped) droppedScreens.set(userId, { call, since: Date.now() });
+      else endPhoneScreen(userId, call);
     }
     return call;
   }
-  function leaveCall(userId: string) {
-    const call = takeOutOfCall(userId);
+  function leaveCall(userId: string, dropped = false) {
+    const call = takeOutOfCall(userId, dropped);
     if (call) broadcastVoice(call.roomId);
   }
 
@@ -142,7 +161,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       // The connection that joined a call carries it; if it drops, the app joins again when it
       // reconnects, so nobody is shown sitting in a call they have left.
       const call = callOf(userId);
-      if (call?.members.get(userId) === socket.id) leaveCall(userId);
+      if (call?.members.get(userId) === socket.id) leaveCall(userId, true);
       const sockets = onlineUsers.get(userId);
       if (!sockets) return;
       sockets.delete(socket.id);
@@ -273,6 +292,13 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
         }
         const startsCall = !getCall(channel.id);
         const call = addToCall(channel.id, roomId, userId, socket.id);
+        // Back after a dropped connection: their phone's screen, still going, is theirs again.
+        const dropped = droppedScreens.get(userId);
+        if (dropped) {
+          droppedScreens.delete(userId);
+          if (dropped.call.channelId === channel.id) call.phoneScreens.add(userId);
+          else endPhoneScreen(userId, dropped.call);
+        }
         broadcastVoice(roomId);
         reply({ startedAt: call.startedAt });
         // Someone joining (or coming back) sees the chat so far, as far as it is theirs to see.

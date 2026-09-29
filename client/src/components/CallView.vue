@@ -185,6 +185,26 @@ const focusedTile = computed(() => tiles.value.find(tile => tile.key === focused
 const otherTiles = computed(() => tiles.value.filter(tile => tile.key !== focusedKey.value));
 const fullTile = computed(() => tiles.value.find(tile => tile.key === fullKey.value) ?? null);
 const fullZoomed = computed(() => Boolean(fullTileView.value?.zoomed));
+// Each tile's video is made once and moved between the grid, the big spot, full screen and the
+// Android app's small window, never made anew. A new video stays empty until the picture next
+// changes, which for a teacher's still screen can take a long time, so students used to wait
+// for the screen after going in or out of full screen. Hidden tiles wait in a hidden holder.
+type TileSpot = 'grid' | 'focus' | 'strip' | 'full' | 'mini' | 'parked';
+function spotOf(tile: Tile): TileSpot {
+  if (inMiniWindow.value) return tile.key === miniTile.value?.key && status.value === 'connected' ? 'mini' : 'parked';
+  if (error.value || status.value === 'disconnected' || status.value === 'joining') return 'parked';
+  if (fullTile.value) return tile.key === fullTile.value.key ? 'full' : 'parked';
+  if (focusedTile.value) return tile.key === focusedTile.value.key ? 'focus' : 'strip';
+  return 'grid';
+}
+function onTileClick(tile: Tile) {
+  const spot = spotOf(tile);
+  if (spot === 'full') toggleFullBar();
+  else if (spot !== 'mini') toggleFocus(tile.key);
+}
+function setTileView(tile: Tile, view: unknown) {
+  if (tile.key === fullKey.value) fullTileView.value = (view ?? undefined) as InstanceType<typeof CallTile> | undefined;
+}
 // A tile with a video to look at; your own shared screen is never shown back to you.
 const watchable = (tile: Tile) => Boolean(tile.track) && !(tile.local && tile.kind === 'screen');
 // What Full screen in the More menu shows: the big tile, else a shared screen, else a camera.
@@ -290,19 +310,29 @@ function refresh() {
 // Tells the Android app whether to shrink into the small window when its owner leaves it, and in
 // what shape. Wide or tall, the window matches the video, so none of it is cut off. The shape is
 // compared as text, so the app is only told when it really changes, not on every refresh.
-// The size of the picture the small window's video really shows, once it has arrived.
-const miniVideo = shallowRef<{ key: string; width: number; height: number } | null>(null);
+// The size of the picture each video really shows, once it has arrived. Every tile reports it, so
+// the small window has the right shape as soon as it opens, rather than changing shape once showing.
+const videoSizes = shallowRef<Record<string, { width: number; height: number }>>({});
+function onVideoSize(tile: Tile, size: { width: number; height: number }) {
+  const known = videoSizes.value[tile.key];
+  if (known?.width === size.width && known.height === size.height) return;
+  videoSizes.value = { ...videoSizes.value, [tile.key]: size };
+}
+// Only the shape matters, so a smaller copy of the same picture, sent on weak internet, changes nothing.
+const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
 const miniShape = computed(() => {
   const tile = miniTile.value;
   if (!tile) return '';
-  const size = (miniVideo.value?.key === tile.key ? miniVideo.value : null) ?? tile.dimensions
+  const size = videoSizes.value[tile.key] ?? tile.dimensions
     ?? (tile.kind === 'screen' ? { width: 16, height: 9 } : { width: 4, height: 3 });
-  return `${size.width}x${size.height}`;
+  const divisor = gcd(Math.round(size.width), Math.round(size.height)) || 1;
+  return `${Math.round(size.width) / divisor}x${Math.round(size.height) / divisor}`;
 });
-watch(miniShape, shape => {
-  const [width, height] = shape.split('x').map(Number);
-  setMiniWindow(shape ? { width, height } : null);
-});
+function tellMiniShape() {
+  const [width, height] = miniShape.value.split('x').map(Number);
+  setMiniWindow(miniShape.value ? { width, height } : null);
+}
+watch(miniShape, tellMiniShape);
 function toggleFocus(key: string) { focusedKey.value = focusedKey.value === key ? null : key; }
 
 function attachAudio(track: RemoteTrack, participant: RemoteParticipant) {
@@ -778,6 +808,8 @@ async function connect() {
     refresh();
     // Started before the microphone, so the call's sound keeps going even if the microphone is refused.
     keepPhoneCallGoing();
+    // Told again once the call is running on the phone, so the small window never misses its shape.
+    tellMiniShape();
     // The microphone and camera start as chosen on the screen before the call.
     const microphone = props.startMic ? setMicrophone(true) : onAndroid ? openMutedMicrophone() : Promise.resolve();
     if (voicesWaiting) await Promise.race([microphone, new Promise(resolve => setTimeout(resolve, MICROPHONE_WAIT_MS))]);
@@ -874,19 +906,12 @@ onBeforeUnmount(cleanup);
 
 <template>
   <section v-show="visible || inMiniWindow" ref="root" class="call-view" :class="{ mini: inMiniWindow }" :aria-label="channelName">
-    <!-- The Android app's small window over other apps: just one video, or who is talking. It and
-         the full call screen both stay on the page, only hidden, so going in and out of the small
-         window shows the video straight away. A video made anew stays empty until the picture next
-         changes, which for a teacher's still screen can take a long time. -->
+    <!-- The Android app's small window over other apps: just one video, or who is talking. The
+         full call screen stays on the page, only hidden, and the video moves into the small window,
+         so going in and out of it shows the picture straight away. -->
     <div v-if="miniWindowAvailable" v-show="inMiniWindow" class="call-mini">
-      <CallTile
-        v-if="miniTile && status === 'connected'"
-        :tile="miniTile"
-        :focused="false"
-        small
-        @video-size="size => miniVideo = { key: miniTile!.key, ...size }"
-      />
-      <div v-else class="call-mini-card">
+      <div v-show="miniTile && status === 'connected'" id="call-spot-mini" class="call-mini-spot" />
+      <div v-if="!miniTile || status !== 'connected'" class="call-mini-card">
         <Avatar v-if="miniSpeaker" :name="miniSpeaker.name" :color="colorOf(miniSpeaker.identity)" size="small" />
         <Volume2 v-else :size="22" aria-hidden="true" />
         <bdi>{{ miniSpeaker?.name ?? channelName }}</bdi>
@@ -930,7 +955,7 @@ onBeforeUnmount(cleanup);
           <strong>{{ t('joiningCall') }}</strong>
         </div>
         <div v-else-if="fullTile" class="call-full" :class="{ idle: !fullBarShown }" @pointermove="$event.pointerType === 'mouse' && showFullBar()">
-          <CallTile ref="fullTileView" :tile="fullTile" focused full @click="toggleFullBar" />
+          <div id="call-spot-full" class="call-full-spot" />
           <div class="call-full-bar top" :class="{ hidden: !fullBarShown }">
             <span class="call-full-name">
               <ScreenShare v-if="fullTile.kind === 'screen'" :size="16" aria-hidden="true" />
@@ -947,16 +972,10 @@ onBeforeUnmount(cleanup);
           </div>
         </div>
         <template v-else-if="focusedTile">
-          <div class="call-focus">
-            <CallTile :tile="focusedTile" focused @focus="toggleFocus(focusedTile.key)" @fullscreen="enterFullScreen(focusedTile.key)" @click="toggleFocus(focusedTile.key)" />
-          </div>
-          <div v-if="otherTiles.length" class="call-strip">
-            <CallTile v-for="tile in otherTiles" :key="tile.key" :tile="tile" :focused="false" small @click="toggleFocus(tile.key)" />
-          </div>
+          <div id="call-spot-focus" class="call-focus" />
+          <div v-show="otherTiles.length" id="call-spot-strip" class="call-strip" />
         </template>
-        <div v-else class="call-grid" :style="gridStyle">
-          <CallTile v-for="tile in tiles" :key="tile.key" :tile="tile" :focused="false" @focus="toggleFocus(tile.key)" @fullscreen="enterFullScreen(tile.key)" @click="toggleFocus(tile.key)" />
-        </div>
+        <div v-else id="call-spot-grid" class="call-grid" :style="gridStyle" />
         <p v-if="status === 'reconnecting'" class="call-pill call-reconnecting" role="status">{{ t('callReconnecting') }}</p>
         <p v-else-if="weakConnection && status === 'connected'" class="call-pill call-weak" role="status"><WifiOff :size="16" aria-hidden="true" />{{ t('weakConnection') }}</p>
       </main>
@@ -1091,6 +1110,22 @@ onBeforeUnmount(cleanup);
         </section>
       </template>
     </div>
+    <!-- Last, so the spots above already exist when a tile moves into one. -->
+    <div id="call-spot-parked" hidden />
+    <Teleport v-for="(tile, index) in tiles" :key="tile.key" :to="`#call-spot-${spotOf(tile)}`" defer>
+      <CallTile
+        :ref="view => setTileView(tile, view)"
+        :tile="tile"
+        :focused="spotOf(tile) === 'focus' || spotOf(tile) === 'full'"
+        :small="spotOf(tile) === 'strip' || spotOf(tile) === 'mini'"
+        :full="spotOf(tile) === 'full'"
+        :style="{ order: index }"
+        @focus="toggleFocus(tile.key)"
+        @fullscreen="enterFullScreen(tile.key)"
+        @click="onTileClick(tile)"
+        @video-size="size => onVideoSize(tile, size)"
+      />
+    </Teleport>
   </section>
 </template>
 
@@ -1125,7 +1160,13 @@ onBeforeUnmount(cleanup);
   display: flex;
 }
 
-.call-mini .call-tile {
+.call-mini-spot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.call-mini-spot .call-tile {
   flex: 1;
   border-radius: 0;
 }
@@ -1326,6 +1367,12 @@ onBeforeUnmount(cleanup);
 }
 
 /* Full screen: one video over the whole app, with bars that fade away and come back with a tap. */
+.call-full-spot {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+}
+
 .call-full {
   position: fixed;
   inset: 0;

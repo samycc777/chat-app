@@ -5,7 +5,7 @@ import {
   SendHorizontal, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
-  AudioPresets, ConnectionQuality, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPreset, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
+  AudioPresets, ConnectionQuality, createLocalAudioTrack, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPreset, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
   type RemoteTrack, type RemoteTrackPublication, type VideoTrack,
 } from 'livekit-client';
 import { api, ApiError } from '../api';
@@ -48,6 +48,16 @@ const volumeAdjustable = (() => {
 // does not hear the mixer, and someone on speaker would send everyone's voices back to the call.
 const webAudioVolume = !volumeAdjustable && typeof AudioContext === 'function';
 const canAdjustVolume = volumeAdjustable || webAudioVolume;
+// Chrome on Android, which the Android app is built on, decides once, as a sound starts playing,
+// whether it is a call's sound or a video's, and it only takes the echo out of a call's. A sound
+// counts as a call's only while the microphone is open. Voices that started before it, as they did
+// for anyone who joined muted and spoke later, came out of the speaker and went straight back into
+// the microphone: the echo everyone heard in September 2026, until that person rejoined. So on
+// Android the microphone is opened before any voice plays, muted when its owner joined muted.
+const onAndroid = /Android/i.test(navigator.userAgent);
+// Longer than this, as when the phone is still asking whether the app may use the microphone, and
+// the voices play anyway: hearing the call matters more.
+const MICROPHONE_WAIT_MS = 4000;
 // Computers share their screen from the browser, and the Android app from its own code; phone
 // browsers and the iPhone app cannot share yet.
 const canShareScreen = typeof navigator.mediaDevices?.getDisplayMedia === 'function' || phoneScreenShareAvailable;
@@ -123,6 +133,8 @@ let rejoinWhenVisible = false;
 let lastAutoRejoinAt = 0;
 // How many times in a row joining has failed and been tried again by itself.
 let joinRetries = 0;
+// On Android, voices wait until the microphone is open (see onAndroid).
+let voicesWaiting = false;
 const detachedAudio: HTMLMediaElement[] = [];
 
 // The call's chat: to everyone, or privately to one person in the call (chatTo, their user ID).
@@ -294,7 +306,7 @@ watch(miniShape, shape => {
 function toggleFocus(key: string) { focusedKey.value = focusedKey.value === key ? null : key; }
 
 function attachAudio(track: RemoteTrack, participant: RemoteParticipant) {
-  if (disposed || track.kind !== Track.Kind.Audio) return;
+  if (disposed || voicesWaiting || track.kind !== Track.Kind.Audio) return;
   // connect() attaches the voices that were already there, which LiveKit may have handed over
   // through TrackSubscribed as well; a second element would play the same voice twice, distorted.
   if (track.attachedElements.length) return;
@@ -450,6 +462,18 @@ function recorded(microphone: LocalAudioTrack) {
 // counts the first time, when the microphone is opened; later, turning it on just unmutes it.
 async function microphoneOptions(): Promise<AudioCaptureOptions | undefined> {
   return await prepareCleanVoice() ? { noiseSuppression: false, voiceIsolation: false } : undefined;
+}
+// Opens the microphone without sending anything, only so the phone treats the call's sound as a
+// call's (see onAndroid). Turning the microphone on later just unmutes it.
+async function openMutedMicrophone() {
+  if (!room) return;
+  try {
+    const microphone = await createLocalAudioTrack({ ...room.options.audioCaptureDefaults, ...await microphoneOptions() });
+    await microphone.mute();
+    if (disposed || !room) { microphone.stop(); return; }
+    await room.localParticipant.publishTrack(microphone, { source: Track.Source.Microphone });
+    await cleanMicrophone();
+  } catch { /* Not allowed to use the microphone: the voices still play, just perhaps with an echo. */ }
 }
 async function setMicrophone(enabled: boolean) {
   if (!room) return;
@@ -684,6 +708,7 @@ async function connect() {
       },
     });
     room = attempt = connectingRoom;
+    voicesWaiting = onAndroid;
     // Events from a room that a rejoin has replaced are ignored.
     const current = () => !disposed && room === connectingRoom;
     connectingRoom.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
@@ -748,16 +773,22 @@ async function connect() {
     status.value = 'connected';
     joinRetries = 0;
     for (const participant of connectingRoom.remoteParticipants.values()) {
-      for (const publication of participant.trackPublications.values()) {
-        onTrackPublished(publication, participant);
-        if (publication.track) attachAudio(publication.track, participant);
-      }
+      for (const publication of participant.trackPublications.values()) onTrackPublished(publication, participant);
     }
     refresh();
     // Started before the microphone, so the call's sound keeps going even if the microphone is refused.
     keepPhoneCallGoing();
     // The microphone and camera start as chosen on the screen before the call.
-    if (props.startMic) await setMicrophone(true);
+    const microphone = props.startMic ? setMicrophone(true) : onAndroid ? openMutedMicrophone() : Promise.resolve();
+    if (voicesWaiting) await Promise.race([microphone, new Promise(resolve => setTimeout(resolve, MICROPHONE_WAIT_MS))]);
+    if (room !== connectingRoom) return;
+    voicesWaiting = false;
+    for (const participant of connectingRoom.remoteParticipants.values()) {
+      for (const publication of participant.audioTrackPublications.values()) {
+        if (publication.track) attachAudio(publication.track, participant);
+      }
+    }
+    await microphone;
     if (props.startCamera && !disposed) await toggleCamera();
   } catch (cause) {
     if (disposed) return;

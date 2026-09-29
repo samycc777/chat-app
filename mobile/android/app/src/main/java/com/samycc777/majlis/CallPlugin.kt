@@ -35,6 +35,7 @@ class CallPlugin : Plugin() {
 
   // The shape of the video to show in the small window, or null when there is nothing to watch.
   private var miniWindow: Rational? = null
+  private val earphones by lazy { EarphoneRoute(context) }
   private val onLeaveApp = Runnable { enterMiniWindow() }
   private val onMiniWindowChanged = Consumer<PictureInPictureModeChangedInfo> { info ->
     notifyListeners("miniWindow", JSObject().put("active", info.isInPictureInPictureMode))
@@ -55,6 +56,7 @@ class CallPlugin : Plugin() {
   @PluginMethod
   fun start(call: PluginCall) {
     CallService.onLeaveRequested = { notifyListeners("leave", JSObject()) }
+    earphones.start()
     // Starting it again after the microphone is allowed lets the running service claim it.
     try {
       ContextCompat.startForegroundService(context, Intent(context, CallService::class.java))
@@ -147,6 +149,7 @@ class CallPlugin : Plugin() {
 
   private fun finish() {
     CallService.onLeaveRequested = null
+    earphones.stop()
     context.stopService(Intent(context, CallService::class.java))
     activity.runOnUiThread {
       showFullScreen(false, false)

@@ -23,6 +23,7 @@ Until September 2026 Majlis was a Discord-style server with text channels, voice
   - join from slow internet. Voices use little data, cameras are sent small, and a shared screen goes out at a few frames a second, which keeps writing sharp. Each person gets the biggest copy of each video their own internet can carry, so one slow connection slows nobody else down. When someone's internet can't keep up, the call stops downloading other people's cameras for them and says so, so the voices and the shared screen keep going,
   - tap any tile to make it big, and tap it again to see everyone. A screen someone starts sharing is made big for everyone automatically,
   - show a screen or camera full screen, and pinch or double-tap to zoom in on small writing,
+  - show someone's shared screen in dark colours (the moon button on the screen, or "Dark screen" in full screen); it changes only what you see, and your phone or computer remembers it,
   - turn the whole call down, or one person down with the slider under their name in the people list. This changes the sound only on their own device.
 - **Clear voices.** Every microphone is cleaned before it reaches the others: a noise filter on the device (RNNoise) takes out fans, traffic and keyboards, and the voice is made a little warmer and louder. There is nothing to set.
 - **Leaving** the call goes back to the screen with the switches, where **Change name** goes back to your name.

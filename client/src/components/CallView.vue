@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import {
-  Ellipsis, Hand, Maximize, MessageSquare, Mic, MicOff, Minimize, PhoneOff, RotateCcw, ScreenShare, ScreenShareOff,
-  SendHorizontal, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
+  Ellipsis, Hand, Maximize, MessageSquare, Mic, MicOff, Minimize, Moon, PhoneOff, RotateCcw, ScreenShare, ScreenShareOff,
+  SendHorizontal, Sun, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
   AudioPresets, ConnectionQuality, createLocalAudioTrack, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPreset, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
@@ -34,6 +34,7 @@ const REACTIONS = ['👍', '❤️', '👏', '🤲', '✅', '🎉'];
 const VOLUME_KEY = 'callVolume';
 const PERSON_VOLUMES_KEY = 'callVolumes';
 const ZOOM_HINT_KEY = 'zoomHintSeen';
+const DARK_SCREEN_KEY = 'darkScreen';
 // Louder than this on the muted microphone, for most of a second, is someone talking.
 const MUTED_SPEECH_DB = -40;
 const MUTED_HINT_EVERY_MS = 20_000;
@@ -643,6 +644,14 @@ function wantsLandscape() {
   const size = fullTile.value?.dimensions;
   return onPhone() && Boolean(size && size.width > size.height);
 }
+// Dark screen is each viewer's own choice, remembered on this device, for anyone who finds the
+// teacher's white pages too bright; it only changes how the screen is drawn here.
+const darkScreen = ref((() => { try { return localStorage.getItem(DARK_SCREEN_KEY) === '1'; } catch { return false; } })());
+function toggleDarkScreen() {
+  darkScreen.value = !darkScreen.value;
+  try { localStorage.setItem(DARK_SCREEN_KEY, darkScreen.value ? '1' : '0'); } catch { /* Private browsing: the choice lasts for this call. */ }
+}
+
 async function enterFullScreen(key: string) {
   sheet.value = null;
   focusedKey.value = key;
@@ -961,7 +970,12 @@ onBeforeUnmount(cleanup);
               <ScreenShare v-if="fullTile.kind === 'screen'" :size="16" aria-hidden="true" />
               <bdi>{{ fullTile.kind === 'screen' ? t('screenOf', { name: fullTile.name }) : fullTile.name }}</bdi>
             </span>
-            <button class="call-full-btn" type="button" @click="exitFullScreen"><Minimize :size="18" />{{ t('exitFullscreen') }}</button>
+            <span class="call-full-actions">
+              <button v-if="fullTile.kind === 'screen'" class="call-full-btn" type="button" :aria-pressed="darkScreen" @click="toggleDarkScreen(); showFullBar()">
+                <Sun v-if="darkScreen" :size="18" /><Moon v-else :size="18" />{{ darkScreen ? t('lightScreen') : t('darkScreen') }}
+              </button>
+              <button class="call-full-btn" type="button" @click="exitFullScreen"><Minimize :size="18" />{{ t('exitFullscreen') }}</button>
+            </span>
           </div>
           <div class="call-full-bar bottom" :class="{ hidden: !fullBarShown }">
             <!-- A student can answer the teacher without leaving full screen. -->
@@ -1119,9 +1133,11 @@ onBeforeUnmount(cleanup);
         :focused="spotOf(tile) === 'focus' || spotOf(tile) === 'full'"
         :small="spotOf(tile) === 'strip' || spotOf(tile) === 'mini'"
         :full="spotOf(tile) === 'full'"
+        :dark="darkScreen"
         :style="{ order: index }"
         @focus="toggleFocus(tile.key)"
         @fullscreen="enterFullScreen(tile.key)"
+        @dark-screen="toggleDarkScreen"
         @click="onTileClick(tile)"
         @video-size="size => onVideoSize(tile, size)"
       />
@@ -1421,6 +1437,13 @@ onBeforeUnmount(cleanup);
   justify-content: center;
   padding-bottom: max(14px, env(safe-area-inset-bottom));
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+}
+
+.call-full-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .call-full-name {

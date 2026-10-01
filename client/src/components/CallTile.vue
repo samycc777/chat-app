@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { Maximize, Maximize2, MicOff, Minimize2, ScreenShare } from 'lucide-vue-next';
+import { Maximize, Maximize2, MicOff, Minimize2, Moon, ScreenShare, Sun } from 'lucide-vue-next';
 import type { VideoTrack } from 'livekit-client';
 import { useI18n } from '../i18n';
 import { usePinchZoom } from '../pinchZoom';
@@ -23,8 +23,9 @@ export interface Tile {
 
 // `full` is the tile shown full screen: it fills the screen alone, can be zoomed into, and leaves
 // its name and buttons to the call screen's own bar on top of it.
-const props = defineProps<{ tile: Tile; focused: boolean; small?: boolean; full?: boolean }>();
-const emit = defineEmits<{ focus: []; fullscreen: []; videoSize: [size: { width: number; height: number }] }>();
+// `dark` shows a shared screen in dark colours for this viewer only; the person sharing sees nothing change.
+const props = defineProps<{ tile: Tile; focused: boolean; small?: boolean; full?: boolean; dark?: boolean }>();
+const emit = defineEmits<{ focus: []; fullscreen: []; darkScreen: []; videoSize: [size: { width: number; height: number }] }>();
 const { t } = useI18n();
 const NO_POSTER = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 const root = ref<HTMLElement>();
@@ -59,7 +60,7 @@ onBeforeUnmount(() => show(null));
   <div
     ref="root"
     class="call-tile"
-    :class="[tile.kind, { speaking: tile.speaking && tile.kind === 'camera' && !full, focused, small, full, mirrored: tile.local && tile.kind === 'camera' }]"
+    :class="[tile.kind, { speaking: tile.speaking && tile.kind === 'camera' && !full, focused, small, full, mirrored: tile.local && tile.kind === 'camera', dark: dark && tile.kind === 'screen' }]"
     v-on="zoom.listeners"
     @click.capture="zoom.clickCapture"
   >
@@ -89,6 +90,18 @@ onBeforeUnmount(() => show(null));
       @click.stop="emit('fullscreen')"
     >
       <Maximize :size="16" />
+    </button>
+    <button
+      v-if="!small && !full && tile.kind === 'screen' && tile.track && !ownScreen"
+      class="call-tile-button call-tile-dark"
+      type="button"
+      :aria-pressed="dark"
+      :title="dark ? t('lightScreen') : t('darkScreen')"
+      :aria-label="dark ? t('lightScreen') : t('darkScreen')"
+      @click.stop="emit('darkScreen')"
+    >
+      <Sun v-if="dark" :size="16" />
+      <Moon v-else :size="16" />
     </button>
     <button
       v-if="!small && !full"
@@ -144,6 +157,12 @@ onBeforeUnmount(() => show(null));
 .call-tile.screen video,
 .call-tile.focused video {
   object-fit: contain;
+}
+
+/* Dark screen turns white pages black and black text white; turning the hues back round keeps
+   blue, red and green roughly their own colours, so the teacher's colour-coded writing still reads. */
+.call-tile.dark video {
+  filter: invert(1) hue-rotate(180deg);
 }
 
 /* Your own camera is shown like a mirror, as every video call app does. */
@@ -207,6 +226,10 @@ onBeforeUnmount(() => show(null));
 
 .call-tile-fullscreen {
   inset-inline-end: 48px;
+}
+
+.call-tile-dark {
+  inset-inline-end: 88px;
 }
 
 .call-tile:hover .call-tile-button,

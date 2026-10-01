@@ -699,7 +699,7 @@ test('a phone shares its screen through a screen-only pass that ends when its ow
   assert.equal((await screenToken(gina.token, voice)).status, 409);
 });
 
-test("a phone's screen keeps going while its owner's connection drops for a moment, and stops if they do not come back", async () => {
+test("a phone's screen keeps going while its owner's connection drops for a moment, and stops if they do not come back to the call at all", async () => {
   const { sweepDroppedScreens, DROPPED_SCREEN_MS } = await import('../server/socket.ts');
   const voice = firstChannel('voice');
   const teacher = await join('Tablet teacher');
@@ -712,11 +712,11 @@ test("a phone's screen keeps going while its owner's connection drops for a mome
   assert.equal((await screenToken(teacher.token, voice)).status, 200);
   first.disconnect();
   await new Promise(resolve => setTimeout(resolve, 100));
-  sweepDroppedScreens();
+  await sweepDroppedScreens();
   assert.equal(removed(), false);
   const second = await connect(teacher.token);
   await emitWithAck(second, 'voice_join', { channelId: voice, rejoin: true });
-  sweepDroppedScreens(later());
+  await sweepDroppedScreens(later());
   assert.equal(removed(), false);
 
   // Leaving on purpose still stops it straight away.
@@ -731,9 +731,17 @@ test("a phone's screen keeps going while its owner's connection drops for a mome
   const before = removals();
   third.disconnect();
   await new Promise(resolve => setTimeout(resolve, 100));
-  sweepDroppedScreens();
+  await sweepDroppedScreens();
   assert.equal(removals(), before);
-  sweepDroppedScreens(later());
+  // While the tablet is still in the call's sound and video, only its slowed-down app is missing,
+  // so the lesson's screen goes on however long that takes.
+  liveKit.participants.set(`voice-${voice}`, [{ identity: teacher.user.id }, { identity: `${teacher.user.id}:screen` }]);
+  await sweepDroppedScreens(later());
+  await sweepDroppedScreens(later() + DROPPED_SCREEN_MS);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(removals(), before);
+  liveKit.participants.delete(`voice-${voice}`);
+  await sweepDroppedScreens(later() + 3 * DROPPED_SCREEN_MS);
   assert.ok(await eventually(() => removals() > before));
 });
 

@@ -62,21 +62,40 @@ const canSee = (message: CallChatMessage, userId: string) => !message.toId || me
 
 // A phone's screen connection is separate from its owner's. When the owner's connection drops, as
 // it does for a moment on weak internet, the app joins the call again by itself, so the screen is
-// kept going for a while instead of stopping in the middle of a lesson. It stops only if they do
-// not come back, for example because the app was killed.
-export const DROPPED_SCREEN_MS = 2 * 60_000;
+// kept going for a while instead of stopping in the middle of a lesson. A tablet sharing its screen
+// runs the app in the background, where Android slows it down, so coming back can take minutes:
+// the screen stops only once the wait is over and the owner is not in the call's sound and video
+// either, for example because the app was killed.
+export const DROPPED_SCREEN_MS = 5 * 60_000;
 const droppedScreens = new Map<string, { call: VoiceCall; since: number }>();
-function endPhoneScreen(userId: string, call: VoiceCall) {
+function endPhoneScreen(userId: string, call: VoiceCall, why: string) {
+  console.log(`Stopping the shared screen of ${userId} in ${call.roomName}: ${why}`);
   roomService()?.removeParticipant(call.roomName, screenIdentity(userId)).catch(() => { /* It had already stopped sharing. */ });
 }
-export function sweepDroppedScreens(now = Date.now()) {
-  for (const [userId, dropped] of droppedScreens) {
-    if (now - dropped.since < DROPPED_SCREEN_MS) continue;
-    droppedScreens.delete(userId);
-    endPhoneScreen(userId, dropped.call);
+async function stillInCall(userId: string, call: VoiceCall) {
+  const service = roomService();
+  if (!service) return false;
+  try {
+    return (await service.listParticipants(call.roomName)).some(participant => participant.identity === userId);
+  } catch {
+    // LiveKit could not be asked; stopping a lesson's screen on a guess is worse than waiting.
+    return true;
   }
 }
-setInterval(sweepDroppedScreens, 15_000).unref();
+export async function sweepDroppedScreens(now = Date.now()) {
+  for (const [userId, dropped] of droppedScreens) {
+    if (now - dropped.since < DROPPED_SCREEN_MS) continue;
+    if (await stillInCall(userId, dropped.call)) {
+      // They may have come back in the meantime, which ends this wait on its own.
+      if (droppedScreens.get(userId) === dropped) dropped.since = now;
+      continue;
+    }
+    if (droppedScreens.get(userId) !== dropped) continue;
+    droppedScreens.delete(userId);
+    endPhoneScreen(userId, dropped.call, `they did not come back within ${DROPPED_SCREEN_MS / 60_000} minutes`);
+  }
+}
+setInterval(() => void sweepDroppedScreens(), 15_000).unref();
 
 export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = []) {
   const io = new Server(httpServer, {
@@ -110,8 +129,10 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
   function takeOutOfCall(userId: string, dropped = false) {
     const call = removeFromCall(userId);
     if (call?.phoneScreens.delete(userId)) {
-      if (dropped) droppedScreens.set(userId, { call, since: Date.now() });
-      else endPhoneScreen(userId, call);
+      if (dropped) {
+        console.log(`The connection of ${userId}, who shares a screen in ${call.roomName}, dropped`);
+        droppedScreens.set(userId, { call, since: Date.now() });
+      } else endPhoneScreen(userId, call, 'they left the call');
     }
     return call;
   }
@@ -297,7 +318,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
         if (dropped) {
           droppedScreens.delete(userId);
           if (dropped.call.channelId === channel.id) call.phoneScreens.add(userId);
-          else endPhoneScreen(userId, dropped.call);
+          else endPhoneScreen(userId, dropped.call, 'they came back in another call');
         }
         broadcastVoice(roomId);
         reply({ startedAt: call.startedAt });

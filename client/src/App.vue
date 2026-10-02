@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watch, watchEffect } from 'vue';
+import { computed, defineAsyncComponent, onMounted, ref, watchEffect } from 'vue';
 import { WifiOff } from 'lucide-vue-next';
 import type { Socket } from 'socket.io-client';
 import type { Channel, JoinResult, OnlineUser, User, VoiceCall } from './types';
@@ -46,7 +46,6 @@ function preloadCall() {
 const creatingRoom = window.location.pathname === '/new';
 const { t, translateError } = useI18n();
 const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
-const store = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* Private browsing. */ } };
 const currentUser = ref<User | null>(null);
 const connection = ref<'connecting' | 'connected' | 'reconnecting'>('connecting');
 const onlineUsers = ref(new Map<string, OnlineUser>());
@@ -59,8 +58,6 @@ const callError = ref('');
 const serverName = ref('');
 // Given only when the site lets anyone join from its plain address (see Auth.vue).
 const openInvite = ref('');
-const theme = ref<'light' | 'dark'>(stored('theme') === 'light' ? 'light' : 'dark');
-watch(theme, value => store('theme', value));
 
 // The server can still hold several voice channels; the app only uses the first one.
 const voiceChannel = computed(() => channels.value.find(channel => channel.kind === 'voice') ?? null);
@@ -154,9 +151,9 @@ function backToName() {
 }
 </script>
 <template>
-  <div class="app-shell" :data-theme="theme">
-    <CreateRoom v-if="creatingRoom" :theme="theme" @toggle-theme="theme = theme === 'light' ? 'dark' : 'light'" />
-    <Auth v-else-if="!currentUser" :theme="theme" :server-name="serverName" :open-invite="openInvite" @auth="joined" @toggle-theme="theme = theme === 'light' ? 'dark' : 'light'" />
+  <div class="app-shell">
+    <CreateRoom v-if="creatingRoom" />
+    <Auth v-else-if="!currentUser" :server-name="serverName" :open-invite="openInvite" @auth="joined" />
     <main v-else class="main-pane">
       <div v-if="connection !== 'connected'" class="connection-banner" role="status">
         <WifiOff :size="15" />{{ connection === 'connecting' ? t('connecting') : t('reconnecting') }}
@@ -207,7 +204,7 @@ function backToName() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #000000;
+  background: var(--call-bg);
 }
 
 /* Appears only after a short delay, so a brief network blip does not flash it. */

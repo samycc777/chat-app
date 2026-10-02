@@ -124,7 +124,7 @@ onBeforeUnmount(() => show(null));
   min-height: 0;
   overflow: hidden;
   border-radius: 10px;
-  background: #2b2d31;
+  background: var(--call-surface);
   cursor: pointer;
 }
 
@@ -141,16 +141,21 @@ onBeforeUnmount(() => show(null));
 .call-tile video {
   display: block;
   object-fit: cover;
-  background: #000000;
+  background: var(--call-video-bg);
 }
 
-/* Full screen: black around the video, and the fingers zoom the video instead of the page. */
+/* Full screen: black around the video in light mode too, and the fingers zoom the video instead
+   of the page. */
 .call-tile.full {
   border-radius: 0;
   background: #000000;
   cursor: default;
   touch-action: none;
   user-select: none;
+}
+
+.call-tile.full video {
+  background: #000000;
 }
 
 /* A shared screen is shown whole, never cropped, so its text stays readable. */
@@ -178,7 +183,7 @@ onBeforeUnmount(() => show(null));
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: #b5bac1;
+  color: var(--call-text-muted);
   font-size: 13px;
   text-align: center;
 }

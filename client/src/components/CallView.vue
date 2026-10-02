@@ -11,6 +11,7 @@ import {
 import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
+import { useTheme } from '../theme';
 import { cleanVoice, prepareCleanVoice, type CleanVoice } from '../cleanVoice';
 import {
   bridge, onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
@@ -78,6 +79,7 @@ const emit = defineEmits<{
   state: [state: { micOn: boolean; cameraOn: boolean; sharing: boolean; speaking: string[] }];
 }>();
 const { t, translateError } = useI18n();
+const { theme, toggleTheme } = useTheme();
 const root = ref<HTMLElement>();
 const status = ref<Status>('joining');
 const error = ref('');
@@ -1121,6 +1123,9 @@ onBeforeUnmount(cleanup);
           <button v-if="fullScreenChoice" class="call-sheet-row" type="button" @click="enterFullScreen(fullScreenChoice.key)">
             <Maximize :size="20" />{{ t('fullscreen') }}
           </button>
+          <button class="call-sheet-row" type="button" @click="toggleTheme">
+            <Moon v-if="theme === 'light'" :size="20" /><Sun v-else :size="20" />{{ theme === 'light' ? t('darkMode') : t('lightMode') }}
+          </button>
         </section>
       </template>
     </div>
@@ -1146,7 +1151,7 @@ onBeforeUnmount(cleanup);
 </template>
 
 <style scoped>
-/* A voice channel's call fills the main area, on the near-black background of a video call. */
+/* A voice channel's call fills the main area: near-black like most video calls, or white in light mode. */
 .call-view {
   position: relative;
   min-width: 0;
@@ -1155,8 +1160,8 @@ onBeforeUnmount(cleanup);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  color: #f2f3f5;
-  background: #000000;
+  color: var(--call-text);
+  background: var(--call-bg);
 }
 
 /* In the Android app's small window, the call covers the whole page, even when a text channel was open. */
@@ -1196,7 +1201,7 @@ onBeforeUnmount(cleanup);
   justify-content: center;
   gap: 6px;
   padding: 8px;
-  color: #b5bac1;
+  color: var(--call-text-muted);
   font-size: 13px;
   font-weight: 600;
 }
@@ -1215,7 +1220,7 @@ onBeforeUnmount(cleanup);
   align-items: center;
   gap: 8px;
   padding: max(6px, env(safe-area-inset-top)) 12px 6px;
-  background: #111214;
+  background: var(--call-bar);
 }
 
 .call-header h2 {
@@ -1229,7 +1234,7 @@ onBeforeUnmount(cleanup);
 
 .call-header-icon {
   flex: none;
-  color: #949ba4;
+  color: var(--text-secondary);
 }
 
 .call-header-spacer {
@@ -1237,7 +1242,7 @@ onBeforeUnmount(cleanup);
 }
 
 .call-clock {
-  color: #949ba4;
+  color: var(--text-secondary);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
@@ -1251,12 +1256,12 @@ onBeforeUnmount(cleanup);
   gap: 4px;
   padding: 0 6px;
   border-radius: 8px;
-  color: #b5bac1;
+  color: var(--call-text-muted);
 }
 
 .call-icon-btn:hover {
-  color: #f2f3f5;
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--call-text);
+  background: var(--call-hover);
 }
 
 .call-count {
@@ -1307,18 +1312,18 @@ onBeforeUnmount(cleanup);
   gap: 8px;
   padding: 22px 24px;
   border-radius: 12px;
-  background: #2b2d31;
+  background: var(--call-surface);
   text-align: center;
 }
 
 .call-state-card p {
-  color: #b5bac1;
+  color: var(--call-text-muted);
   font-size: 13px;
   line-height: 1.55;
 }
 
 .call-state-card.error strong {
-  color: #f23f43;
+  color: var(--danger);
 }
 
 .call-state-action {
@@ -1341,7 +1346,7 @@ onBeforeUnmount(cleanup);
   justify-content: center;
   gap: 10px;
   padding: 10px 12px max(12px, env(safe-area-inset-bottom));
-  background: #000000;
+  background: var(--call-bg);
 }
 
 .call-control {
@@ -1350,14 +1355,14 @@ onBeforeUnmount(cleanup);
   display: grid;
   place-items: center;
   border-radius: 50%;
-  color: #f2f3f5;
-  background: #2b2d31;
+  color: var(--call-text);
+  background: var(--call-surface);
   transition: background 160ms ease;
 }
 
 .call-control:hover:not(:disabled),
 .call-control[aria-pressed='true'] {
-  background: #404249;
+  background: var(--call-surface-active);
 }
 
 .call-control:disabled {
@@ -1365,12 +1370,12 @@ onBeforeUnmount(cleanup);
 }
 
 .call-control.off {
-  color: #f23f43;
+  color: var(--danger);
 }
 
 .call-control.on {
-  color: #000000;
-  background: #f2f3f5;
+  color: var(--call-bg);
+  background: var(--call-text);
 }
 
 .call-control.leave {
@@ -1607,7 +1612,7 @@ onBeforeUnmount(cleanup);
 
 .call-chat-empty {
   margin: auto 0;
-  color: #b5bac1;
+  color: var(--call-text-muted);
   font-size: 14px;
   line-height: 1.55;
   text-align: center;
@@ -1629,29 +1634,29 @@ onBeforeUnmount(cleanup);
   display: flex;
   align-items: baseline;
   gap: 8px;
-  color: #949ba4;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
 .call-chat-name {
-  color: #f2f3f5;
+  color: var(--call-text);
   font-size: 14px;
   font-weight: 700;
 }
 
 .call-chat-message.mine .call-chat-name {
-  color: #949ba4;
+  color: var(--text-secondary);
 }
 
 .call-chat-private {
   align-self: flex-start;
-  color: #a5b0ff;
+  color: var(--call-link);
   font-size: 12px;
   font-weight: 700;
 }
 
 .call-chat-message p {
-  color: #dbdee1;
+  color: var(--call-text-soft);
   font-size: 15px;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -1663,14 +1668,14 @@ onBeforeUnmount(cleanup);
   flex-direction: column;
   gap: 8px;
   padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--call-line);
 }
 
 .call-chat-to {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #b5bac1;
+  color: var(--call-text-muted);
   font-size: 13px;
   font-weight: 700;
 }
@@ -1680,10 +1685,10 @@ onBeforeUnmount(cleanup);
   flex: 1;
   height: 34px;
   padding: 0 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--call-line-strong);
   border-radius: 8px;
-  color: #f2f3f5;
-  background: #1e1f22;
+  color: var(--call-text);
+  background: var(--call-input);
   font-size: 14px;
 }
 
@@ -1701,10 +1706,10 @@ onBeforeUnmount(cleanup);
   flex: 1;
   height: 44px;
   padding: 0 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--call-line-strong);
   border-radius: 10px;
-  color: #f2f3f5;
-  background: #1e1f22;
+  color: var(--call-text);
+  background: var(--call-input);
   /* 16px keeps iPhones from zooming in on the box. */
   font-size: 16px;
 }
@@ -1749,7 +1754,7 @@ onBeforeUnmount(cleanup);
   margin-inline: auto;
   padding: 10px 16px max(18px, env(safe-area-inset-bottom));
   border-radius: 16px 16px 0 0;
-  background: #2b2d31;
+  background: var(--call-sheet);
   box-shadow: 0 -16px 50px rgba(0, 0, 0, 0.45);
   animation: call-sheet-in 200ms ease-out;
 }
@@ -1769,7 +1774,7 @@ onBeforeUnmount(cleanup);
   flex: 0 0 auto;
   margin: 0 auto 14px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--call-handle);
 }
 
 .call-sheet-head {
@@ -1777,7 +1782,7 @@ onBeforeUnmount(cleanup);
   align-items: center;
   justify-content: space-between;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--call-line);
 }
 
 .call-people {
@@ -1794,7 +1799,7 @@ onBeforeUnmount(cleanup);
 }
 
 .call-people li.speaking .avatar {
-  box-shadow: 0 0 0 2px #2b2d31, 0 0 0 4px #23a55a;
+  box-shadow: 0 0 0 2px var(--call-sheet), 0 0 0 4px #23a55a;
 }
 
 .call-person-main {
@@ -1820,7 +1825,7 @@ onBeforeUnmount(cleanup);
 }
 
 .call-person-name small {
-  color: #949ba4;
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
@@ -1828,7 +1833,7 @@ onBeforeUnmount(cleanup);
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #949ba4;
+  color: var(--text-secondary);
 }
 
 .call-person-volume input {
@@ -1845,7 +1850,7 @@ onBeforeUnmount(cleanup);
 
 .call-person-mic {
   flex: none;
-  color: #949ba4;
+  color: var(--text-secondary);
 }
 
 .call-person-mic.on {
@@ -1853,7 +1858,7 @@ onBeforeUnmount(cleanup);
 }
 
 .call-person-mic.off {
-  color: #f23f43;
+  color: var(--danger);
 }
 
 .call-reaction-row {
@@ -1862,7 +1867,7 @@ onBeforeUnmount(cleanup);
   justify-content: center;
   gap: 6px;
   padding-bottom: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--call-line);
 }
 
 .call-emoji-btn {
@@ -1875,7 +1880,7 @@ onBeforeUnmount(cleanup);
 
 .call-emoji-btn:hover,
 .call-sheet-row:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--call-hover);
 }
 
 .call-volume {
@@ -1883,14 +1888,14 @@ onBeforeUnmount(cleanup);
   align-items: center;
   gap: 10px;
   padding: 12px 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--call-line);
   font-size: 14px;
   font-weight: 600;
 }
 
 .call-volume svg {
   flex: none;
-  color: #949ba4;
+  color: var(--text-secondary);
 }
 
 .call-volume input {

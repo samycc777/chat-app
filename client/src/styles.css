@@ -49,6 +49,23 @@
   --shadow-color: rgba(0, 0, 0, 0.35);
   --message-meta: #949ba4;
   --reply-overlay: rgba(0, 0, 0, 0.15);
+  /* The lobby and the call: near-black, as video calls usually are. */
+  --call-bg: #000000;
+  --call-bar: #111214;
+  --call-surface: #2b2d31;
+  --call-surface-active: #404249;
+  --call-sheet: #2b2d31;
+  --call-input: #1e1f22;
+  --call-text: #f2f3f5;
+  --call-text-soft: #dbdee1;
+  --call-text-muted: #b5bac1;
+  --call-link: #a5b0ff;
+  --call-line: rgba(255, 255, 255, 0.08);
+  --call-line-strong: rgba(255, 255, 255, 0.12);
+  --call-outline: #4e5058;
+  --call-hover: rgba(255, 255, 255, 0.08);
+  --call-handle: rgba(255, 255, 255, 0.3);
+  --call-video-bg: #000000;
 }
 
 [data-theme='light'] {
@@ -75,6 +92,24 @@
   --shadow-color: rgba(0, 0, 0, 0.12);
   --message-meta: #5c5e66;
   --reply-overlay: rgba(0, 0, 0, 0.04);
+  --call-bg: #ffffff;
+  --call-bar: #f2f3f5;
+  --call-surface: #e3e5e8;
+  --call-surface-active: #d7d9dc;
+  --call-sheet: #ffffff;
+  --call-input: #f2f3f5;
+  --call-text: #313338;
+  --call-text-soft: #313338;
+  --call-text-muted: #4e5058;
+  --call-link: #4752c4;
+  --call-line: rgba(0, 0, 0, 0.08);
+  --call-line-strong: rgba(0, 0, 0, 0.14);
+  --call-outline: #c4c9ce;
+  --call-hover: rgba(0, 0, 0, 0.06);
+  --call-handle: rgba(0, 0, 0, 0.2);
+  /* Around a shared screen that doesn't fill its tile, so it sits on the page instead of in a
+     black frame. */
+  --call-video-bg: #e3e5e8;
 }
 
 * {

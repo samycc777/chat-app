@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
+import { Moon, Sun } from 'lucide-vue-next';
 import { api, session } from '../api';
 import { useI18n } from '../i18n';
+import { useTheme } from '../theme';
 import type { JoinResult } from '../types';
-const emit = defineEmits<{ auth: [result: JoinResult]; 'toggle-theme': [] }>();
-const props = defineProps<{ theme: 'light' | 'dark'; serverName: string; openInvite?: string }>();
+const emit = defineEmits<{ auth: [result: JoinResult] }>();
+const props = defineProps<{ serverName: string; openInvite?: string }>();
 const { t, lang, setLang, translateError } = useI18n();
+const { theme, toggleTheme } = useTheme();
 
 // iOS Safari before 15.4 has no randomUUID, so build the same version 4 format from random bytes.
 function randomId() {
@@ -81,7 +84,7 @@ watch(() => props.openInvite, key => {
 </script>
 <template>
   <div class="auth-container"><form class="auth-card" @submit.prevent="submit">
-    <div class="auth-topline"><span class="auth-mark" aria-hidden="true">{{ (serverName || t('appName')).slice(0, 1).toUpperCase() }}</span><div class="auth-utilities"><button class="auth-utility" type="button" :aria-label="t('toggleTheme')" @click="emit('toggle-theme')">{{ theme === 'light' ? '☾' : '☼' }}</button><button class="auth-language-trigger" type="button" @click="setLang(lang === 'en' ? 'ar' : 'en')">{{ lang === 'en' ? 'العربية' : 'English' }}</button></div></div>
+    <div class="auth-topline"><span class="auth-mark" aria-hidden="true">{{ (serverName || t('appName')).slice(0, 1).toUpperCase() }}</span><div class="auth-utilities"><button class="auth-utility" type="button" :title="theme === 'light' ? t('darkMode') : t('lightMode')" :aria-label="theme === 'light' ? t('darkMode') : t('lightMode')" @click="toggleTheme"><Moon v-if="theme === 'light'" :size="18" /><Sun v-else :size="18" /></button><button class="auth-language-trigger" type="button" @click="setLang(lang === 'en' ? 'ar' : 'en')">{{ lang === 'en' ? 'العربية' : 'English' }}</button></div></div>
     <div class="auth-eyebrow"><bdi>{{ serverName || t('appName') }}</bdi></div><h1>{{ t('welcomeTitle') }}</h1>
     <p>{{ inviteKey ? t('welcomeBody', { name: serverName || t('appName') }) : t('needInvite') }}</p>
     <div v-if="error" class="auth-error" role="alert">{{ error }}</div>
@@ -150,6 +153,11 @@ watch(() => props.openInvite, key => {
   color: var(--text-secondary);
   background: var(--bg-primary);
   transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.auth-utility {
+  display: inline-grid;
+  place-items: center;
 }
 
 .auth-utility:hover,

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { Moon, Sun } from 'lucide-vue-next';
 import { api } from '../api';
 import { useI18n } from '../i18n';
-defineProps<{ theme: 'light' | 'dark' }>();
-const emit = defineEmits<{ 'toggle-theme': [] }>();
+import { useTheme } from '../theme';
 const { t, lang, setLang, translateError } = useI18n();
+const { theme, toggleTheme } = useTheme();
 
 const stored = (key: string) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
 const store = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* Private browsing. */ } };
@@ -53,7 +54,7 @@ async function copy() {
       <div class="create-topline">
         <span class="create-mark" aria-hidden="true">{{ t('appName').slice(0, 1) }}</span>
         <div class="create-utilities">
-          <button class="create-utility" type="button" :aria-label="t('toggleTheme')" @click="emit('toggle-theme')">{{ theme === 'light' ? '☾' : '☼' }}</button>
+          <button class="create-utility create-theme" type="button" :title="theme === 'light' ? t('darkMode') : t('lightMode')" :aria-label="theme === 'light' ? t('darkMode') : t('lightMode')" @click="toggleTheme"><Moon v-if="theme === 'light'" :size="18" /><Sun v-else :size="18" /></button>
           <button class="create-utility" type="button" @click="setLang(lang === 'en' ? 'ar' : 'en')">{{ lang === 'en' ? 'العربية' : 'English' }}</button>
         </div>
       </div>
@@ -133,6 +134,11 @@ async function copy() {
   border-radius: 12px;
   color: var(--text-secondary);
   background: var(--bg-primary);
+}
+
+.create-theme {
+  display: inline-grid;
+  place-items: center;
 }
 
 .create-card h1 {

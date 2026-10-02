@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
-import { Mic, MicOff, Video, VideoOff } from 'lucide-vue-next';
+import { Mic, MicOff, Moon, Sun, Video, VideoOff } from 'lucide-vue-next';
 import type { OnlineUser, User } from '../types';
 import { useI18n } from '../i18n';
+import { useTheme } from '../theme';
 import Avatar from './Avatar.vue';
 
 const props = defineProps<{ user: User; members: OnlineUser[]; error: string; joining: boolean; canJoin: boolean }>();
 const emit = defineEmits<{ join: [choice: { mic: boolean; camera: boolean }]; 'change-name': [] }>();
 const { t } = useI18n();
+const { theme, toggleTheme } = useTheme();
 
 const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 const store = (key: string, value: boolean) => { try { localStorage.setItem(key, value ? '1' : '0'); } catch { /* Private browsing. */ } };
@@ -65,6 +67,11 @@ async function copyInvite() {
 <template>
   <section class="lobby">
     <div class="lobby-card">
+      <div class="lobby-topline">
+        <button class="lobby-theme" type="button" :title="theme === 'light' ? t('darkMode') : t('lightMode')" :aria-label="theme === 'light' ? t('darkMode') : t('lightMode')" @click="toggleTheme">
+          <Moon v-if="theme === 'light'" :size="18" /><Sun v-else :size="18" />
+        </button>
+      </div>
       <div class="lobby-preview">
         <video v-show="cameraOn" ref="preview" autoplay playsinline muted />
         <Avatar v-if="!cameraOn" :name="user.displayName" :color="user.avatarColor" size="large" />
@@ -106,15 +113,15 @@ async function copyInvite() {
 </template>
 
 <style scoped>
-/* On the same near-black as the call itself, so joining feels like stepping into it. */
+/* In the call's own colours, so joining feels like stepping into it. */
 .lobby {
   width: 100%;
   min-height: 100dvh;
   display: flex;
   overflow-y: auto;
   padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
-  color: #f2f3f5;
-  background: #000000;
+  color: var(--call-text);
+  background: var(--call-bg);
 }
 
 .lobby-card {
@@ -126,6 +133,27 @@ async function copyInvite() {
   gap: 18px;
 }
 
+.lobby-topline {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: -6px;
+}
+
+.lobby-theme {
+  width: 42px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--call-outline);
+  border-radius: 12px;
+  color: var(--call-text-muted);
+}
+
+.lobby-theme:hover {
+  color: var(--call-text);
+  background: var(--call-hover);
+}
+
 .lobby-preview {
   position: relative;
   aspect-ratio: 16 / 10;
@@ -133,7 +161,7 @@ async function copyInvite() {
   place-items: center;
   overflow: hidden;
   border-radius: 18px;
-  background: #1e1f22;
+  background: var(--bg-tertiary);
 }
 
 .lobby-preview video {
@@ -152,6 +180,7 @@ async function copyInvite() {
   inset-inline-start: 12px;
   padding: 3px 10px;
   border-radius: 999px;
+  color: #ffffff;
   background: rgba(0, 0, 0, 0.6);
   font-size: 13px;
   font-weight: 700;
@@ -172,8 +201,8 @@ async function copyInvite() {
   justify-content: center;
   gap: 6px;
   border-radius: 16px;
-  color: #f2f3f5;
-  background: #2b2d31;
+  color: var(--call-text);
+  background: var(--call-surface);
   font-size: 14px;
   font-weight: 700;
 }
@@ -190,7 +219,7 @@ async function copyInvite() {
 }
 
 .lobby-people p {
-  color: #b5bac1;
+  color: var(--call-text-muted);
   font-size: 14px;
   line-height: 1.55;
 }
@@ -210,30 +239,30 @@ async function copyInvite() {
 }
 
 .lobby-error {
-  color: #f23f43;
+  color: var(--danger);
   font-size: 14px;
   line-height: 1.5;
 }
 
 .lobby-invite {
   min-height: 48px;
-  border: 1px solid #4e5058;
+  border: 1px solid var(--call-outline);
   border-radius: 14px;
-  color: #f2f3f5;
+  color: var(--call-text);
   background: transparent;
   font-size: 15px;
   font-weight: 700;
 }
 
 .lobby-copied {
-  color: #b5bac1;
+  color: var(--call-text-muted);
   font-size: 14px;
   text-align: center;
 }
 
 .lobby-change-name {
   align-self: center;
-  color: #b5bac1;
+  color: var(--call-text-muted);
   font-size: 14px;
   text-decoration: underline;
   text-underline-offset: 3px;

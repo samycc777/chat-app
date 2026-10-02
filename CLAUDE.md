@@ -1,53 +1,41 @@
 # Majlis (Hangout)
 
-A Zoom-like call app. It started as one call room for a group of friends and the Arabic class, and since September 2026 it holds many rooms, one per customer, as the first step to selling it as a call app for anyone (the plan: rooms, then a neutral name and English-first look, then payment with Stripe, then a website). The friends' room is the **home room**, free forever. In each room: anyone can talk, show their camera, share their screen and chat. The app is three screens: your name (filled in from last time), then who is in the call with microphone and camera switches, then the call. It used to be a Discord-style server with text channels; in September 2026 the user asked for only the call, so the app no longer shows channels, text chat, search, pins, settings or recording. The server still holds that code and the old messages, unused by the app. It replaced the Arabic class app at the class's own address: the teacher shares his Android tablet's screen in lessons. People see it as **Majlis** (the app name, the Android package `com.samycc777.majlis`); the code and docs still call the project Hangout. The README describes every feature from the friends' point of view; read it before changing behaviour.
+A Zoom-like call app with many rooms, one per customer; the first step to selling it as a call app for anyone (plan: rooms, then neutral name and English-first look, then Stripe payment, then a website). The friends' room is the **home room**, free forever; other customers will pay. In each room anyone can talk, show their camera, share their screen and chat. Three screens: your name (remembered), the lobby (who is in the call, microphone and camera switches), the call.
+- The app shows only the call: no channels, text chat, search, pins, settings or recording. The server still holds that old code and messages, unused.
+- It replaced the Arabic class app at the class's own address (the teacher shares his Android tablet's screen in lessons).
+- People see it as **Majlis** (Android package `com.samycc777.majlis`); code and docs still say Hangout.
+- The README describes every feature from the friends' point of view; read it before changing behaviour.
 
-The product is for businesses and private users in every country, so what customers see (name, wording, look, website) must stay neutral: nothing that ties it to Islam or Arabic learning. Arabic stays one language among others. Only the home room (the owner's friends and markaz) is free; other customers will pay.
+## Rules
 
-The friends are not all tech-savvy. Keep every flow simple: people join by opening an invite link and typing their name, and nothing else; no admin roles, no settings that aren't needed, plain-language wording.
+- What customers see (name, wording, look, website) must stay neutral: nothing tied to Islam or Arabic learning. Arabic stays one language among others.
+- Keep every flow simple (friends are not tech-savvy): people join by opening an invite link and typing their name, nothing else; no admin roles, no unneeded settings, plain wording.
+- Never touch `chat.db*` or `uploads/` (local development data).
 
 ## Layout
 
-- `server/` — one Node.js process (Express 5, Socket.IO, better-sqlite3), TypeScript compiled to `dist/`.
-  - `index.ts` wires everything up; `config.ts` reads env vars (`INVITE_KEY`, `OPEN_JOIN`, `SERVER_NAME`, ...); `database.ts` holds the schema and migrations, including the `channels` table.
-  - `auth.ts` is joining with an invite key (`/api/auth/join`, rate-limited) and month-long session tokens. Every session names its room (`roomId`); older sessions without one are home-room sessions.
-  - `rooms.ts` is rooms: the home room (`HOME_ROOM` = `'home'`, key `INVITE_KEY`, not a row) and customers' rooms (the `rooms` table, each with one voice channel whose `room_id` is set). `roomForKey` finds the room of an invite key; `POST /api/rooms` makes one (needs `ROOM_CREATION_KEY` in production). `room_members` records who joined which room, for notifications and member lists. Every Socket.IO connection joins `room:<roomId>`, and everything it hears stays in that room. Text channels, messages, files and recordings exist only in the home room.
-  - `channels.ts` creates, renames and deletes channels. A text channel is also a `conversations` row, so messages and attachments keep their tables.
-  - `voice.ts` keeps who is in each voice channel's call, in memory, with the call's chat (`chat`). Each voice channel is one LiveKit room, `voice-<channelId>`; the app uses only the first voice channel. The call chat (`call_chat_send`, `call_chat_message`, `call_chat_history` in `socket.ts`) is never written to the database: it goes when the last person leaves.
-  - `messages.ts` builds every message sent to the app (history, live, search, pins) and holds the mention format: `<@userId>` in the stored text, and `@everyone`.
-  - `chat.ts` is what text channels share: read positions and unread counts (`read_state`, `mark_read`), reactions (`react`), pins (`pin_message`), the member list (`members`) and search.
-  - `routes.ts` is the REST API (`/api/...`: LiveKit tokens, message history, including `around` a message and `after` it, pins, search, uploads, attachments).
-  - `recordings.ts` is `/api/recordings`: a call recording made in someone's browser arrives in numbered pieces, is kept in the `recordings` table until it is posted (or deleted), and is posted by itself in the first text channel after 15 quiet minutes. `webm.ts` rewrites a finished WebM recording with its length and an index so players can skip through it. `stream.ts` gives out six-hour links for playing sound and video with Range requests (`/api/attachments/:id/stream-url` and `/stream?token=`).
-  - `push.ts` sends notifications (new messages, mentions, call starts) to people whose app is not in front of them (`app_active`), through Web Push, Firebase (Android app) and Apple (iPhone app), and holds `/api/push/...`. Its notification wording, in English and Arabic, lives there because the phone shows it without the app.
-  - `socket.ts` handles realtime events: messages, typing, `create_channel`/`rename_channel`/`delete_channel`, `voice_join`/`voice_leave`, `raise_hand`, `app_active`; it broadcasts `channels`, `voice_state` and presence.
-  - `livekit.ts` is the LiveKit server client.
-- `client/` — Vue 3 + Vite + TypeScript web app, `<script setup>` components.
-  - `App.vue` is the shell: `components/CreateRoom.vue` at `/new` (makes a room and shows its link), otherwise `components/Auth.vue` (the name, always shown), then `components/CallLobby.vue` (who is in the call, microphone and camera switches, camera preview), then `CallView.vue` (lazy-loaded with LiveKit, started with the chosen microphone and camera; it holds the call chat). `CallTile.vue` is one camera or screen tile. `callChat.ts` keeps this device's copy of the call chat.
-  - `api.ts` (REST), `socket.ts` (Socket.IO), `types.ts` (shared types), `theme.ts` (light or dark: the device's look until someone picks the other one with the sun or moon button; it sets `data-theme` on `<html>`, the browser bar's colour and, in the phone apps, the status bar's icons; `index.html` makes the same choice before the page is drawn), `cleanVoice.ts` (every microphone's noise filter, tone and loudness), `nativeScreenShare.ts` (the bridge to the Android app's screen sharing), `notifications.ts` (asking for and registering notifications, reporting whether the app is in front, opening a tapped notification's channel; `public/sw.js` is its service worker, which caches nothing).
-  - The text-channel components (`ChatView`, `ServerSidebar`, `MemberList`, `SearchPanel`, recording and attachments) were removed in September 2026; `git log` has them if the channels ever come back.
-  - Each component's styles are in its own `<style scoped>` block. `styles.css` holds only what several components share: theme colours (`[data-theme]` variables, Discord's dark and light palettes, and the `--call-*` colours of the lobby and the call, near-black in dark mode and white in light mode; use them instead of fixed colours, except on top of video), base elements, and common classes such as `.display-popover` and `.message-content`. Scoped rules are one attribute more specific than global ones; put overrides next to the rule they override.
-- `mobile/` — Capacitor wrapper that turns the deployed website into the iPhone and Android apps. It has its own `package.json` and README; the apps load the live site, so web changes reach them without a rebuild. Notifications use `@capacitor/push-notifications`; `PushSetupPlugin.kt` tells the page whether the Android app was built with `google-services.json`. The Android app's other native code is screen sharing (`ScreenSharePlugin.kt`, `ScreenShareService.kt`): it joins the call as `<userId>:screen` with a pass from `/api/livekit/screen-token`, and the call screen shows that participant as its owner's screen. `CallPlugin.kt` keeps the call going in the background (`CallService.kt`) and, with `EarphoneRoute.kt`, moves the call's sound to earphones whenever they are plugged in. Changes there need a new version of the app: `cd mobile && npm run release:android` builds it and sends it to Google Play's internal testing by itself (see mobile/README.md, "Releasing automatically"); `HANGOUT_URL=... npm run build:android` builds a test APK (Gradle 9.3, run on Android Studio's Java).
-- `tests/security.test.mjs` — end-to-end server tests: a real server on a temporary database, with a fake LiveKit and fake push services (a browser's, Google's and Apple's).
-
-Never touch `chat.db*` or `uploads/`: they are the local development data.
+- `server/` — Node.js (Express 5, Socket.IO, better-sqlite3), TypeScript compiled to `dist/`. `index.ts`, `config.ts` (env vars), `database.ts`, `auth.ts` (invite-key join, month-long session tokens that name a `roomId`), `rooms.ts` (home room `'home'` with key `INVITE_KEY`; customer rooms in the `rooms` table; `POST /api/rooms` needs `ROOM_CREATION_KEY` in production; each Socket.IO connection stays in `room:<roomId>`), `voice.ts` (calls, one LiveKit room `voice-<channelId>`; call chat is never stored), `socket.ts`, `routes.ts`, `push.ts` (notification wording in en and ar lives there), `livekit.ts`, plus unused text-channel code.
+- `client/` — Vue 3 + Vite + TypeScript, `<script setup>`. `App.vue` shell: `CreateRoom.vue` at `/new`, else `Auth.vue` then `CallLobby.vue` then `CallView.vue` (lazy-loaded with LiveKit). Styles are scoped per component; `styles.css` holds only shared theme variables (`[data-theme]`, `--call-*` colours: use them instead of fixed colours except over video) and common classes. Scoped rules are more specific than global ones: put overrides next to the rule they override.
+- `mobile/` — Capacitor wrapper loading the live site (web changes reach the apps without a rebuild; native changes need a new app version). Release Android: `cd mobile && npm run release:android` (builds and sends to Google Play internal testing; see mobile/README.md). Test APK: `HANGOUT_URL=... npm run build:android` (Gradle 9.3, Android Studio's Java).
+- `tests/security.test.mjs` — end-to-end server tests (real server, temporary database, fake LiveKit and push services).
+- For the detailed file-by-file layout, read docs/notes/layout.md.
 
 ## Commands
 
 ```sh
-npm run check   # server typecheck, client vue-tsc, oxlint, and tests (~8 s) — run before every commit
+npm run check   # server typecheck, client vue-tsc, oxlint, tests (~8 s) — run before every commit
 npm test        # tests only
 npm run dev     # server on :3001, client on https://localhost:5173/?invite=0000
 ```
 
-`npm run dev:phone` runs everything (LiveKit included) for an Android phone on wireless debugging; see the README's Development section.
-
-For real calls locally: `livekit-server --dev` (from `brew install livekit`), then `LIVEKIT_URL=ws://127.0.0.1:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret npm run dev`.
+- `npm run dev:phone` runs everything (LiveKit included) for an Android phone on wireless debugging; see the README's Development section.
+- Real calls locally: `livekit-server --dev` (`brew install livekit`), then `LIVEKIT_URL=ws://127.0.0.1:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret npm run dev`.
 
 ## Conventions
 
 - Every new user-facing string goes in `client/src/i18n.ts` in both `en` and `ar`.
-- When behaviour visible to the friends changes, update the README, and the message for friends in it when they need to know.
+- When behaviour visible to the friends changes, update the README (and its message for friends if they need to know).
 - New server behaviour gets a test in `tests/security.test.mjs`.
 - Comments explain why, not what, in full sentences.
-- Commit messages: a short plain-English title describing the change from the friends' point of view ("Let anyone share their screen in a call"), then prose paragraphs explaining why and how.
+- Commit messages: short plain-English title from the friends' point of view ("Let anyone share their screen in a call"), then prose paragraphs on why and how.
 - A server restart disconnects every call; avoid redeploying while friends are talking.

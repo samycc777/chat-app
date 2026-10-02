@@ -19,7 +19,11 @@ export const phoneFullScreenAvailable = Boolean(plugin?.methods?.some(method => 
 
 /** True while the app is shrunk into the small window over other apps. */
 export const inMiniWindow = ref(false);
-if (available) bridge!.addListener('Call', 'miniWindow', data => { inMiniWindow.value = data.active === true; });
+if (available) bridge!.addListener('Call', 'miniWindow', data => {
+  inMiniWindow.value = data.active === true;
+  // Lets the page be as narrow as the small window (see .mini-window in styles.css).
+  document.documentElement.classList.toggle('mini-window', inMiniWindow.value);
+});
 
 /** Keeps the call going in the background. Call it again once the microphone is allowed. */
 export function keepPhoneCallGoing() {

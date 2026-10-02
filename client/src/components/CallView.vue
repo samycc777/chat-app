@@ -668,6 +668,8 @@ async function enterFullScreen(key: string) {
 }
 function exitFullScreen() {
   if (!fullKey.value) return;
+  // Otherwise the next full screen would open zoomed in where this one was left.
+  fullTileView.value?.resetZoom();
   fullKey.value = null;
   clearTimeout(fullBarTimer);
   if (phoneFullScreenAvailable) setPhoneFullScreen(false, false);

@@ -34,6 +34,10 @@ let attached: VideoTrack | null = null;
 // Your own shared screen is not shown back to you: it would repeat itself endlessly on the screen being shared.
 const ownScreen = computed(() => props.tile.local && props.tile.kind === 'screen');
 const zoom = usePinchZoom(root, () => Boolean(props.full));
+// The zoom belongs to full screen. Leaving the app from a zoomed-in full screen showed only that
+// piece of the screen in the small window over the other apps; it now shows the whole picture
+// there, and coming back to full screen finds the zoom as it was.
+const zoomStyle = computed(() => props.full ? zoom.style.value : undefined);
 defineExpose({ resetZoom: zoom.reset, zoomed: zoom.zoomed });
 
 // A tile keeps its video element while the track behind it changes, for example when a camera is
@@ -64,7 +68,7 @@ onBeforeUnmount(() => show(null));
     v-on="zoom.listeners"
     @click.capture="zoom.clickCapture"
   >
-    <div class="call-tile-media" :style="zoom.style.value">
+    <div class="call-tile-media" :style="zoomStyle">
       <!-- The empty poster replaces the grey play button Android shows until the first picture arrives. -->
       <video v-show="tile.track && !ownScreen" ref="video" autoplay playsinline muted :poster="NO_POSTER" @loadedmetadata="reportSize" @resize="reportSize" />
     </div>

@@ -127,6 +127,15 @@ body,
   min-height: 100%;
 }
 
+/* The Android app's small window over other apps is only about 110 to 190 pixels wide, and the
+   app's web view does not zoom out to fit a wider page as a browser does: kept at 320 pixels, the
+   page showed only the left part of a shared screen there. */
+.mini-window,
+.mini-window body,
+.mini-window #app {
+  min-width: 0;
+}
+
 body {
   height: 100dvh;
   overflow: hidden;

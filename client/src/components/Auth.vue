@@ -239,4 +239,25 @@ watch(() => props.openInvite, key => {
 [dir='rtl'] .auth-eyebrow {
   letter-spacing: 0;
 }
+
+/* The card springs up, then its lines follow one after another, and the letter at the top pops in. */
+.auth-card {
+  animation: anime-rise 560ms var(--soft-spring) both;
+}
+
+.auth-card > * {
+  animation: anime-rise 520ms var(--spring) both;
+}
+
+.auth-card > :nth-child(2) { animation-delay: 120ms; }
+.auth-card > :nth-child(3) { animation-delay: 170ms; }
+.auth-card > :nth-child(4) { animation-delay: 220ms; }
+.auth-card > :nth-child(5) { animation-delay: 270ms; }
+.auth-card > :nth-child(6) { animation-delay: 320ms; }
+.auth-card > :nth-child(7) { animation-delay: 370ms; }
+.auth-card > :nth-child(8) { animation-delay: 420ms; }
+
+.auth-mark {
+  animation: anime-pop 650ms ease-out 250ms both;
+}
 </style>

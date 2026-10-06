@@ -205,11 +205,27 @@ async function copyInvite() {
   background: var(--call-surface);
   font-size: 14px;
   font-weight: 700;
+  /* Squashes when pressed and springs back when let go. */
+  transition: scale 380ms var(--spring);
+}
+
+.lobby-toggle:active {
+  scale: 0.92;
+  transition-duration: 70ms;
 }
 
 .lobby-toggle.off {
   color: #ffffff;
   background: #da373c;
+}
+
+/* The icon bounces in each time the switch changes. */
+.lobby-toggle svg {
+  animation: anime-icon-on 420ms ease-out;
+}
+
+.lobby-toggle.off svg {
+  animation-name: anime-icon-off;
 }
 
 .lobby-people strong {
@@ -266,5 +282,30 @@ async function copyInvite() {
   font-size: 14px;
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* Each part of the screen rises in after the one above it, a beat after the slash between screens. */
+.lobby-card > * {
+  animation: anime-rise 520ms var(--spring) both;
+}
+
+.lobby-card > :nth-child(1) { animation-delay: 150ms; }
+.lobby-card > :nth-child(2) { animation-delay: 200ms; }
+.lobby-card > :nth-child(3) { animation-delay: 260ms; }
+.lobby-card > :nth-child(4) { animation-delay: 320ms; }
+.lobby-card > :nth-child(5) { animation-delay: 380ms; }
+.lobby-card > :nth-child(6) { animation-delay: 420ms; }
+.lobby-card > :nth-child(7) { animation-delay: 460ms; }
+.lobby-card > :nth-child(8) { animation-delay: 500ms; }
+.lobby-card > :nth-child(9) { animation-delay: 540ms; }
+
+/* Your picture floats gently while you get ready. */
+.lobby-preview > :deep(.avatar) {
+  animation: anime-float 1.8s ease-in-out infinite alternate;
+}
+
+/* Someone who joins the call pops into the list. */
+.lobby-people li {
+  animation: anime-pop 520ms ease-out both;
 }
 </style>

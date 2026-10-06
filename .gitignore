@@ -45,3 +45,6 @@ local.properties
 
 # Claude Code settings and helper workspaces on this computer
 .claude/
+
+# Preview videos made for checking a change; not part of the app.
+previews/

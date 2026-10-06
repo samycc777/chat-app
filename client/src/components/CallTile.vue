@@ -137,7 +137,7 @@ onBeforeUnmount(() => {
       <Avatar :name="tile.name" :color="tile.color" :size="small ? 'small' : 'large'" />
     </div>
     <div v-if="!full" class="call-tile-label">
-      <span v-if="tile.hand" aria-hidden="true">✋</span>
+      <span v-if="tile.hand" class="anime-wave" aria-hidden="true">✋</span>
       <MicOff v-if="tile.kind === 'camera' && !tile.micOn" :size="14" class="call-tile-muted" />
       <ScreenShare v-if="tile.kind === 'screen'" :size="14" />
       <bdi>{{ tile.kind === 'screen' ? t('screenOf', { name: tile.name }) : tile.name }}</bdi>
@@ -189,8 +189,52 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.call-tile.speaking {
-  box-shadow: inset 0 0 0 3px #23a55a;
+/* Someone who appears pops in with a quick white flash, like an impact frame in anime. The full
+   screen tile is left still, so a lesson never jumps. Moving a tile to another place on the screen
+   plays it again, which reads as the tile landing there. */
+.call-tile:not(.full) {
+  animation: call-tile-in 520ms ease-out both;
+}
+
+.call-tile:not(.full, .small)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: #ffffff;
+  opacity: 0;
+  pointer-events: none;
+  animation: call-tile-flash 420ms ease-out;
+}
+
+@keyframes call-tile-in {
+  0% { opacity: 0; scale: 0.7; }
+  55% { opacity: 1; scale: 1.04; }
+  78% { scale: 0.985; }
+  100% { scale: 1; }
+}
+
+@keyframes call-tile-flash {
+  0%, 30% { opacity: 0.7; }
+  100% { opacity: 0; }
+}
+
+/* Whoever is speaking glows green from the edges, pulsing like an aura while they talk. Only its
+   opacity changes, which phones draw cheaply over a moving video. */
+.call-tile.speaking::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 3px #23a55a, inset 0 0 28px 2px rgba(35, 165, 90, 0.85);
+  pointer-events: none;
+  animation: call-tile-aura 750ms ease-in-out infinite alternate;
+}
+
+@keyframes call-tile-aura {
+  from { opacity: 0.55; }
+  to { opacity: 1; }
 }
 
 .call-tile-media,
@@ -270,6 +314,7 @@ onBeforeUnmount(() => {
   position: absolute;
   bottom: 8px;
   inset-inline-start: 8px;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -297,6 +342,7 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 8px;
   inset-inline-end: 8px;
+  z-index: 2;
   display: grid;
   place-items: center;
   border-radius: 8px;

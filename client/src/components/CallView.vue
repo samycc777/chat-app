@@ -1061,7 +1061,7 @@ onBeforeUnmount(cleanup);
                   >
                 </label>
               </div>
-              <span v-if="raisedHands.has(person.identity)" class="call-person-hand">✋</span>
+              <span v-if="raisedHands.has(person.identity)" class="call-person-hand anime-wave">✋</span>
               <button v-if="!person.local" class="call-icon-btn" type="button" :title="t('messagePrivately', { name: person.name })" :aria-label="t('messagePrivately', { name: person.name })" @click="messagePrivately(person.identity)">
                 <MessageSquare :size="18" />
               </button>
@@ -1359,8 +1359,36 @@ onBeforeUnmount(cleanup);
   border-radius: 50%;
   color: var(--call-text);
   background: var(--call-surface);
-  transition: background 160ms ease;
+  /* Squashes when pressed and springs back when let go. */
+  transition: background 160ms ease, scale 380ms var(--spring);
 }
+
+.call-control:active:not(:disabled) {
+  scale: 0.88;
+  transition-duration: 160ms, 70ms;
+}
+
+/* The icon bounces in each time the button is turned on or off. */
+.call-control svg {
+  animation: anime-icon-on 420ms ease-out;
+}
+
+.call-control.on svg,
+.call-control.off svg {
+  animation-name: anime-icon-off;
+}
+
+/* On joining, the buttons spring up one after another. */
+.call-controls > * {
+  animation: anime-rise 480ms var(--spring) both;
+}
+
+.call-controls > :nth-child(1) { animation-delay: 250ms; }
+.call-controls > :nth-child(2) { animation-delay: 290ms; }
+.call-controls > :nth-child(3) { animation-delay: 330ms; }
+.call-controls > :nth-child(4) { animation-delay: 370ms; }
+.call-controls > :nth-child(5) { animation-delay: 410ms; }
+.call-controls > :nth-child(6) { animation-delay: 450ms; }
 
 .call-control:hover:not(:disabled),
 .call-control[aria-pressed='true'] {
@@ -1521,6 +1549,7 @@ onBeforeUnmount(cleanup);
 
 .call-toast {
   top: 112px;
+  animation: anime-pop 480ms ease-out;
   width: max-content;
   max-width: min(460px, calc(100% - 32px));
   border-radius: 14px;
@@ -1559,9 +1588,26 @@ onBeforeUnmount(cleanup);
   animation: call-reaction-float 3.2s ease-out forwards;
 }
 
+/* A reaction bursts out, with lines flying from it, then sways from side to side as it rises. */
 .call-reaction-emoji {
+  position: relative;
+  display: inline-block;
   font-size: 34px;
   line-height: 1;
+  animation: call-reaction-pop 600ms ease-out both, call-reaction-sway 1.3s ease-in-out 600ms infinite alternate;
+}
+
+.call-reaction-emoji::before {
+  content: '';
+  position: absolute;
+  inset: -26px;
+  z-index: -1;
+  border-radius: 50%;
+  background: repeating-conic-gradient(#ffc83d 0deg 6deg, transparent 6deg 30deg);
+  mask: radial-gradient(circle, transparent 38%, #000000 40%, #000000 62%, transparent 64%);
+  opacity: 0;
+  pointer-events: none;
+  animation: call-reaction-burst 560ms ease-out;
 }
 
 .call-reaction-name {
@@ -1577,10 +1623,27 @@ onBeforeUnmount(cleanup);
 }
 
 @keyframes call-reaction-float {
-  0% { opacity: 0; transform: translateY(0) scale(0.6); }
-  12% { opacity: 1; transform: translateY(-20px) scale(1); }
+  0% { opacity: 0; translate: 0 0; }
+  8% { opacity: 1; translate: 0 -10px; }
   75% { opacity: 1; }
-  100% { opacity: 0; transform: translateY(-38dvh); }
+  100% { opacity: 0; translate: 0 -38dvh; }
+}
+
+@keyframes call-reaction-pop {
+  0% { scale: 0; rotate: -30deg; }
+  55% { scale: 1.5; rotate: 12deg; }
+  80% { scale: 0.9; rotate: -4deg; }
+  100% { scale: 1; rotate: 0deg; }
+}
+
+@keyframes call-reaction-sway {
+  from { translate: -7px 0; rotate: -10deg; }
+  to { translate: 7px 0; rotate: 10deg; }
+}
+
+@keyframes call-reaction-burst {
+  0% { opacity: 1; scale: 0.3; }
+  100% { opacity: 0; scale: 1.5; }
 }
 
 /* The call's chat: messages above, and who they go to and what they say below. */
@@ -1758,7 +1821,7 @@ onBeforeUnmount(cleanup);
   border-radius: 16px 16px 0 0;
   background: var(--call-sheet);
   box-shadow: 0 -16px 50px rgba(0, 0, 0, 0.45);
-  animation: call-sheet-in 200ms ease-out;
+  animation: call-sheet-in 380ms var(--soft-spring);
 }
 
 .call-sheet.side {
@@ -1767,7 +1830,7 @@ onBeforeUnmount(cleanup);
 }
 
 @keyframes call-sheet-in {
-  from { opacity: 0; translate: 0 40px; }
+  from { opacity: 0; translate: 0 60px; }
 }
 
 .call-sheet-handle {

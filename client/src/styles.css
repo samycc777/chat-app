@@ -203,15 +203,48 @@ textarea:focus-visible,
   color: var(--text-on-accent);
   background: var(--text-accent);
   font-weight: 600;
-  transition: transform 160ms ease, background 160ms ease, opacity 160ms ease;
+  /* Squashes when pressed and springs back when let go. */
+  transition: transform 160ms ease, background 160ms ease, opacity 160ms ease, scale 380ms var(--spring);
 }
 
 .auth-btn:hover:not(:disabled) {
   background: var(--accent-strong);
 }
 
+.auth-btn:active:not(:disabled) {
+  scale: 0.93;
+  transition-duration: 160ms, 160ms, 160ms, 70ms;
+}
+
 .auth-btn:disabled {
   opacity: 0.55;
+}
+
+/* A streak of light crosses the main button now and then, like a glint on polished metal. */
+.auth-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.auth-btn::after {
+  content: '';
+  width: 40%;
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.4) 45%, rgba(255, 255, 255, 0.7) 50%, transparent 58%);
+  translate: -120% 0;
+  pointer-events: none;
+  animation: anime-glint 4.5s ease-in-out 1.2s infinite;
+}
+
+.auth-btn:disabled::after {
+  animation: none;
+}
+
+@keyframes anime-glint {
+  0% { translate: -120% 0; }
+  22%, 100% { translate: 300% 0; }
 }
 
 .boot-state p {
@@ -431,6 +464,61 @@ html[dir='rtl'] body {
     min-height: 48px;
     border-radius: 12px;
   }
+}
+
+/* Anime-style motion: quick moves that overshoot a little and settle, as hand-drawn animation does.
+   Only scale, translate, rotate and opacity change, so weak phones keep up. The separate scale,
+   translate and rotate properties leave each element's own transform (a mirrored camera, a centred
+   pill) untouched. */
+:root {
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --soft-spring: cubic-bezier(0.3, 1.3, 0.5, 1);
+}
+
+@keyframes anime-rise {
+  from { opacity: 0; translate: 0 22px; }
+}
+
+@keyframes anime-pop {
+  0% { opacity: 0; scale: 0.5; rotate: -8deg; }
+  55% { opacity: 1; scale: 1.12; rotate: 3deg; }
+  78% { scale: 0.96; rotate: -1deg; }
+  100% { scale: 1; rotate: 0deg; }
+}
+
+@keyframes anime-float {
+  from { translate: 0 2px; }
+  to { translate: 0 -4px; }
+}
+
+/* The same bounce under two names: switching between them plays it again when a button is turned
+   on or off, without any code. */
+@keyframes anime-icon-on {
+  0% { scale: 0.4; rotate: -20deg; }
+  60% { scale: 1.25; rotate: 8deg; }
+  100% { scale: 1; rotate: 0deg; }
+}
+
+@keyframes anime-icon-off {
+  0% { scale: 0.4; rotate: 20deg; }
+  60% { scale: 1.25; rotate: -8deg; }
+  100% { scale: 1; rotate: 0deg; }
+}
+
+/* A raised hand waves a few times, then stays still, so it catches the eye without nagging. */
+@keyframes anime-wave {
+  0%, 100% { rotate: 0deg; }
+  15% { rotate: 18deg; }
+  30% { rotate: -10deg; }
+  45% { rotate: 16deg; }
+  60% { rotate: -6deg; }
+  75% { rotate: 8deg; }
+}
+
+.anime-wave {
+  display: inline-block;
+  transform-origin: 70% 90%;
+  animation: anime-wave 1.1s ease-in-out 3;
 }
 
 @media (prefers-reduced-motion: reduce) {

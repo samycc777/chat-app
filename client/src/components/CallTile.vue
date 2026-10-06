@@ -48,6 +48,11 @@ const zoom = usePinchZoom(root, () => Boolean(props.full));
 // there, and coming back to full screen finds the zoom as it was.
 const zoomStyle = computed(() => props.full ? zoom.style.value : undefined);
 defineExpose({ resetZoom: zoom.reset, zoomed: zoom.zoomed });
+// The page does not zoom (see index.html), so pinching a shared screen to read it opens it full
+// screen, where the pinch zooms the screen itself.
+function pinchToFullScreen(event: TouchEvent) {
+  if (event.touches.length >= 2 && !props.full && props.tile.kind === 'screen' && props.tile.track && !ownScreen.value) emit('fullscreen');
+}
 
 // A tile keeps its video element while the track behind it changes, for example when a camera is
 // turned off and on again, so the old track is let go before the new one is shown.
@@ -115,6 +120,7 @@ onBeforeUnmount(() => {
     :class="[tile.kind, { speaking: tile.speaking && tile.kind === 'camera' && !full, focused, small, full, mirrored: tile.local && tile.kind === 'camera', dark: dark && tile.kind === 'screen' }]"
     v-on="zoom.listeners"
     @click.capture="zoom.clickCapture"
+    @touchstart.passive="pinchToFullScreen"
   >
     <div class="call-tile-media" :style="zoomStyle">
       <!-- The empty poster replaces the grey play button Android shows until the first picture arrives. -->

@@ -1,3 +1,12 @@
+<script lang="ts">
+// The last picture of each shared screen, by tile. It lives outside the tile because a dropped
+// connection removes the tile until the screen comes back.
+const lastPictures = new Map<string, HTMLCanvasElement>();
+const SAVE_PICTURE_EVERY_MS = 2000;
+// LiveKit sends a tiny blank picture when it cuts a video off; that is not a picture of the screen.
+const isRealPicture = (width: number, height: number) => width > 16 && height > 16;
+</script>
+
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Maximize, Maximize2, MicOff, Minimize2, Moon, ScreenShare, Sun } from 'lucide-vue-next';
@@ -45,19 +54,58 @@ defineExpose({ resetZoom: zoom.reset, zoomed: zoom.zoomed });
 function show(track: VideoTrack | null) {
   if (attached && video.value) attached.detach(video.value);
   attached = null;
+  hasPicture.value = false;
   zoom.reset();
   if (!track || !video.value || ownScreen.value) return;
   track.attach(video.value);
   attached = track;
 }
-watch([() => props.tile.track, video], ([track]) => show(track), { immediate: true });
 // The size the sender announced when they started can be wrong, for example after the teacher's
 // tablet is turned, so the phone's small window takes its shape from the picture that really arrives.
 function reportSize() {
   const { videoWidth: width, videoHeight: height } = video.value ?? {};
-  if (width && height) emit('videoSize', { width, height });
+  if (width && height && isRealPicture(width, height)) emit('videoSize', { width, height });
 }
-onBeforeUnmount(() => show(null));
+
+// On weak internet a shared screen often has to start again: after this device's connection drops
+// and comes back, when the teacher's tablet reconnects, or when the app comes back to the front.
+// Its video then stays empty, a dark rectangle, until a whole new picture of the screen has
+// arrived, which can take many seconds. The last picture seen is shown meanwhile, so students can
+// go on reading the lesson.
+const hasPicture = ref(false);
+const held = ref<HTMLCanvasElement>();
+const holding = computed(() => props.tile.kind === 'screen' && !ownScreen.value && Boolean(props.tile.track) && !hasPicture.value && lastPictures.has(props.tile.key));
+let savedAt = 0;
+let frameRequest: number | undefined;
+function onFrame(_now: number, frame: VideoFrameCallbackMetadata) {
+  const element = video.value;
+  if (!element) return;
+  frameRequest = element.requestVideoFrameCallback(onFrame);
+  hasPicture.value = isRealPicture(frame.width, frame.height);
+  if (!hasPicture.value || Date.now() - savedAt < SAVE_PICTURE_EVERY_MS) return;
+  savedAt = Date.now();
+  const copy = lastPictures.get(props.tile.key) ?? document.createElement('canvas');
+  copy.width = frame.width;
+  copy.height = frame.height;
+  copy.getContext('2d')?.drawImage(element, 0, 0, frame.width, frame.height);
+  lastPictures.set(props.tile.key, copy);
+}
+// Only screens are kept: a camera's last picture would show someone frozen mid-word.
+watch(video, element => {
+  if (element && props.tile.kind === 'screen' && !ownScreen.value && 'requestVideoFrameCallback' in element) frameRequest = element.requestVideoFrameCallback(onFrame);
+}, { immediate: true });
+watch([holding, held], ([hold, canvas]) => {
+  const copy = lastPictures.get(props.tile.key);
+  if (!hold || !canvas || !copy) return;
+  canvas.width = copy.width;
+  canvas.height = copy.height;
+  canvas.getContext('2d')?.drawImage(copy, 0, 0);
+});
+watch([() => props.tile.track, video], ([track]) => show(track), { immediate: true });
+onBeforeUnmount(() => {
+  if (frameRequest !== undefined) video.value?.cancelVideoFrameCallback(frameRequest);
+  show(null);
+});
 </script>
 
 <template>
@@ -71,7 +119,10 @@ onBeforeUnmount(() => show(null));
     <div class="call-tile-media" :style="zoomStyle">
       <!-- The empty poster replaces the grey play button Android shows until the first picture arrives. -->
       <video v-show="tile.track && !ownScreen" ref="video" autoplay playsinline muted :poster="NO_POSTER" @loadedmetadata="reportSize" @resize="reportSize" />
+      <!-- Over the video rather than instead of it: a hidden video is no longer sent, so it would never come back. -->
+      <canvas v-show="holding" ref="held" class="call-tile-held" />
     </div>
+    <span v-if="holding" class="call-tile-waiting">{{ t('screenCatchingUp') }}</span>
     <div v-if="ownScreen" class="call-tile-placeholder">
       <ScreenShare :size="small ? 22 : 34" />
       <span>{{ t('youAreSharing') }}</span>
@@ -142,6 +193,20 @@ onBeforeUnmount(() => show(null));
   height: 100%;
 }
 
+.call-tile-media {
+  position: relative;
+}
+
+/* The last picture of the screen covers the empty video exactly, so the change is not seen. */
+.call-tile-held {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--call-video-bg);
+}
+
 .call-tile video {
   display: block;
   object-fit: cover;
@@ -158,7 +223,8 @@ onBeforeUnmount(() => show(null));
   user-select: none;
 }
 
-.call-tile.full video {
+.call-tile.full video,
+.call-tile.full .call-tile-held {
   background: #000000;
 }
 
@@ -170,7 +236,8 @@ onBeforeUnmount(() => show(null));
 
 /* Dark screen turns white pages black and black text white; turning the hues back round keeps
    blue, red and green roughly their own colours, so the teacher's colour-coded writing still reads. */
-.call-tile.dark video {
+.call-tile.dark video,
+.call-tile.dark .call-tile-held {
   filter: invert(1) hue-rotate(180deg);
 }
 
@@ -251,6 +318,28 @@ onBeforeUnmount(() => show(null));
   .call-tile-button {
     opacity: 0.85;
   }
+}
+
+/* Said on the picture, so nobody waits for writing that is not coming yet. */
+.call-tile-waiting {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  max-width: calc(100% - 16px);
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border-radius: 6px;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.call-tile.small .call-tile-waiting {
+  display: none;
 }
 
 .call-tile.small .call-tile-label {

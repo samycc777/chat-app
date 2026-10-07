@@ -99,6 +99,10 @@ const lastSpeakerKey = ref('');
 const raisedHands = computed(() => new Set(props.hands.map(hand => hand.userId)));
 const toast = ref('');
 const weakConnection = ref(false);
+// Others whose internet has been weak for a few seconds, shown by a small sign on their tile, so
+// a voice that keeps cutting out is understood. A short dip is not shown.
+const weakPeople = ref(new Set<string>());
+const weakTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // Once this device's internet has shown it cannot keep up, other people's cameras stop being
 // downloaded until the call is left, so what little there is goes to voices and the shared screen.
 const savingData = ref(false);
@@ -229,6 +233,16 @@ const miniTile = computed(() => {
     ?? watchable.find(tile => tile.key === lastSpeakerKey.value) ?? watchable[0] ?? null;
 });
 const miniSpeaker = computed(() => participants.value.find(person => person.speaking && !person.local) ?? null);
+// In full screen nobody's tile is visible, so the name of whoever is talking shows, small and
+// faint, in a corner. It stays a moment after they stop, so pauses between words don't make it
+// blink.
+const fullSpeaker = ref('');
+let fullSpeakerTimer: ReturnType<typeof setTimeout> | undefined;
+watch(() => participants.value.find(person => person.speaking && !person.local)?.name ?? '', name => {
+  clearTimeout(fullSpeakerTimer);
+  if (name) fullSpeaker.value = name;
+  else fullSpeakerTimer = setTimeout(() => { fullSpeaker.value = ''; }, 1200);
+});
 // Columns grow with the number of tiles, so everyone stays as large as the screen allows; a phone
 // held upright stacks them instead.
 const narrow = ref(window.innerWidth < 700);
@@ -286,6 +300,7 @@ function refresh() {
     const base = {
       identity: owner, name: participant.name || owner, color: colorOf(owner), local,
       micOn: participant.isMicrophoneEnabled, speaking: isSpeaking(participant), hand: raisedHands.value.has(owner),
+      weak: weakPeople.value.has(participant.identity),
     };
     const screen = participant.getTrackPublication(Track.Source.ScreenShare);
     // This phone's own screen is never downloaded (see onTrackPublished), so it has no track here.
@@ -341,6 +356,18 @@ function tellMiniShape() {
   setMiniWindow(miniShape.value ? { width, height } : null);
 }
 watch(miniShape, tellMiniShape);
+function noteWeak(identity: string, weak: boolean) {
+  clearTimeout(weakTimers.get(identity));
+  weakTimers.delete(identity);
+  const update = (on: boolean) => {
+    const next = new Set(weakPeople.value);
+    if (on) next.add(identity); else next.delete(identity);
+    weakPeople.value = next;
+    refresh();
+  };
+  if (!weak) { if (weakPeople.value.has(identity)) update(false); return; }
+  weakTimers.set(identity, setTimeout(() => { weakTimers.delete(identity); update(true); }, 3000));
+}
 function toggleFocus(key: string) { focusedKey.value = focusedKey.value === key ? null : key; }
 
 function attachAudio(track: RemoteTrack, participant: RemoteParticipant) {
@@ -771,7 +798,8 @@ async function connect() {
     // A weak connection for more than a moment is worth knowing about: it explains a voice that cuts
     // out, and that the problem is here rather than with the others.
     connectingRoom.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
-      if (!current() || participant !== connectingRoom.localParticipant) return;
+      if (!current()) return;
+      if (participant !== connectingRoom.localParticipant) { noteWeak(participant.identity, quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost); return; }
       clearTimeout(weakTimer);
       if (quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost) weakTimer = setTimeout(() => { weakConnection.value = true; saveData(); }, 3000);
       else weakConnection.value = false;
@@ -835,6 +863,9 @@ async function rejoin() {
   stopListeningWhileMuted?.();
   clearTimeout(weakTimer);
   weakConnection.value = false;
+  weakTimers.forEach(timer => clearTimeout(timer));
+  weakTimers.clear();
+  weakPeople.value = new Set();
   previous?.disconnect();
   detachedAudio.splice(0).forEach(element => element.remove());
   error.value = '';
@@ -852,6 +883,8 @@ function cleanup() {
   stopListeningWhileMuted?.();
   void listeningContext?.close().catch(() => {});
   clearTimeout(weakTimer);
+  weakTimers.forEach(timer => clearTimeout(timer));
+  clearTimeout(fullSpeakerTimer);
   clearTimeout(toastTimer);
   clearInterval(clockTimer);
   document.removeEventListener('fullscreenchange', onFullscreenChange);
@@ -950,6 +983,9 @@ onBeforeUnmount(cleanup);
         </div>
         <div v-else-if="fullTile" class="call-full" :class="{ idle: !fullBarShown }" @pointermove="$event.pointerType === 'mouse' && showFullBar()">
           <div id="call-spot-full" class="call-full-spot" />
+          <Transition name="call-full-speaker">
+            <span v-if="fullSpeaker" class="call-full-speaker" aria-hidden="true"><bdi>{{ fullSpeaker }}</bdi></span>
+          </Transition>
           <div class="call-full-bar top" :class="{ hidden: !fullBarShown }">
             <span class="call-full-name">
               <ScreenShare v-if="fullTile.kind === 'screen'" :size="16" aria-hidden="true" />
@@ -1430,6 +1466,45 @@ onBeforeUnmount(cleanup);
 
 .call-full-bar.hidden > * {
   pointer-events: none;
+}
+
+.call-full-speaker {
+  max-width: 40%;
+  position: absolute;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  inset-inline-start: max(10px, env(safe-area-inset-left));
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.3);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.call-full-speaker::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--speaking);
+}
+
+.call-full-speaker-enter-active,
+.call-full-speaker-leave-active {
+  transition: opacity 300ms ease;
+}
+
+.call-full-speaker-enter-from,
+.call-full-speaker-leave-to {
+  opacity: 0;
 }
 
 .call-full-bar.top {

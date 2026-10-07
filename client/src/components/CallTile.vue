@@ -9,7 +9,7 @@ const isRealPicture = (width: number, height: number) => width > 16 && height > 
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { Maximize, Maximize2, MicOff, Minimize2, Moon, ScreenShare, Sun } from 'lucide-vue-next';
+import { Maximize, Maximize2, MicOff, Minimize2, Moon, ScreenShare, Sun, WifiOff } from 'lucide-vue-next';
 import type { VideoTrack } from 'livekit-client';
 import { useI18n } from '../i18n';
 import { usePinchZoom } from '../pinchZoom';
@@ -28,6 +28,8 @@ export interface Tile {
   micOn: boolean;
   speaking: boolean;
   hand: boolean;
+  /** Their internet has been weak for a few seconds. */
+  weak?: boolean;
 }
 
 // `full` is the tile shown full screen: it fills the screen alone, can be zoomed into, and leaves
@@ -139,6 +141,7 @@ onBeforeUnmount(() => {
     <div v-if="!full" class="call-tile-label">
       <span v-if="tile.hand" class="anime-wave" aria-hidden="true">✋</span>
       <MicOff v-if="tile.kind === 'camera' && !tile.micOn" :size="14" class="call-tile-muted" />
+      <WifiOff v-if="tile.weak" :size="12" class="call-tile-weak" role="img" :aria-label="t('weakInternetOf', { name: tile.name })" />
       <ScreenShare v-if="tile.kind === 'screen'" :size="14" />
       <bdi>{{ tile.kind === 'screen' ? t('screenOf', { name: tile.name }) : tile.name }}</bdi>
     </div>
@@ -321,6 +324,13 @@ onBeforeUnmount(() => {
 
 .call-tile-muted {
   color: #f07a72;
+}
+
+/* Small and faint on purpose: it explains a voice that cuts out without drawing attention. */
+.call-tile-weak {
+  flex: none;
+  color: #f5c27a;
+  opacity: 0.8;
 }
 
 .call-tile-button {

@@ -26,90 +26,127 @@
 
 :root,
 [data-theme='dark'] {
+  /* A lofi evening: deep plum shadows, warm cream text and an apricot glow, like a desk lamp at
+     night. */
   color-scheme: dark;
-  --app-bg: #1e1f22;
-  --bg-primary: #313338;
-  --bg-secondary: #2b2d31;
-  --bg-tertiary: #1e1f22;
-  --bg-chat: #313338;
-  --bg-hover: #35373c;
-  --bg-active: #404249;
-  --bg-message-hover: #2e3035;
-  --text-primary: #dbdee1;
-  --text-secondary: #949ba4;
-  --text-accent: #5865f2;
-  --text-link: #00a8fc;
-  --accent-strong: #4752c4;
-  --accent-soft: rgba(88, 101, 242, 0.16);
-  --text-on-accent: #ffffff;
-  --border-color: #1f2023;
-  --danger: #f23f43;
-  --danger-soft: rgba(242, 63, 67, 0.14);
-  --warning-soft: rgba(240, 178, 50, 0.14);
-  --shadow-color: rgba(0, 0, 0, 0.35);
-  --message-meta: #949ba4;
+  --app-bg: #1b1922;
+  --bg-primary: #27232f;
+  --bg-secondary: #211e29;
+  --bg-tertiary: #1a1820;
+  --bg-chat: #27232f;
+  --bg-hover: #2f2a38;
+  --bg-active: #3a3445;
+  --bg-message-hover: #2b2733;
+  --text-primary: #eee5da;
+  --text-secondary: #a89fb3;
+  --text-accent: #f0a77c;
+  --text-link: #9cc6e4;
+  --accent-strong: #e38f60;
+  --accent-soft: rgba(240, 167, 124, 0.16);
+  --text-on-accent: #2a1d18;
+  --border-color: #34303d;
+  --danger: #f07a72;
+  --danger-soft: rgba(240, 122, 114, 0.14);
+  --warning-soft: rgba(236, 190, 110, 0.14);
+  --shadow-color: rgba(8, 5, 14, 0.45);
+  --message-meta: #a89fb3;
   --reply-overlay: rgba(0, 0, 0, 0.15);
-  /* The lobby and the call: near-black, as video calls usually are. */
-  --call-bg: #000000;
-  --call-bar: #111214;
-  --call-surface: #2b2d31;
-  --call-surface-active: #404249;
-  --call-sheet: #2b2d31;
-  --call-input: #1e1f22;
-  --call-text: #f2f3f5;
-  --call-text-soft: #dbdee1;
-  --call-text-muted: #b5bac1;
-  --call-link: #a5b0ff;
-  --call-line: rgba(255, 255, 255, 0.08);
-  --call-line-strong: rgba(255, 255, 255, 0.12);
-  --call-outline: #4e5058;
-  --call-hover: rgba(255, 255, 255, 0.08);
-  --call-handle: rgba(255, 255, 255, 0.3);
-  --call-video-bg: #000000;
+  /* The lobby and the call: a dim room rather than pure black. */
+  --call-bg: #16141c;
+  --call-bar: #1e1b25;
+  --call-surface: #2a2632;
+  --call-surface-active: #383242;
+  --call-sheet: #24202c;
+  --call-input: #1a1820;
+  --call-text: #f3eadf;
+  --call-text-soft: #e5dbcf;
+  --call-text-muted: #b6acbf;
+  --call-link: #f5bb94;
+  --call-line: rgba(255, 240, 225, 0.08);
+  --call-line-strong: rgba(255, 240, 225, 0.13);
+  --call-outline: #4a4455;
+  --call-hover: rgba(255, 240, 225, 0.08);
+  --call-handle: rgba(255, 240, 225, 0.3);
+  --call-video-bg: #0f0e13;
+  /* Colours with a meaning, softened to match: someone speaking, a switched-off microphone or
+     camera, and leaving. */
+  --speaking: #7cc79a;
+  --leave: #d9625e;
+  --leave-strong: #b84b48;
+  --reaction-rays: #f5c27a;
+  /* Soft light in the corners of the screen: a warm lamp at the top, a violet dusk at the bottom. */
+  --lofi-glow: radial-gradient(120% 70% at 90% -10%, rgba(240, 167, 124, 0.2), transparent 60%),
+    radial-gradient(100% 60% at -10% 110%, rgba(150, 118, 204, 0.22), transparent 60%);
+  /* Tiny stars, drawn with gradients rather than a picture. */
+  --lofi-specks: radial-gradient(1.5px 1.5px at 12% 18%, rgba(255, 244, 230, 0.8), transparent),
+    radial-gradient(1px 1px at 32% 8%, rgba(255, 244, 230, 0.7), transparent),
+    radial-gradient(1.5px 1.5px at 58% 22%, rgba(255, 244, 230, 0.6), transparent),
+    radial-gradient(1px 1px at 78% 12%, rgba(255, 244, 230, 0.8), transparent),
+    radial-gradient(1.5px 1.5px at 88% 34%, rgba(255, 244, 230, 0.5), transparent),
+    radial-gradient(1px 1px at 22% 42%, rgba(255, 244, 230, 0.5), transparent),
+    radial-gradient(1px 1px at 46% 6%, rgba(255, 244, 230, 0.7), transparent),
+    radial-gradient(1.5px 1.5px at 6% 66%, rgba(255, 244, 230, 0.4), transparent),
+    radial-gradient(1px 1px at 94% 72%, rgba(255, 244, 230, 0.45), transparent);
 }
 
 [data-theme='light'] {
+  /* A lofi afternoon: warm paper, brown ink and a terracotta accent. */
   color-scheme: light;
-  --app-bg: #e3e5e8;
-  --bg-primary: #ffffff;
-  --bg-secondary: #f2f3f5;
-  --bg-tertiary: #e3e5e8;
-  --bg-chat: #ffffff;
-  --bg-hover: #e8e9eb;
-  --bg-active: #d7d9dc;
-  --bg-message-hover: #f7f7f8;
-  --text-primary: #313338;
-  --text-secondary: #5c5e66;
-  --text-accent: #5865f2;
-  --text-link: #006ce7;
-  --accent-strong: #4752c4;
-  --accent-soft: rgba(88, 101, 242, 0.12);
+  --app-bg: #efe6d8;
+  --bg-primary: #fcf7ef;
+  --bg-secondary: #f5ede1;
+  --bg-tertiary: #ebe1d2;
+  --bg-chat: #fcf7ef;
+  --bg-hover: #f0e6d8;
+  --bg-active: #e5d9c7;
+  --bg-message-hover: #f8f1e6;
+  --text-primary: #3d3337;
+  --text-secondary: #74656a;
+  --text-accent: #b5603f;
+  --text-link: #8a4f9a;
+  --accent-strong: #9a4e31;
+  --accent-soft: rgba(181, 96, 63, 0.12);
   --text-on-accent: #ffffff;
-  --border-color: #e1e2e4;
-  --danger: #da373c;
-  --danger-soft: rgba(218, 55, 60, 0.1);
-  --warning-soft: #fbf0d6;
-  --shadow-color: rgba(0, 0, 0, 0.12);
-  --message-meta: #5c5e66;
-  --reply-overlay: rgba(0, 0, 0, 0.04);
-  --call-bg: #ffffff;
-  --call-bar: #f2f3f5;
-  --call-surface: #e3e5e8;
-  --call-surface-active: #d7d9dc;
-  --call-sheet: #ffffff;
-  --call-input: #f2f3f5;
-  --call-text: #313338;
-  --call-text-soft: #313338;
-  --call-text-muted: #4e5058;
-  --call-link: #4752c4;
-  --call-line: rgba(0, 0, 0, 0.08);
-  --call-line-strong: rgba(0, 0, 0, 0.14);
-  --call-outline: #c4c9ce;
-  --call-hover: rgba(0, 0, 0, 0.06);
-  --call-handle: rgba(0, 0, 0, 0.2);
+  --border-color: #e4d8c6;
+  --danger: #c44740;
+  --danger-soft: rgba(196, 71, 64, 0.1);
+  --warning-soft: #f6e8c8;
+  --shadow-color: rgba(92, 60, 40, 0.14);
+  --message-meta: #74656a;
+  --reply-overlay: rgba(60, 40, 20, 0.05);
+  --call-bg: #f7f0e5;
+  --call-bar: #f0e7da;
+  --call-surface: #e9dece;
+  --call-surface-active: #ddd0bd;
+  --call-sheet: #fcf7ef;
+  --call-input: #f2e9dc;
+  --call-text: #3d3337;
+  --call-text-soft: #3d3337;
+  --call-text-muted: #6b5c60;
+  --call-link: #9a4e31;
+  --call-line: rgba(70, 45, 30, 0.09);
+  --call-line-strong: rgba(70, 45, 30, 0.15);
+  --call-outline: #cfc1ad;
+  --call-hover: rgba(70, 45, 30, 0.06);
+  --call-handle: rgba(70, 45, 30, 0.22);
   /* Around a shared screen that doesn't fill its tile, so it sits on the page instead of in a
      black frame. */
-  --call-video-bg: #e3e5e8;
+  --call-video-bg: #e9dece;
+  --speaking: #4f9f6f;
+  --leave: #c9524d;
+  --leave-strong: #a63f3b;
+  --reaction-rays: #e9a64f;
+  --lofi-glow: radial-gradient(120% 70% at 90% -10%, rgba(240, 167, 124, 0.28), transparent 60%),
+    radial-gradient(100% 60% at -10% 110%, rgba(176, 150, 214, 0.22), transparent 60%);
+  /* Faint flecks, like the grain of recycled paper. */
+  --lofi-specks: radial-gradient(1px 1px at 12% 18%, rgba(110, 80, 50, 0.25), transparent),
+    radial-gradient(1px 1px at 32% 8%, rgba(110, 80, 50, 0.2), transparent),
+    radial-gradient(1px 1px at 58% 22%, rgba(110, 80, 50, 0.2), transparent),
+    radial-gradient(1px 1px at 78% 12%, rgba(110, 80, 50, 0.25), transparent),
+    radial-gradient(1px 1px at 88% 34%, rgba(110, 80, 50, 0.2), transparent),
+    radial-gradient(1px 1px at 22% 42%, rgba(110, 80, 50, 0.2), transparent),
+    radial-gradient(1px 1px at 6% 66%, rgba(110, 80, 50, 0.2), transparent),
+    radial-gradient(1px 1px at 94% 72%, rgba(110, 80, 50, 0.2), transparent);
 }
 
 * {
@@ -141,7 +178,7 @@ body {
   overflow: hidden;
   background: var(--app-bg);
   color: var(--text-primary);
-  font-family: 'Noto Naskh Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Noto Naskh Arabic', ui-rounded, 'SF Pro Rounded', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   text-rendering: optimizeLegibility;
 }
 
@@ -199,7 +236,7 @@ textarea:focus-visible,
   min-height: 50px;
   margin-top: 12px;
   padding: 10px 16px;
-  border-radius: 6px;
+  border-radius: 16px;
   color: var(--text-on-accent);
   background: var(--text-accent);
   font-weight: 600;
@@ -464,6 +501,46 @@ html[dir='rtl'] body {
     min-height: 48px;
     border-radius: 12px;
   }
+}
+
+/* The lofi sky behind the screens before the call: stars (or paper flecks in the light look) that
+   slowly brighten and fade, and a warm patch of light drifting across. Both are layers behind the
+   screen's content, and only their opacity and position change, so they cost phones almost
+   nothing. The call itself keeps a still background, so nothing moves behind the videos. */
+.lofi-sky {
+  position: relative;
+  isolation: isolate;
+}
+
+.lofi-sky::before,
+.lofi-sky::after {
+  content: '';
+  position: fixed;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.lofi-sky::before {
+  inset: 0;
+  background-image: var(--lofi-specks);
+  background-size: 340px 340px;
+  animation: lofi-twinkle 5s ease-in-out infinite alternate;
+}
+
+.lofi-sky::after {
+  inset: -25%;
+  background: radial-gradient(35% 28% at 65% 35%, color-mix(in srgb, var(--text-accent) 13%, transparent), transparent 70%);
+  animation: lofi-drift 20s ease-in-out infinite alternate;
+}
+
+@keyframes lofi-twinkle {
+  from { opacity: 0.4; }
+  to { opacity: 1; }
+}
+
+@keyframes lofi-drift {
+  from { translate: -8% 5%; }
+  to { translate: 8% -5%; }
 }
 
 /* Anime-style motion: quick moves that overshoot a little and settle, as hand-drawn animation does.

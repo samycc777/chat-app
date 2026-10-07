@@ -30,8 +30,9 @@ type Status = 'joining' | 'connected' | 'reconnecting' | 'disconnected';
 type CallMessage = { type: 'reaction'; emoji: string };
 type CallParticipant = { identity: string; name: string; local: boolean; micOn: boolean; speaking: boolean };
 
-// None of the reactions has a face.
-const REACTIONS = ['👍', '❤️', '👏', '🤲', '✅', '🎉'];
+// None of the reactions has a face. Coffee and tea suit the app's calm lofi look, and steam as they rise.
+const DRINKS = ['☕', '🍵'];
+const REACTIONS = ['👍', '❤️', '👏', '🤲', '✅', '🎉', ...DRINKS];
 const VOLUME_KEY = 'callVolume';
 const PERSON_VOLUMES_KEY = 'callVolumes';
 const ZOOM_HINT_KEY = 'zoomHintSeen';
@@ -1004,7 +1005,7 @@ onBeforeUnmount(cleanup);
       <div v-if="toast" class="call-pill call-toast" role="status"><bdi>{{ toast }}</bdi></div>
 
       <div class="call-reactions" aria-hidden="true">
-        <div v-for="reaction in reactions" :key="reaction.id" class="call-reaction" :style="{ '--drift': `${reaction.drift}px` }">
+        <div v-for="reaction in reactions" :key="reaction.id" class="call-reaction" :class="{ drink: DRINKS.includes(reaction.emoji) }" :style="{ '--drift': `${reaction.drift}px` }">
           <span class="call-reaction-emoji">{{ reaction.emoji }}</span>
           <bdi class="call-reaction-name">{{ reaction.name }}</bdi>
         </div>
@@ -1163,7 +1164,8 @@ onBeforeUnmount(cleanup);
   flex-direction: column;
   overflow: hidden;
   color: var(--call-text);
-  background: var(--call-bg);
+  /* The lofi glow stays still here, so nothing moves behind the videos. */
+  background: var(--lofi-glow), var(--call-bg);
 }
 
 /* In the Android app's small window, the call covers the whole page, even when a text channel was open. */
@@ -1335,9 +1337,9 @@ onBeforeUnmount(cleanup);
   gap: 7px;
   margin-top: 6px;
   padding: 0 16px;
-  border-radius: 6px;
-  color: #ffffff;
-  background: #5865f2;
+  border-radius: 12px;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
   font-size: 14px;
   font-weight: 600;
 }
@@ -1410,11 +1412,11 @@ onBeforeUnmount(cleanup);
 
 .call-control.leave {
   color: #ffffff;
-  background: #da373c;
+  background: var(--leave);
 }
 
 .call-control.leave:hover {
-  background: #a12828;
+  background: var(--leave-strong);
 }
 
 /* Full screen: one video over the whole app, with bars that fade away and come back with a tap. */
@@ -1531,8 +1533,8 @@ onBeforeUnmount(cleanup);
   overflow: hidden;
   padding: 9px 15px;
   border-radius: 999px;
-  color: #f2f3f5;
-  background: rgba(17, 18, 20, 0.94);
+  color: #f3eadf;
+  background: rgba(36, 30, 44, 0.94);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   font-size: 13px;
   font-weight: 600;
@@ -1543,8 +1545,8 @@ onBeforeUnmount(cleanup);
 
 .call-sound-pill {
   top: 64px;
-  color: #ffffff;
-  background: #5865f2;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
 }
 
 .call-toast {
@@ -1603,7 +1605,7 @@ onBeforeUnmount(cleanup);
   inset: -26px;
   z-index: -1;
   border-radius: 50%;
-  background: repeating-conic-gradient(#ffc83d 0deg 6deg, transparent 6deg 30deg);
+  background: repeating-conic-gradient(var(--reaction-rays) 0deg 6deg, transparent 6deg 30deg);
   mask: radial-gradient(circle, transparent 38%, #000000 40%, #000000 62%, transparent 64%);
   opacity: 0;
   pointer-events: none;
@@ -1641,6 +1643,27 @@ onBeforeUnmount(cleanup);
   to { translate: 7px 0; rotate: 10deg; }
 }
 
+/* A cup of coffee or tea steams as it rises. */
+.call-reaction.drink .call-reaction-emoji::after {
+  content: '';
+  width: 6px;
+  height: 14px;
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--call-text-muted) 70%, transparent);
+  filter: blur(2px);
+  opacity: 0;
+  animation: call-reaction-steam 1.1s ease-out 300ms infinite;
+}
+
+@keyframes call-reaction-steam {
+  0% { opacity: 0; translate: -50% 4px; scale: 0.6 1; }
+  30% { opacity: 0.9; }
+  100% { opacity: 0; translate: -20% -14px; scale: 1.3 1.6; }
+}
+
 @keyframes call-reaction-burst {
   0% { opacity: 1; scale: 0.3; }
   100% { opacity: 0; scale: 1.5; }
@@ -1655,7 +1678,7 @@ onBeforeUnmount(cleanup);
   padding: 0 5px;
   border-radius: 999px;
   color: #ffffff;
-  background: #da373c;
+  background: var(--leave);
   font-size: 11px;
   font-weight: 800;
 }
@@ -1758,7 +1781,7 @@ onBeforeUnmount(cleanup);
 }
 
 .call-chat-to select.private {
-  border-color: #5865f2;
+  border-color: var(--text-accent);
 }
 
 .call-chat-compose {
@@ -1785,9 +1808,9 @@ onBeforeUnmount(cleanup);
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  color: #ffffff;
-  background: #5865f2;
+  border-radius: 14px;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
 }
 
 .call-chat-send:disabled {
@@ -1818,7 +1841,7 @@ onBeforeUnmount(cleanup);
   overflow: auto;
   margin-inline: auto;
   padding: 10px 16px max(18px, env(safe-area-inset-bottom));
-  border-radius: 16px 16px 0 0;
+  border-radius: 24px 24px 0 0;
   background: var(--call-sheet);
   box-shadow: 0 -16px 50px rgba(0, 0, 0, 0.45);
   animation: call-sheet-in 380ms var(--soft-spring);
@@ -1864,7 +1887,7 @@ onBeforeUnmount(cleanup);
 }
 
 .call-people li.speaking .avatar {
-  box-shadow: 0 0 0 2px var(--call-sheet), 0 0 0 4px #23a55a;
+  box-shadow: 0 0 0 2px var(--call-sheet), 0 0 0 4px var(--speaking);
 }
 
 .call-person-main {
@@ -1906,7 +1929,7 @@ onBeforeUnmount(cleanup);
   height: 30px;
   flex: 1;
   margin: 0;
-  accent-color: #5865f2;
+  accent-color: var(--text-accent);
 }
 
 .call-person-hand {
@@ -1919,7 +1942,7 @@ onBeforeUnmount(cleanup);
 }
 
 .call-person-mic.on {
-  color: #23a55a;
+  color: var(--speaking);
 }
 
 .call-person-mic.off {
@@ -1927,19 +1950,19 @@ onBeforeUnmount(cleanup);
 }
 
 .call-reaction-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, 52px);
   justify-content: center;
-  gap: 6px;
+  gap: 6px 10px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--call-line);
 }
 
 .call-emoji-btn {
-  width: 46px;
-  height: 46px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
-  font-size: 24px;
+  font-size: 26px;
   line-height: 1;
 }
 
@@ -1967,7 +1990,7 @@ onBeforeUnmount(cleanup);
   min-width: 0;
   height: 44px;
   flex: 1;
-  accent-color: #5865f2;
+  accent-color: var(--text-accent);
 }
 
 .call-sheet-row:disabled {

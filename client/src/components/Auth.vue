@@ -83,7 +83,7 @@ watch(() => props.openInvite, key => {
 }, { immediate: true });
 </script>
 <template>
-  <div class="auth-container"><form class="auth-card" @submit.prevent="submit">
+  <div class="auth-container lofi-sky"><form class="auth-card" @submit.prevent="submit">
     <div class="auth-topline"><span class="auth-mark" aria-hidden="true">{{ (serverName || t('appName')).slice(0, 1).toUpperCase() }}</span><div class="auth-utilities"><button class="auth-utility" type="button" :title="theme === 'light' ? t('darkMode') : t('lightMode')" :aria-label="theme === 'light' ? t('darkMode') : t('lightMode')" @click="toggleTheme"><Moon v-if="theme === 'light'" :size="18" /><Sun v-else :size="18" /></button><button class="auth-language-trigger" type="button" @click="setLang(lang === 'en' ? 'ar' : 'en')">{{ lang === 'en' ? 'العربية' : 'English' }}</button></div></div>
     <div class="auth-eyebrow"><bdi>{{ serverName || t('appName') }}</bdi></div><h1>{{ t('welcomeTitle') }}</h1>
     <p>{{ inviteKey ? t('welcomeBody', { name: serverName || t('appName') }) : t('needInvite') }}</p>
@@ -103,6 +103,7 @@ watch(() => props.openInvite, key => {
   align-items: center;
   justify-content: center;
   padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+  background: var(--lofi-glow), var(--app-bg);
 }
 
 .auth-card {
@@ -110,7 +111,7 @@ watch(() => props.openInvite, key => {
   max-width: 460px;
   padding: clamp(24px, 7vw, 42px);
   border: 1px solid var(--border-color);
-  border-radius: 24px;
+  border-radius: 28px;
   background: var(--bg-primary);
   box-shadow: 0 18px 60px var(--shadow-color);
 }

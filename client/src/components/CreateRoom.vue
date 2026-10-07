@@ -49,7 +49,7 @@ async function copy() {
 }
 </script>
 <template>
-  <div class="create-container">
+  <div class="create-container lofi-sky">
     <div class="create-card">
       <div class="create-topline">
         <span class="create-mark" aria-hidden="true">{{ t('appName').slice(0, 1) }}</span>
@@ -90,6 +90,7 @@ async function copy() {
   align-items: center;
   justify-content: center;
   padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  background: var(--lofi-glow), var(--app-bg);
 }
 
 .create-card {
@@ -97,7 +98,7 @@ async function copy() {
   max-width: 460px;
   padding: clamp(24px, 7vw, 42px);
   border: 1px solid var(--border-color);
-  border-radius: 24px;
+  border-radius: 28px;
   background: var(--bg-primary);
   box-shadow: 0 18px 60px var(--shadow-color);
 }

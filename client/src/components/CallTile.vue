@@ -184,12 +184,12 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: 16px;
   background: var(--call-surface);
   cursor: pointer;
 }
 
-/* Someone who appears pops in with a quick white flash, like an impact frame in anime. The full
+/* Someone who appears pops in with a quick warm flash, like an impact frame in anime. The full
    screen tile is left still, so a lesson never jumps. Moving a tile to another place on the screen
    plays it again, which reads as the tile landing there. */
 .call-tile:not(.full) {
@@ -201,7 +201,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   z-index: 1;
-  background: #ffffff;
+  background: #fff3e3;
   opacity: 0;
   pointer-events: none;
   animation: call-tile-flash 420ms ease-out;
@@ -227,7 +227,7 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: 1;
   border-radius: inherit;
-  box-shadow: inset 0 0 0 3px #23a55a, inset 0 0 28px 2px rgba(35, 165, 90, 0.85);
+  box-shadow: inset 0 0 0 3px var(--speaking), inset 0 0 28px 2px color-mix(in srgb, var(--speaking) 85%, transparent);
   pointer-events: none;
   animation: call-tile-aura 750ms ease-in-out infinite alternate;
 }
@@ -333,7 +333,7 @@ onBeforeUnmount(() => {
 }
 
 .call-tile-muted {
-  color: #f23f43;
+  color: #f07a72;
 }
 
 .call-tile-button {
@@ -392,6 +392,10 @@ onBeforeUnmount(() => {
 
 .call-tile.small .call-tile-waiting {
   display: none;
+}
+
+.call-tile.small {
+  border-radius: 10px;
 }
 
 .call-tile.small .call-tile-label {

@@ -26,7 +26,7 @@ const initials = computed(() => {
 });
 </script>
 <template>
-  <div class="avatar" :class="size" :style="{ backgroundColor: color }">
+  <div class="avatar" :class="size" :style="{ '--avatar-color': color }">
     {{ initials }}
     <div v-if="online" class="online-dot" />
   </div>
@@ -43,6 +43,9 @@ const initials = computed(() => {
   place-items: center;
   border-radius: 50%;
   color: #ffffff;
+  /* Each person's colour, softened towards cream to suit the lofi look. */
+  background: color-mix(in srgb, var(--avatar-color) 72%, #f3dcc4);
+  text-shadow: 0 1px 2px rgba(40, 20, 10, 0.25);
   font-size: 15px;
   font-weight: 700;
 }
@@ -78,7 +81,7 @@ const initials = computed(() => {
   bottom: -1px;
   border: 2px solid var(--bg-chat);
   border-radius: 50%;
-  background: #23a55a;
+  background: var(--speaking);
 }
 
 @media (max-width: 768px) {

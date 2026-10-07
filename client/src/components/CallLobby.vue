@@ -65,7 +65,7 @@ async function copyInvite() {
 </script>
 
 <template>
-  <section class="lobby">
+  <section class="lobby lofi-sky">
     <div class="lobby-card">
       <div class="lobby-topline">
         <button class="lobby-theme" type="button" :title="theme === 'light' ? t('darkMode') : t('lightMode')" :aria-label="theme === 'light' ? t('darkMode') : t('lightMode')" @click="toggleTheme">
@@ -121,7 +121,7 @@ async function copyInvite() {
   overflow-y: auto;
   padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
   color: var(--call-text);
-  background: var(--call-bg);
+  background: var(--lofi-glow), var(--call-bg);
 }
 
 .lobby-card {
@@ -160,8 +160,8 @@ async function copyInvite() {
   display: grid;
   place-items: center;
   overflow: hidden;
-  border-radius: 18px;
-  background: var(--bg-tertiary);
+  border-radius: 24px;
+  background: var(--call-surface);
 }
 
 .lobby-preview video {
@@ -200,7 +200,7 @@ async function copyInvite() {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border-radius: 16px;
+  border-radius: 20px;
   color: var(--call-text);
   background: var(--call-surface);
   font-size: 14px;
@@ -216,7 +216,7 @@ async function copyInvite() {
 
 .lobby-toggle.off {
   color: #ffffff;
-  background: #da373c;
+  background: var(--leave);
 }
 
 /* The icon bounces in each time the switch changes. */

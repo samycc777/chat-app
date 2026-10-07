@@ -35,7 +35,7 @@ function toggleTheme() {
 // own look, not the app's: on a dark phone showing the light look they would be white on white.
 // Capacitor's SystemBars, built into both apps, sets them to match the page.
 const hasSystemBars = Boolean(bridge?.PluginHeaders?.some(plugin => plugin.name === 'SystemBars'));
-const BROWSER_BAR = { light: '#ffffff', dark: '#1e1f22' } as const;
+const BROWSER_BAR = { light: '#f7f0e5', dark: '#16141c' } as const;
 watchEffect(() => {
   document.documentElement.dataset.theme = theme.value;
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', BROWSER_BAR[theme.value]);

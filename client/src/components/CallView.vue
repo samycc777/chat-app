@@ -41,6 +41,12 @@ const DARK_SCREEN_KEY = 'darkScreen';
 // Louder than this on the muted microphone, for most of a second, is someone talking.
 const MUTED_SPEECH_DB = -40;
 const MUTED_HINT_EVERY_MS = 20_000;
+// Every voice is sent at the same level (see levelVoiceWorklet.js). The friends asked for the
+// teacher's voice (Ayman2) to be louder than the others: 30%, then 20% more after a lesson. Voices are
+// sent as loud as they can go without crackling, so his cannot be sent louder; instead everyone
+// else's is played softer.
+const LOUDER_VOICES = new Set(['ayman2']);
+const SOFTER_THAN_LOUDER = 1 / (1.3 * 1.2);
 // The sliders stop short of silence, so a call never starts inaudible because of last week's
 // setting; the speaker button is there for turning the sound off.
 const MIN_VOLUME = 0.1;
@@ -306,10 +312,88 @@ function drawOnTablet() {
   // Sent at most twenty times a second while someone draws.
   tabletTimer = setTimeout(() => {
     tabletTimer = undefined;
-    if (sharingScreen.value && tabletAllowed.value) showOnTablet(boardForTablet(myBoardKey())).catch(() => { tabletAllowed.value = false; });
+    if (!sharingScreen.value || !tabletAllowed.value) return;
+    const board = { ...boardForTablet(myBoardKey()), speakers: tabletSpeakers.value, notices: tabletNotices.value.map(notice => notice.text) };
+    showOnTablet(board).catch(() => { tabletAllowed.value = false; });
   }, 50);
 }
 watch(boardVersion, () => { if (tabletBoardAvailable && sharingScreen.value && tabletAllowed.value) drawOnTablet(); });
+
+// While the teacher shares his screen he is in his book, not in the call, so the same window shows
+// him, small at the top, who is talking and who comes and goes.
+//
+// Only clear speech counts as talking there: LiveKit already ignores the quietest sounds, and a
+// voice must also be loud enough and go on for most of a second. Noise from someone's house, such
+// as a door, dishes or children in another room, is softer than their voice, or over sooner.
+// (LiveKit's own measure is used here because the teacher's copy of the call is in the background,
+// where the page cannot measure voices itself.) The level is LiveKit's 0 to 1 scale, measured in
+// October 2026: a voice gives 0.25 to 0.5, and talking in another room 0.125 (its lowest step).
+const TALKING_LEVEL = 0.2;
+const TALKING_FOR_MS = 800;
+const STILL_TALKING_MS = 1200;
+const NOTICE_MS = 5000;
+// Someone whose connection drops for a moment comes back within seconds; they did not leave.
+const LEFT_AFTER_MS = 10_000;
+const tabletSpeakers = ref<string[]>([]);
+const tabletNotices = ref<{ id: number; text: string }[]>([]);
+const talkingSince = new Map<string, number>();
+const talkingUntil = new Map<string, number>();
+const leftTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const announcedLeaving = new Set<string>();
+let talkingTimer: ReturnType<typeof setTimeout> | undefined;
+let noticeId = 0;
+const showingTeacherSigns = () => tabletBoardAvailable && sharingScreen.value && tabletAllowed.value;
+function noteTalking() {
+  if (!room) return;
+  const now = Date.now();
+  for (const participant of room.remoteParticipants.values()) {
+    const identity = participant.identity;
+    if (identity.endsWith(SCREEN_SUFFIX)) continue;
+    const talking = participant.isSpeaking && participant.isMicrophoneEnabled;
+    if (talking && (talkingSince.has(identity) || participant.audioLevel >= TALKING_LEVEL)) {
+      if (!talkingSince.has(identity)) talkingSince.set(identity, now);
+      talkingUntil.set(identity, now + STILL_TALKING_MS);
+    } else if ((talkingUntil.get(identity) ?? 0) <= now) {
+      talkingSince.delete(identity);
+      talkingUntil.delete(identity);
+    }
+  }
+  for (const identity of talkingSince.keys()) if (!room.remoteParticipants.has(identity)) { talkingSince.delete(identity); talkingUntil.delete(identity); }
+  const names = [...talkingSince].filter(([, since]) => now - since >= TALKING_FOR_MS)
+    .map(([identity]) => room?.remoteParticipants.get(identity)?.name || '').filter(Boolean);
+  if (names.join('\n') !== tabletSpeakers.value.join('\n')) tabletSpeakers.value = names;
+  // Looked at again shortly, to show someone once they have talked long enough and to let go of
+  // someone who stopped; LiveKit only says when the list of speakers changes.
+  clearTimeout(talkingTimer);
+  talkingTimer = talkingSince.size ? setTimeout(noteTalking, 300) : undefined;
+}
+function addNotice(text: string) {
+  if (!showingTeacherSigns()) return;
+  const id = ++noticeId;
+  tabletNotices.value = [...tabletNotices.value, { id, text }].slice(-3);
+  setTimeout(() => { tabletNotices.value = tabletNotices.value.filter(notice => notice.id !== id); }, NOTICE_MS);
+}
+function noteArrival(participant: RemoteParticipant) {
+  if (participant.identity.endsWith(SCREEN_SUFFIX)) return;
+  clearTimeout(leftTimers.get(participant.identity));
+  const wasAway = leftTimers.delete(participant.identity);
+  // Coming back within moments of a dropped connection is no news, unless their leaving was shown.
+  if (wasAway && !announcedLeaving.has(participant.identity)) return;
+  announcedLeaving.delete(participant.identity);
+  addNotice(t('joinedNotice', { name: participant.name || '' }));
+}
+function noteLeaving(participant: RemoteParticipant) {
+  if (participant.identity.endsWith(SCREEN_SUFFIX)) return;
+  const name = participant.name || '';
+  clearTimeout(leftTimers.get(participant.identity));
+  leftTimers.set(participant.identity, setTimeout(() => {
+    if (room?.remoteParticipants.has(participant.identity)) return;
+    announcedLeaving.add(participant.identity);
+    addNotice(t('leftNotice', { name }));
+  }, LEFT_AFTER_MS));
+  noteTalking();
+}
+watch([tabletSpeakers, tabletNotices], () => { if (showingTeacherSigns()) drawOnTablet(); });
 watch(sharingScreen, async sharing => {
   if (!tabletBoardAvailable) return;
   if (!sharing) { tabletPrompt.value = false; void hideOnTablet(); return; }
@@ -484,9 +568,10 @@ watch(() => props.hands, (next, previous) => {
   if (raised) showToast(t('handRaised', { name: raised.displayName }));
   refresh();
 });
-// Each voice plays at the call's volume times the volume chosen for that person.
+// Each voice plays at the call's volume times the volume chosen for that person, softened beside Ayman2's.
 function applyVoice(track: RemoteAudioTrack, identity: string) {
-  const level = volume.value * levelOf(identity);
+  const name = (room?.remoteParticipants.get(identity)?.name ?? '').trim().toLowerCase();
+  const level = volume.value * levelOf(identity) * (LOUDER_VOICES.has(name) ? 1 : SOFTER_THAN_LOUDER);
   // The mixer plays the voice while LiveKit keeps its element muted; unmuting it would play it twice.
   if (webAudioVolume) { track.setVolume(soundOn.value ? level : 0); return; }
   track.attachedElements.forEach(element => { element.muted = !soundOn.value; });
@@ -578,20 +663,22 @@ async function cleanMicrophone() {
   if (!microphone || microphone.getProcessor()) return;
   const voice = cleanVoice();
   try { await microphone.setProcessor(voice); } catch { /* Friends still hear the voice, just not cleaned. */ }
-  // The microphone was opened without the browser's own noise filter, because ours was going to
-  // replace it; if ours could not start after all, the browser's is brought back.
-  if (voice.denoising || recorded(microphone).getSettings().noiseSuppression !== false) return;
-  try { await microphone.restartTrack({ noiseSuppression: true, voiceIsolation: true }); } catch { /* It keeps the voice as it was. */ }
+  // The microphone was opened without the browser's own noise filter and leveling, because ours were
+  // going to replace them; if ours could not start after all, the browser's are brought back.
+  if ((voice.denoising && voice.leveling) || recorded(microphone).getSettings().noiseSuppression !== false) return;
+  try { await microphone.restartTrack({ noiseSuppression: true, voiceIsolation: true, autoGainControl: true }); } catch { /* It keeps the voice as it was. */ }
 }
 // With the voice cleaned, LiveKit's track is the cleaned one, which is silent while muted.
 function recorded(microphone: LocalAudioTrack) {
   return (microphone.getProcessor() as CleanVoice | undefined)?.recordedTrack ?? microphone.mediaStreamTrack;
 }
-// Our noise filter replaces the browser's own: two filters in a row make voices sound watery. The
-// browser still takes out the echo of the call's own sound and evens out the level. This only
-// counts the first time, when the microphone is opened; later, turning it on just unmutes it.
+// Our noise filter replaces the browser's own: two filters in a row make voices sound watery. Our
+// leveling replaces the browser's too: while someone was silent, the browser's slowly turned them up
+// until the sounds of their house were as loud as a voice (see levelVoiceWorklet.js). The browser
+// still takes out the echo of the call's own sound. This only counts the first time, when the
+// microphone is opened; later, turning it on just unmutes it.
 async function microphoneOptions(): Promise<AudioCaptureOptions | undefined> {
-  return await prepareCleanVoice() ? { noiseSuppression: false, voiceIsolation: false } : undefined;
+  return await prepareCleanVoice() ? { noiseSuppression: false, voiceIsolation: false, autoGainControl: false } : undefined;
 }
 // Opens the microphone without sending anything, only so the phone treats the call's sound as a
 // call's (see onAndroid). Turning the microphone on later just unmutes it.
@@ -872,8 +959,9 @@ async function connect() {
     // LiveKit retries a dropped connection for a while before giving up with Disconnected.
     connectingRoom.on(RoomEvent.Reconnecting, () => { if (current()) status.value = 'reconnecting'; });
     connectingRoom.on(RoomEvent.Reconnected, () => { if (current()) { status.value = 'connected'; quietUntil = Date.now() + 3000; refresh(); } });
-    connectingRoom.on(RoomEvent.ParticipantConnected, participant => { if (current()) onParticipantConnected(participant); });
-    connectingRoom.on(RoomEvent.ParticipantDisconnected, participant => { leftAt.set(participant.identity, Date.now()); });
+    connectingRoom.on(RoomEvent.ParticipantConnected, participant => { if (current()) { onParticipantConnected(participant); noteArrival(participant); } });
+    connectingRoom.on(RoomEvent.ParticipantDisconnected, participant => { if (current()) { leftAt.set(participant.identity, Date.now()); noteLeaving(participant); } });
+    connectingRoom.on(RoomEvent.ActiveSpeakersChanged, () => { if (current()) noteTalking(); });
     connectingRoom.on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
       // A join that fails is tried again by connect() itself.
       if (!current() || error.value || status.value === 'joining') return;
@@ -1001,6 +1089,8 @@ function cleanup() {
   stopChatListener();
   clearBoards();
   clearTimeout(tabletTimer);
+  clearTimeout(talkingTimer);
+  leftTimers.forEach(timer => clearTimeout(timer));
   void hideOnTablet();
   void drawPermissionListener?.remove();
   void phoneShareListener?.remove();

@@ -109,11 +109,15 @@ class BoardPlugin : Plugin() {
     // thread, and the main thread only swaps it in and redraws.
     val strokes = readStrokes(call)
     val pointers = readPointers(call)
+    val speakers = readTexts(call, "speakers")
+    val notices = readTexts(call, "notices")
     main.post {
       try {
         val view = board ?: addBoard()
         view.strokes = strokes
         view.pointers = pointers
+        view.speakers = speakers
+        view.notices = notices
         view.invalidate()
         call.resolve()
       } catch (error: Exception) {
@@ -222,6 +226,12 @@ class BoardPlugin : Plugin() {
     return pointers
   }
 
+  // An app page from before these existed sends none, which shows nothing.
+  private fun readTexts(call: PluginCall, key: String): List<String> {
+    val list = call.getArray(key) ?: return emptyList()
+    return (0 until list.length()).mapNotNull { i -> list.optString(i).trim().takeIf { it.isNotEmpty() } }
+  }
+
   // An empty or unknown colour falls back to white rather than losing the whole board.
   private fun color(text: String): Int =
     try { text.toColorInt() } catch (error: Exception) { Color.WHITE }
@@ -312,6 +322,8 @@ class BoardPlugin : Plugin() {
   private class BoardView(context: Context, private val manager: WindowManager) : View(context) {
     var strokes: List<Stroke> = emptyList()
     var pointers: List<Pointer> = emptyList()
+    var speakers: List<String> = emptyList()
+    var notices: List<String> = emptyList()
 
     private val path = Path()
     private val place = IntArray(2)
@@ -332,9 +344,17 @@ class BoardPlugin : Plugin() {
       style = Paint.Style.FILL
       color = Color.argb(153, 0, 0, 0)
     }
+    // The same soft green as the glow around someone talking in the call.
+    private val talkingDot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      style = Paint.Style.FILL
+      color = "#7cc79a".toColorInt()
+    }
+    private val density = context.resources.displayMetrics.density
+    private val statusBarHeight = context.resources.getIdentifier("status_bar_height", "dimen", "android")
+      .let { if (it > 0) context.resources.getDimensionPixelSize(it) else 0 }
 
     override fun onDraw(canvas: Canvas) {
-      if (strokes.isEmpty() && pointers.isEmpty()) return
+      if (strokes.isEmpty() && pointers.isEmpty() && speakers.isEmpty() && notices.isEmpty()) return
       // Read every time, because the screen may have turned since the last drawing.
       readScreenSize()
       val width = screen.x.toFloat()
@@ -380,6 +400,38 @@ class BoardPlugin : Plugin() {
         )
         canvas.drawRoundRect(label, 0.012f * u, 0.012f * u, behindText)
         canvas.drawText(pointer.name, x, textTop - ascent, text)
+      }
+
+      drawSigns(canvas, width, top, left)
+    }
+
+    // Who is talking, then who joined or left, in small labels at the top middle of the screen,
+    // just below the phone's status bar, so they stay out of the way of the book being read.
+    private fun drawSigns(canvas: Canvas, width: Float, top: Float, left: Float) {
+      if (speakers.isEmpty() && notices.isEmpty()) return
+      text.textSize = 13f * density
+      val ascent = text.ascent()
+      val descent = text.descent()
+      val padX = 10f * density
+      val padY = 5f * density
+      val gap = 6f * density
+      val dot = 4f * density
+      val middle = width / 2 - left
+      var y = statusBarHeight + 6f * density - top
+      val lines = (if (speakers.isEmpty()) emptyList() else listOf(speakers.joinToString("  ·  "))) + notices
+      lines.forEachIndexed { index, line ->
+        val talking = index == 0 && speakers.isNotEmpty()
+        val textWidth = text.measureText(line)
+        val inner = textWidth + if (talking) dot * 2 + gap else 0f
+        label.set(middle - inner / 2 - padX, y, middle + inner / 2 + padX, y + (descent - ascent) + padY * 2)
+        canvas.drawRoundRect(label, label.height() / 2, label.height() / 2, behindText)
+        var textMiddle = middle
+        if (talking) {
+          canvas.drawCircle(label.left + padX + dot, label.centerY(), dot, talkingDot)
+          textMiddle += (dot * 2 + gap) / 2
+        }
+        canvas.drawText(line, textMiddle, y + padY - ascent, text)
+        y = label.bottom + 4f * density
       }
     }
 

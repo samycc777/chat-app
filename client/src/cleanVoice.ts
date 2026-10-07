@@ -3,6 +3,7 @@ import { loadRnnoise, RnnoiseWorkletNode } from '@sapphi-red/web-noise-suppresso
 import rnnoiseWorkletUrl from '@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url';
 import rnnoiseWasmUrl from '@sapphi-red/web-noise-suppressor/rnnoise.wasm?url';
 import rnnoiseSimdWasmUrl from '@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url';
+import levelVoiceWorkletUrl from './levelVoiceWorklet.js?url';
 
 // Every voice is cleaned before it is sent, so everyone in the call hears it the same way, whatever
 // they listen on. Zoom does much the same, and the old teacher app did it for the teacher alone.
@@ -19,7 +20,7 @@ const BASS_HZ = 200;
 const BASS_DB = 3;
 const TREBLE_HZ = 4500;
 const TREBLE_DB = -3;
-// The browser already evens out each voice's level; it is then made a little louder, as the old
+// The browser already evens out each voice's level, and the leveler below finishes the job; it is then made a little louder, as the old
 // teacher app did, and a limiter keeps the loudest words from crackling. A compressor was tried
 // here too, but it brought the leftover noise between words back up.
 const LOUDER_DB = 4;
@@ -35,6 +36,8 @@ const CEILING_FROM = 0.9;
 export type CleanVoice = TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> & {
   /** Whether the noise filter is running, rather than only the tone and loudness shaping. */
   readonly denoising: boolean;
+  /** Whether each voice is being brought to the same level. */
+  readonly leveling: boolean;
   /** The microphone as recorded; LiveKit's own track for it is this processor's output. */
   readonly recordedTrack: MediaStreamTrack | undefined;
 };
@@ -52,6 +55,7 @@ const ceilingCurve = (() => {
 
 let filterBinary: Promise<ArrayBuffer | null> | undefined;
 const filterLoaded = new WeakMap<BaseAudioContext, Promise<boolean>>();
+const levelerLoaded = new WeakMap<BaseAudioContext, Promise<boolean>>();
 
 function loadFilterBinary() {
   if (typeof AudioWorkletNode !== 'function' || typeof WebAssembly !== 'object') return Promise.resolve(null);
@@ -76,13 +80,27 @@ export async function prepareCleanVoice() {
 export function preloadCleanVoice() {
   void loadFilterBinary();
   // The browser keeps this file for a year, so turning the filter on later reads it from the device.
-  if (typeof AudioWorkletNode === 'function') void fetch(rnnoiseWorkletUrl).catch(() => {});
+  if (typeof AudioWorkletNode === 'function') [rnnoiseWorkletUrl, levelVoiceWorkletUrl].forEach(url => void fetch(url).catch(() => {}));
 }
 function loadFilter(context: BaseAudioContext) {
   let loaded = filterLoaded.get(context);
   if (!loaded) {
     loaded = context.audioWorklet.addModule(rnnoiseWorkletUrl).then(() => true, () => false);
     filterLoaded.set(context, loaded);
+  }
+  return loaded;
+}
+
+// Friends speak from near and far from their phones, on phones that record louder or softer, and the
+// browser's own leveling left some much quieter than others while turning up the sounds of a silent
+// person's house. This evens out the voices instead (see levelVoiceWorklet.js). Without it, as in
+// old browsers, the browser's own leveling is kept.
+function loadLeveler(context: BaseAudioContext) {
+  if (typeof AudioWorkletNode !== 'function') return Promise.resolve(false);
+  let loaded = levelerLoaded.get(context);
+  if (!loaded) {
+    loaded = context.audioWorklet.addModule(levelVoiceWorkletUrl).then(() => true, () => false);
+    levelerLoaded.set(context, loaded);
   }
   return loaded;
 }
@@ -94,6 +112,7 @@ export function cleanVoice(): CleanVoice {
   // Only when the call's own audio does not run at 48 kHz, as on some computers.
   let ownContext: AudioContext | undefined;
   let binary: ArrayBuffer | null = null;
+  let leveling = false;
   let localTrack: LocalTrack | undefined;
   let nodes: AudioNode[] = [];
   let denoising = false;
@@ -112,6 +131,8 @@ export function cleanVoice(): CleanVoice {
       type: 'highpass', frequency: LOW_CUT_HZ, Q: Math.SQRT1_2, channelCount: 1, channelCountMode: 'explicit',
     });
     const noiseFilter = binary ? new RnnoiseWorkletNode(context, { wasmBinary: binary, maxChannels: 1 }) : null;
+    // After the noise filter, so it measures the voice alone.
+    const leveler = leveling ? new AudioWorkletNode(context, 'level-voice', { outputChannelCount: [1], channelCount: 1, channelCountMode: 'explicit' }) : null;
     const bass = new BiquadFilterNode(context, { type: 'lowshelf', frequency: BASS_HZ, gain: BASS_DB });
     const treble = new BiquadFilterNode(context, { type: 'highshelf', frequency: TREBLE_HZ, gain: TREBLE_DB });
     const louder = new GainNode(context, { gain: 10 ** (LOUDER_DB / 20) });
@@ -119,7 +140,7 @@ export function cleanVoice(): CleanVoice {
     const afterLimit = new GainNode(context, { gain: 10 ** (AFTER_LIMIT_DB / 20) });
     const ceiling = new WaveShaperNode(context, { curve: ceilingCurve });
     const destination = context.createMediaStreamDestination();
-    nodes = [source, lowCut, ...(noiseFilter ? [noiseFilter] : []), bass, treble, louder, limiter, afterLimit, ceiling, destination];
+    nodes = [source, lowCut, ...(noiseFilter ? [noiseFilter] : []), ...(leveler ? [leveler] : []), bass, treble, louder, limiter, afterLimit, ceiling, destination];
     nodes.reduce((from, to) => from.connect(to));
     denoising = Boolean(noiseFilter);
     processor.processedTrack = destination.stream.getAudioTracks()[0];
@@ -139,6 +160,7 @@ export function cleanVoice(): CleanVoice {
   const processor: CleanVoice = {
     name: 'clean-voice',
     get denoising() { return denoising; },
+    get leveling() { return leveling; },
     get recordedTrack() { return recordedTrack; },
     async init(options) {
       localTrack = options.localTrack;
@@ -157,6 +179,7 @@ export function cleanVoice(): CleanVoice {
       // LiveKit then keeps sending the microphone as it is.
       if (context.state !== 'running') throw new Error('Call audio is paused');
       if (binary && !await loadFilter(context)) binary = null;
+      leveling = await loadLeveler(context);
       shape(options.track);
       context.addEventListener('statechange', onStateChange);
     },

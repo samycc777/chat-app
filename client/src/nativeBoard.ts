@@ -5,7 +5,13 @@
 // inside an app cannot do by itself.
 import { bridge } from './nativeScreenShare';
 
-export type TabletBoard = { strokes: { color: string; points: number[] }[]; pointers: { x: number; y: number; color: string; name: string }[] };
+export type TabletBoard = {
+  strokes: { color: string; points: number[] }[];
+  pointers: { x: number; y: number; color: string; name: string }[];
+  /** Who is talking, and short notices such as who joined or left: shown small at the top. */
+  speakers?: string[];
+  notices?: string[];
+};
 
 // An app installed before the blackboard existed has the bridge but not this code.
 export const tabletBoardAvailable = Boolean(bridge?.PluginHeaders?.some(plugin => plugin.name === 'Board'));

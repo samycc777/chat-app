@@ -235,9 +235,6 @@ function colorOf(identity: string) {
   for (const char of identity) hash = (hash * 31 + char.charCodeAt(0)) | 0;
   return FALLBACK_COLORS[Math.abs(hash) % FALLBACK_COLORS.length];
 }
-function nameOf(identity: string) {
-  return participants.value.find(participant => participant.identity === identity)?.name ?? '';
-}
 
 function openSheet(next: Sheet) { sheet.value = sheet.value === next ? null : next; }
 function onKeydown(event: KeyboardEvent) {

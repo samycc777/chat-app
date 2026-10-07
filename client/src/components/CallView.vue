@@ -27,12 +27,8 @@ import CallTile, { type Tile } from './CallTile.vue';
 
 type Sheet = 'participants' | 'more' | 'chat';
 type Status = 'joining' | 'connected' | 'reconnecting' | 'disconnected';
-type CallMessage = { type: 'reaction'; emoji: string };
 type CallParticipant = { identity: string; name: string; local: boolean; micOn: boolean; speaking: boolean };
 
-// None of the reactions has a face. Coffee and tea suit the app's calm lofi look, and steam as they rise.
-const DRINKS = ['☕', '🍵'];
-const REACTIONS = ['👍', '❤️', '👏', '🤲', '✅', '🎉', ...DRINKS];
 const VOLUME_KEY = 'callVolume';
 const PERSON_VOLUMES_KEY = 'callVolumes';
 const ZOOM_HINT_KEY = 'zoomHintSeen';
@@ -65,8 +61,6 @@ const MICROPHONE_WAIT_MS = 4000;
 // browsers and the iPhone app cannot share yet.
 const canShareScreen = typeof navigator.mediaDevices?.getDisplayMedia === 'function' || phoneScreenShareAvailable;
 const FALLBACK_COLORS = ['#5865f2', '#3ba55c', '#faa61a', '#ed4245', '#eb459e', '#9b84ee'];
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 const props = defineProps<{
   channelId: string; channelName: string; userId: string; visible: boolean;
@@ -102,7 +96,6 @@ const tiles = shallowRef<Tile[]>([]);
 const focusedKey = ref<string | null>(null);
 const lastSpeakerKey = ref('');
 const raisedHands = computed(() => new Set(props.hands.map(hand => hand.userId)));
-const reactions = ref<{ id: number; emoji: string; name: string; drift: number }[]>([]);
 const toast = ref('');
 const weakConnection = ref(false);
 // Once this device's internet has shown it cannot keep up, other people's cameras stop being
@@ -130,8 +123,6 @@ let stopListeningWhileMuted: (() => void) | undefined;
 let listeningContext: AudioContext | undefined;
 let lastMutedHintAt = 0;
 let clockTimer: ReturnType<typeof setInterval> | undefined;
-let reactionId = 0;
-let lastReactionAt = 0;
 let disposed = false;
 let rejoinWhenVisible = false;
 let lastAutoRejoinAt = 0;
@@ -352,24 +343,6 @@ function attachAudio(track: RemoteTrack, participant: RemoteParticipant) {
   applyVoice(track as RemoteAudioTrack, participant.identity);
 }
 
-async function send(message: CallMessage) {
-  try {
-    await room?.localParticipant.publishData(encoder.encode(JSON.stringify(message)), { reliable: true, topic: 'call' });
-  } catch { /* A dropped reaction is not worth interrupting the call for. */ }
-}
-function addReaction(emoji: string, name: string) {
-  reactions.value = [...reactions.value.slice(-11), { id: ++reactionId, emoji, name, drift: Math.round(Math.random() * 40) }];
-  const id = reactionId;
-  setTimeout(() => { reactions.value = reactions.value.filter(reaction => reaction.id !== id); }, 3200);
-}
-function react(emoji: string) {
-  if (room?.state !== 'connected') return;
-  if (Date.now() - lastReactionAt < 500) return;
-  lastReactionAt = Date.now();
-  addReaction(emoji, nameOf(props.userId));
-  void send({ type: 'reaction', emoji });
-  sheet.value = null;
-}
 function toggleHand() {
   getSocket()?.emit('raise_hand', { channelId: props.channelId, raised: !myHandRaised.value });
   sheet.value = null;
@@ -380,14 +353,6 @@ watch(() => props.hands, (next, previous) => {
   if (raised) showToast(t('handRaised', { name: raised.displayName }));
   refresh();
 });
-function onData(payload: Uint8Array, sender?: RemoteParticipant, _kind?: unknown, topic?: string) {
-  if (disposed || topic !== 'call') return;
-  let message: CallMessage;
-  try { message = JSON.parse(decoder.decode(payload)); } catch { return; }
-  // A reaction can arrive before LiveKit has introduced its sender; it is still shown, just unnamed.
-  if (message?.type === 'reaction' && REACTIONS.includes(message.emoji)) addReaction(message.emoji, sender ? sender.name || sender.identity : '');
-}
-
 // Each voice plays at the call's volume times the volume chosen for that person.
 function applyVoice(track: RemoteAudioTrack, identity: string) {
   const level = volume.value * levelOf(identity);
@@ -790,7 +755,6 @@ async function connect() {
       if (document.visibilityState === 'visible') void rejoin();
       else rejoinWhenVisible = true;
     });
-    connectingRoom.on(RoomEvent.DataReceived, onData);
     // A weak connection for more than a moment is worth knowing about: it explains a voice that cuts
     // out, and that the problem is here rather than with the others.
     connectingRoom.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
@@ -1004,13 +968,6 @@ onBeforeUnmount(cleanup);
       </button>
       <div v-if="toast" class="call-pill call-toast" role="status"><bdi>{{ toast }}</bdi></div>
 
-      <div class="call-reactions" aria-hidden="true">
-        <div v-for="reaction in reactions" :key="reaction.id" class="call-reaction" :class="{ drink: DRINKS.includes(reaction.emoji) }" :style="{ '--drift': `${reaction.drift}px` }">
-          <span class="call-reaction-emoji">{{ reaction.emoji }}</span>
-          <bdi class="call-reaction-name">{{ reaction.name }}</bdi>
-        </div>
-      </div>
-
       <footer class="call-controls">
         <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="micOn ? t('mute') : t('unmute')" :aria-label="micOn ? t('mute') : t('unmute')" :disabled="status !== 'connected'" @click="setMicrophone(!micOn)">
           <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
@@ -1114,9 +1071,6 @@ onBeforeUnmount(cleanup);
 
         <section v-else-if="sheet === 'more'" class="call-sheet" :aria-label="t('more')">
           <span class="call-sheet-handle" />
-          <div class="call-reaction-row">
-            <button v-for="emoji in REACTIONS" :key="emoji" class="call-emoji-btn" type="button" :aria-label="`${t('reactions')} ${emoji}`" @click="react(emoji)">{{ emoji }}</button>
-          </div>
           <label v-if="canAdjustVolume" class="call-volume">
             <Volume1 :size="20" aria-hidden="true" />
             <span>{{ t('callVolume') }}</span>
@@ -1570,105 +1524,6 @@ onBeforeUnmount(cleanup);
   text-align: center;
 }
 
-.call-reactions {
-  width: 1px;
-  position: absolute;
-  bottom: calc(env(safe-area-inset-bottom) + 90px);
-  inset-inline-end: 56px;
-  z-index: 6;
-  pointer-events: none;
-}
-
-.call-reaction {
-  position: absolute;
-  bottom: 0;
-  inset-inline-end: var(--drift);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  animation: call-reaction-float 3.2s ease-out forwards;
-}
-
-/* A reaction bursts out, with lines flying from it, then sways from side to side as it rises. */
-.call-reaction-emoji {
-  position: relative;
-  display: inline-block;
-  font-size: 34px;
-  line-height: 1;
-  animation: call-reaction-pop 600ms ease-out both, call-reaction-sway 1.3s ease-in-out 600ms infinite alternate;
-}
-
-.call-reaction-emoji::before {
-  content: '';
-  position: absolute;
-  inset: -26px;
-  z-index: -1;
-  border-radius: 50%;
-  background: repeating-conic-gradient(var(--reaction-rays) 0deg 6deg, transparent 6deg 30deg);
-  mask: radial-gradient(circle, transparent 38%, #000000 40%, #000000 62%, transparent 64%);
-  opacity: 0;
-  pointer-events: none;
-  animation: call-reaction-burst 560ms ease-out;
-}
-
-.call-reaction-name {
-  max-width: 110px;
-  overflow: hidden;
-  padding: 1px 7px;
-  border-radius: 999px;
-  color: #f2f3f5;
-  background: rgba(0, 0, 0, 0.55);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@keyframes call-reaction-float {
-  0% { opacity: 0; translate: 0 0; }
-  8% { opacity: 1; translate: 0 -10px; }
-  75% { opacity: 1; }
-  100% { opacity: 0; translate: 0 -38dvh; }
-}
-
-@keyframes call-reaction-pop {
-  0% { scale: 0; rotate: -30deg; }
-  55% { scale: 1.5; rotate: 12deg; }
-  80% { scale: 0.9; rotate: -4deg; }
-  100% { scale: 1; rotate: 0deg; }
-}
-
-@keyframes call-reaction-sway {
-  from { translate: -7px 0; rotate: -10deg; }
-  to { translate: 7px 0; rotate: 10deg; }
-}
-
-/* A cup of coffee or tea steams as it rises. */
-.call-reaction.drink .call-reaction-emoji::after {
-  content: '';
-  width: 6px;
-  height: 14px;
-  position: absolute;
-  top: -12px;
-  left: 50%;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--call-text-muted) 70%, transparent);
-  filter: blur(2px);
-  opacity: 0;
-  animation: call-reaction-steam 1.1s ease-out 300ms infinite;
-}
-
-@keyframes call-reaction-steam {
-  0% { opacity: 0; translate: -50% 4px; scale: 0.6 1; }
-  30% { opacity: 0.9; }
-  100% { opacity: 0; translate: -20% -14px; scale: 1.3 1.6; }
-}
-
-@keyframes call-reaction-burst {
-  0% { opacity: 1; scale: 0.3; }
-  100% { opacity: 0; scale: 1.5; }
-}
-
 /* The call's chat: messages above, and who they go to and what they say below. */
 .call-chat-badge {
   min-width: 18px;
@@ -1949,24 +1804,6 @@ onBeforeUnmount(cleanup);
   color: var(--danger);
 }
 
-.call-reaction-row {
-  display: grid;
-  grid-template-columns: repeat(4, 52px);
-  justify-content: center;
-  gap: 6px 10px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--call-line);
-}
-
-.call-emoji-btn {
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  font-size: 26px;
-  line-height: 1;
-}
-
-.call-emoji-btn:hover,
 .call-sheet-row:hover {
   background: var(--call-hover);
 }

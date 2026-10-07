@@ -73,7 +73,6 @@
   --speaking: #7cc79a;
   --leave: #d9625e;
   --leave-strong: #b84b48;
-  --reaction-rays: #f5c27a;
   /* Soft light in the corners of the screen: a warm lamp at the top, a violet dusk at the bottom. */
   --lofi-glow: radial-gradient(120% 70% at 90% -10%, rgba(240, 167, 124, 0.2), transparent 60%),
     radial-gradient(100% 60% at -10% 110%, rgba(150, 118, 204, 0.22), transparent 60%);
@@ -135,7 +134,6 @@
   --speaking: #4f9f6f;
   --leave: #c9524d;
   --leave-strong: #a63f3b;
-  --reaction-rays: #e9a64f;
   --lofi-glow: radial-gradient(120% 70% at 90% -10%, rgba(240, 167, 124, 0.28), transparent 60%),
     radial-gradient(100% 60% at -10% 110%, rgba(176, 150, 214, 0.22), transparent 60%);
   /* Faint flecks, like the grain of recycled paper. */

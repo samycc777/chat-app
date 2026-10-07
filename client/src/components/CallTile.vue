@@ -189,22 +189,11 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-/* Someone who appears pops in with a quick warm flash, like an impact frame in anime. The full
-   screen tile is left still, so a lesson never jumps. Moving a tile to another place on the screen
-   plays it again, which reads as the tile landing there. */
+/* Someone who appears pops in. There is no flash of light with it, for people sensitive to
+   flashing. The full screen tile is left still, so a lesson never jumps. Moving a tile to another
+   place on the screen plays it again, which reads as the tile landing there. */
 .call-tile:not(.full) {
   animation: call-tile-in 520ms ease-out both;
-}
-
-.call-tile:not(.full, .small)::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: #fff3e3;
-  opacity: 0;
-  pointer-events: none;
-  animation: call-tile-flash 420ms ease-out;
 }
 
 @keyframes call-tile-in {
@@ -214,27 +203,24 @@ onBeforeUnmount(() => {
   100% { scale: 1; }
 }
 
-@keyframes call-tile-flash {
-  0%, 30% { opacity: 0.7; }
-  100% { opacity: 0; }
-}
-
-/* Whoever is speaking glows green from the edges, pulsing like an aura while they talk. Only its
-   opacity changes, which phones draw cheaply over a moving video. */
-.call-tile.speaking::after {
+/* Whoever is speaking glows softly green from the edges. The glow stays steady while they talk
+   and fades in and out instead of switching, so the pauses between words do not make it flicker,
+   which people sensitive to flashing find hard. Only its opacity changes, which phones draw
+   cheaply over a moving video. */
+.call-tile::after {
   content: '';
   position: absolute;
   inset: 0;
   z-index: 1;
   border-radius: inherit;
-  box-shadow: inset 0 0 0 3px var(--speaking), inset 0 0 28px 2px color-mix(in srgb, var(--speaking) 85%, transparent);
+  box-shadow: inset 0 0 0 3px var(--speaking), inset 0 0 20px 1px color-mix(in srgb, var(--speaking) 55%, transparent);
+  opacity: 0;
   pointer-events: none;
-  animation: call-tile-aura 750ms ease-in-out infinite alternate;
+  transition: opacity 450ms ease;
 }
 
-@keyframes call-tile-aura {
-  from { opacity: 0.55; }
-  to { opacity: 1; }
+.call-tile.speaking::after {
+  opacity: 1;
 }
 
 .call-tile-media,

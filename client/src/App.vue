@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watch, watchEffect } from 'vue';
+import { computed, defineAsyncComponent, onMounted, ref, watchEffect } from 'vue';
 import { WifiOff } from 'lucide-vue-next';
 import type { Socket } from 'socket.io-client';
 import type { Channel, JoinResult, OnlineUser, User, VoiceCall } from './types';
@@ -138,17 +138,6 @@ function joinCall(choice: { mic: boolean; camera: boolean }) {
     if (joining.value) { joining.value = false; callError.value = t('callConnectFailed'); }
   });
 }
-// Joining the call, lines rush out from the middle of the screen, as at the start of an anime
-// fight. They run on their own over the call and never block a tap.
-const speedLines = ref(0);
-let speedLinesTimer: ReturnType<typeof setTimeout> | undefined;
-watch(() => Boolean(inCall.value), now => {
-  if (!now) return;
-  speedLines.value++;
-  clearTimeout(speedLinesTimer);
-  speedLinesTimer = setTimeout(() => { speedLines.value = 0; }, 1000);
-});
-
 function leftCall() {
   getSocket()?.emit('voice_leave');
   inCall.value = null;
@@ -193,7 +182,6 @@ function backToName() {
         @change-name="backToName"
       />
     </main>
-    <div v-if="speedLines" :key="speedLines" class="speed-lines" aria-hidden="true" />
   </div>
 </template>
 
@@ -236,29 +224,5 @@ function backToName() {
 
 @keyframes connection-banner-in {
   from { opacity: 0; }
-}
-
-.speed-lines {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.speed-lines::after {
-  content: '';
-  position: absolute;
-  inset: -50%;
-  background: repeating-conic-gradient(from 0deg, color-mix(in srgb, var(--text-accent) 70%, transparent) 0deg 1.2deg, transparent 1.2deg 9deg);
-  mask: radial-gradient(circle, transparent 18%, #000000 40%);
-  opacity: 0;
-  animation: speed-lines 640ms ease-out 100ms forwards;
-}
-
-@keyframes speed-lines {
-  0% { opacity: 0; scale: 0.7; }
-  25% { opacity: 1; }
-  100% { opacity: 0; scale: 1.25; }
 }
 </style>

@@ -255,7 +255,8 @@ textarea:focus-visible,
   opacity: 0.55;
 }
 
-/* A streak of light crosses the main button now and then, like a glint on polished metal. */
+/* A faint, slow streak of light crosses the main button now and then, like a glint on polished
+   metal. It stays dim and rare, so it never reads as a flash. */
 .auth-btn {
   position: relative;
   overflow: hidden;
@@ -267,10 +268,10 @@ textarea:focus-visible,
   position: absolute;
   inset-block: 0;
   left: 0;
-  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.4) 45%, rgba(255, 255, 255, 0.7) 50%, transparent 58%);
+  background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.12) 40%, rgba(255, 255, 255, 0.22) 50%, transparent 60%);
   translate: -120% 0;
   pointer-events: none;
-  animation: anime-glint 4.5s ease-in-out 1.2s infinite;
+  animation: anime-glint 9s ease-in-out 1.5s infinite;
 }
 
 .auth-btn:disabled::after {
@@ -279,7 +280,7 @@ textarea:focus-visible,
 
 @keyframes anime-glint {
   0% { translate: -120% 0; }
-  22%, 100% { translate: 300% 0; }
+  20%, 100% { translate: 300% 0; }
 }
 
 .boot-state p {
@@ -522,7 +523,7 @@ html[dir='rtl'] body {
   inset: 0;
   background-image: var(--lofi-specks);
   background-size: 340px 340px;
-  animation: lofi-twinkle 5s ease-in-out infinite alternate;
+  animation: lofi-twinkle 8s ease-in-out infinite alternate;
 }
 
 .lofi-sky::after {
@@ -532,7 +533,7 @@ html[dir='rtl'] body {
 }
 
 @keyframes lofi-twinkle {
-  from { opacity: 0.4; }
+  from { opacity: 0.6; }
   to { opacity: 1; }
 }
 

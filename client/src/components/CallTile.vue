@@ -203,10 +203,10 @@ onBeforeUnmount(() => {
   100% { scale: 1; }
 }
 
-/* Whoever is speaking glows softly green from the edges. The glow stays steady while they talk
-   and fades in and out instead of switching, so the pauses between words do not make it flicker,
-   which people sensitive to flashing find hard. Only its opacity changes, which phones draw
-   cheaply over a moving video. */
+/* Whoever is speaking glows softly green from the edges. It comes on at once, with their voice,
+   and fades out gently; it stays steady through the pauses between words (see speaking.ts), so it
+   does not flicker, which people sensitive to flashing find hard. Only its opacity changes, which
+   phones draw cheaply over a moving video. */
 .call-tile::after {
   content: '';
   position: absolute;
@@ -216,11 +216,12 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 0 0 3px var(--speaking), inset 0 0 20px 1px color-mix(in srgb, var(--speaking) 55%, transparent);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 450ms ease;
+  transition: opacity 350ms ease;
 }
 
 .call-tile.speaking::after {
   opacity: 1;
+  transition-duration: 80ms;
 }
 
 .call-tile-media,

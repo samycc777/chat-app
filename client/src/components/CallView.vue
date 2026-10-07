@@ -21,6 +21,7 @@ import {
   setPhoneFullScreen,
 } from '../nativeCall';
 import { callChat, onCallChatMessage, sendCallChat } from '../callChat';
+import { createSpeakingDetector } from '../speaking';
 import type { OnlineUser } from '../types';
 import Avatar from './Avatar.vue';
 import CallTile, { type Tile } from './CallTile.vue';
@@ -121,6 +122,16 @@ let fullBarTimer: ReturnType<typeof setTimeout> | undefined;
 let weakTimer: ReturnType<typeof setTimeout> | undefined;
 let stopListeningWhileMuted: (() => void) | undefined;
 let listeningContext: AudioContext | undefined;
+// Measures who is speaking on this device, so their glow follows their voice (see speaking.ts). On
+// an iPhone, where a page gets few audio contexts, the call's mixer does the measuring.
+let speakingContext: AudioContext | undefined;
+const speakingDetector = createSpeakingDetector(() => {
+  if (audioContext) return audioContext;
+  try {
+    if (!speakingContext) { speakingContext = new AudioContext(); void speakingContext.resume().catch(() => {}); }
+  } catch { /* No measuring; LiveKit's answer is used. */ }
+  return speakingContext;
+}, () => refresh());
 let lastMutedHintAt = 0;
 let clockTimer: ReturnType<typeof setInterval> | undefined;
 let disposed = false;
@@ -258,9 +269,14 @@ const ownerOf = (identity: string) => identity.endsWith(SCREEN_SUFFIX) ? identit
 function refresh() {
   if (!room || disposed) return;
   const everyone: [Participant, boolean][] = [[room.localParticipant, true], ...[...room.remoteParticipants.values()].map(p => [p, false] as [Participant, boolean])];
+  speakingDetector.follow(new Map(everyone.flatMap(([participant]) => {
+    const microphone = participant.getTrackPublication(Track.Source.Microphone)?.track;
+    return microphone && participant.isMicrophoneEnabled ? [[participant.identity, microphone.mediaStreamTrack] as const] : [];
+  })));
+  const isSpeaking = (participant: Participant) => participant.isMicrophoneEnabled && (speakingDetector.speaking(participant.identity) ?? participant.isSpeaking);
   participants.value = everyone.filter(([participant]) => !participant.identity.endsWith(SCREEN_SUFFIX)).map(([participant, local]) => ({
     identity: participant.identity, name: participant.name || participant.identity, local,
-    micOn: participant.isMicrophoneEnabled, speaking: participant.isSpeaking,
+    micOn: participant.isMicrophoneEnabled, speaking: isSpeaking(participant),
   }));
   const next: Tile[] = [];
   for (const [participant, remoteOrLocal] of everyone) {
@@ -269,7 +285,7 @@ function refresh() {
     const local = remoteOrLocal || owner === props.userId;
     const base = {
       identity: owner, name: participant.name || owner, color: colorOf(owner), local,
-      micOn: participant.isMicrophoneEnabled, speaking: participant.isSpeaking, hand: raisedHands.value.has(owner),
+      micOn: participant.isMicrophoneEnabled, speaking: isSpeaking(participant), hand: raisedHands.value.has(owner),
     };
     const screen = participant.getTrackPublication(Track.Source.ScreenShare);
     // This phone's own screen is never downloaded (see onTrackPublished), so it has no track here.
@@ -854,6 +870,9 @@ function cleanup() {
   endPhoneCall();
   room?.disconnect(); room = null;
   detachedAudio.splice(0).forEach(element => element.remove());
+  speakingDetector.stop();
+  void speakingContext?.close().catch(() => {});
+  speakingContext = undefined;
   audioContext?.removeEventListener('statechange', onMixerStateChange);
   void audioContext?.close().catch(() => {});
   audioContext = undefined;

@@ -73,6 +73,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The page vibrates briefly when someone joins your call, instead of playing a sound. -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- During screen sharing, students' pointers and drawings are shown over the other apps
+         (BoardPlugin.kt). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Saving a picture of a shared screen to the gallery; Android 10 and newer need no permission. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <!-- The camera is optional, so phones without one can still install the app. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

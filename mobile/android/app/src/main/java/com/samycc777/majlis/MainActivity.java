@@ -10,6 +10,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ScreenSharePlugin.class);
         registerPlugin(CallPlugin.class);
         registerPlugin(PushSetupPlugin.class);
+        registerPlugin(BoardPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import {
-  Ellipsis, Hand, Maximize, MessageSquare, Mic, MicOff, Minimize, Moon, PhoneOff, RotateCcw, ScreenShare, ScreenShareOff,
-  SendHorizontal, Sun, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
+  Download, Ellipsis, Eraser, Hand, Maximize, MessageSquare, Mic, MicOff, Minimize, Moon, Pencil, PhoneOff, RotateCcw, ScreenShare,
+  ScreenShareOff, SendHorizontal, Sun, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
   AudioPresets, ConnectionQuality, createLocalAudioTrack, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPreset, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
@@ -22,6 +22,10 @@ import {
 } from '../nativeCall';
 import { callChat, onCallChatMessage, sendCallChat } from '../callChat';
 import { createSpeakingDetector } from '../speaking';
+import {
+  boardForTablet, boardVersion, clearBoards, erase, hasDrawings, penOn, receiveBoard, sayHello, sendBoardWith, tellBoards, type BoardMessage,
+} from '../board';
+import { askToDrawOverApps, canDrawOverApps, hideOnTablet, onDrawOverAppsChanged, saveToGallery, showOnTablet, tabletBoardAvailable } from '../nativeBoard';
 import type { OnlineUser } from '../types';
 import Avatar from './Avatar.vue';
 import CallTile, { type Tile } from './CallTile.vue';
@@ -212,7 +216,9 @@ function onTileClick(tile: Tile) {
   if (spot === 'full') toggleFullBar();
   else if (spot !== 'mini') toggleFocus(tile.key);
 }
+const tileViews = new Map<string, InstanceType<typeof CallTile>>();
 function setTileView(tile: Tile, view: unknown) {
+  if (view) tileViews.set(tile.key, view as InstanceType<typeof CallTile>); else tileViews.delete(tile.key);
   if (tile.key === fullKey.value) fullTileView.value = (view ?? undefined) as InstanceType<typeof CallTile> | undefined;
 }
 // A tile with a video to look at; your own shared screen is never shown back to you.
@@ -236,6 +242,91 @@ const miniSpeaker = computed(() => participants.value.find(person => person.spea
 // In full screen nobody's tile is visible, so the name of whoever is talking shows, small and
 // faint, in a corner. It stays a moment after they stop, so pauses between words don't make it
 // blink.
+// The blackboard (see board.ts): what this viewer draws carries their colour and name.
+const me = computed(() => ({ color: colorOf(props.userId), name: participants.value.find(person => person.local)?.name ?? '' }));
+const fullDrawn = computed(() => { void boardVersion.value; return Boolean(fullTile.value && hasDrawings(fullTile.value.key)); });
+const boardEncoder = new TextEncoder();
+const boardDecoder = new TextDecoder();
+sendBoardWith((message: BoardMessage, to?: string[]) => {
+  try {
+    void room?.localParticipant.publishData(boardEncoder.encode(JSON.stringify(message)), { reliable: true, topic: 'board', destinationIdentities: to }).catch(() => {});
+  } catch { /* Not connected; a drawing is not worth interrupting the call for. */ }
+});
+// One person answers someone who joins with what is already drawn, so they do not all send it:
+// the first of the others in a fixed order.
+function answersHello(requester: string) {
+  if (!room) return false;
+  const others = [room.localParticipant.identity, ...room.remoteParticipants.keys()].filter(identity => identity !== requester && !identity.endsWith(SCREEN_SUFFIX)).sort();
+  return others[0] === room.localParticipant.identity;
+}
+
+// A picture of a shared screen, with what is drawn on it. The Android app puts it in the gallery;
+// a phone's browser offers its own share sheet, where "Save image" keeps it in the photos; a
+// computer downloads it. An Android app from before the blackboard cannot save, so it shows no button.
+const canSavePicture = !bridge || tabletBoardAvailable;
+async function savePicture(tile: Tile) {
+  const picture = tileViews.get(tile.key)?.picture();
+  if (!picture) return;
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const name = `${t('appName')} ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  try {
+    if (tabletBoardAvailable) {
+      await saveToGallery(picture.toDataURL('image/png').split(',')[1], name);
+      showToast(t('pictureSaved'));
+      return;
+    }
+    const blob = await new Promise<Blob | null>(resolve => picture.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('No picture');
+    const file = new File([blob], `${name}.png`, { type: 'image/png' });
+    if (onPhone() && navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file] }); return; }
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = file.name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
+    showToast(t('pictureSaved'));
+  } catch (cause) {
+    // Closing the share sheet without choosing is not a failure.
+    if ((cause as Error | null)?.name !== 'AbortError') showToast(t('pictureNotSaved'));
+  }
+}
+
+// The teacher shares his tablet's screen from the Android app and is then looking at his book, so
+// the app draws the board over every other app there (see nativeBoard.ts). Android asks once for
+// that; the first time, a short note explains why before its settings screen opens.
+const TABLET_DECLINED_KEY = 'tabletBoardDeclined';
+const tabletAllowed = ref(false);
+const tabletPrompt = ref(false);
+const offerTabletBoard = computed(() => tabletBoardAvailable && sharingScreen.value && !tabletAllowed.value);
+const myBoardKey = () => `${myPhoneScreen()}:screen`;
+let tabletTimer: ReturnType<typeof setTimeout> | undefined;
+function drawOnTablet() {
+  if (tabletTimer) return;
+  // Sent at most twenty times a second while someone draws.
+  tabletTimer = setTimeout(() => {
+    tabletTimer = undefined;
+    if (sharingScreen.value && tabletAllowed.value) showOnTablet(boardForTablet(myBoardKey())).catch(() => { tabletAllowed.value = false; });
+  }, 50);
+}
+watch(boardVersion, () => { if (tabletBoardAvailable && sharingScreen.value && tabletAllowed.value) drawOnTablet(); });
+watch(sharingScreen, async sharing => {
+  if (!tabletBoardAvailable) return;
+  if (!sharing) { tabletPrompt.value = false; void hideOnTablet(); return; }
+  tabletAllowed.value = await canDrawOverApps();
+  if (tabletAllowed.value) drawOnTablet();
+  else if (!(() => { try { return localStorage.getItem(TABLET_DECLINED_KEY); } catch { return null; } })()) tabletPrompt.value = true;
+});
+const drawPermissionListener = onDrawOverAppsChanged(allowed => {
+  tabletAllowed.value = allowed;
+  if (allowed && sharingScreen.value) drawOnTablet();
+});
+function answerTabletPrompt(allow: boolean) {
+  tabletPrompt.value = false;
+  if (allow) void askToDrawOverApps();
+  else try { localStorage.setItem(TABLET_DECLINED_KEY, '1'); } catch { /* Private browsing: asked again next time. */ }
+}
+
 const fullSpeaker = ref('');
 let fullSpeakerTimer: ReturnType<typeof setTimeout> | undefined;
 watch(() => participants.value.find(person => person.speaking && !person.local)?.name ?? '', name => {
@@ -705,8 +796,10 @@ watch(() => props.visible, visible => { if (!visible) exitFullScreen(); });
 function showFullBar() {
   fullBarShown.value = true;
   clearTimeout(fullBarTimer);
-  fullBarTimer = setTimeout(() => { fullBarShown.value = false; }, 3000);
+  // While the pen is on, its buttons stay, so it is clear that touching the screen draws.
+  if (!penOn.value) fullBarTimer = setTimeout(() => { fullBarShown.value = false; }, 3000);
 }
+watch(penOn, showFullBar);
 function toggleFullBar() {
   if (!fullBarShown.value) { showFullBar(); return; }
   fullBarShown.value = false;
@@ -809,6 +902,12 @@ async function connect() {
     connectingRoom.on(RoomEvent.TrackStreamStateChanged, (publication, state) => {
       if (current() && state === Track.StreamState.Paused && publication.kind === Track.Kind.Video && publication.isSubscribed) saveData();
     });
+    connectingRoom.on(RoomEvent.DataReceived, (payload, sender, _kind, topic) => {
+      if (!current() || topic !== 'board' || !sender) return;
+      let message: unknown;
+      try { message = JSON.parse(boardDecoder.decode(payload)); } catch { return; }
+      if (receiveBoard(message, sender.name || sender.identity) && answersHello(sender.identity)) tellBoards(sender.identity);
+    });
     for (const event of [
       RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected, RoomEvent.ParticipantNameChanged,
       RoomEvent.TrackPublished, RoomEvent.TrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
@@ -821,6 +920,9 @@ async function connect() {
     if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) savingData.value = true;
     status.value = 'connected';
     joinRetries = 0;
+    // Drawings made before this person came are asked for (see board.ts). A message sent the moment
+    // the call connects can be lost, so the question waits a moment, and is asked once more.
+    for (const delay of [1500, 5000]) setTimeout(() => { if (current()) sayHello(); }, delay);
     for (const participant of connectingRoom.remoteParticipants.values()) {
       for (const publication of participant.trackPublications.values()) onTrackPublished(publication, participant);
     }
@@ -897,6 +999,10 @@ function cleanup() {
   // The phone's screen is a separate connection, so it would keep going after the call closes.
   if (sharingScreen.value && phoneScreenShareAvailable) void stopPhoneScreenShare().catch(() => {});
   stopChatListener();
+  clearBoards();
+  clearTimeout(tabletTimer);
+  void hideOnTablet();
+  void drawPermissionListener?.remove();
   void phoneShareListener?.remove();
   void phoneLeaveListener?.remove();
   void phoneFullScreenListener?.remove();
@@ -1004,6 +1110,12 @@ onBeforeUnmount(cleanup);
               <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
             </button>
             <button v-if="fullZoomed" class="call-full-btn" type="button" @click="fullTileView?.resetZoom(); showFullBar()"><ZoomOut :size="18" />{{ t('zoomOut') }}</button>
+            <!-- The blackboard's pen, eraser and save, beside the microphone (see board.ts). -->
+            <template v-if="fullTile.kind === 'screen' && !fullTile.local">
+              <button v-if="penOn && fullDrawn" class="call-full-btn" type="button" :title="t('eraseBoard')" :aria-label="t('eraseBoard')" @click="erase(fullTile.key)"><Eraser :size="18" /></button>
+              <button class="call-full-btn" :class="{ on: penOn }" type="button" :aria-pressed="penOn" @click="penOn = !penOn"><Pencil :size="18" />{{ penOn ? t('stopDrawing') : t('draw') }}</button>
+              <button v-if="canSavePicture" class="call-full-btn" type="button" :title="t('savePicture')" :aria-label="t('savePicture')" @click="savePicture(fullTile); showFullBar()"><Download :size="18" /></button>
+            </template>
           </div>
         </div>
         <template v-else-if="focusedTile">
@@ -1019,6 +1131,14 @@ onBeforeUnmount(cleanup);
         <Volume2 :size="17" />{{ t('tapToEnableSound') }}
       </button>
       <div v-if="toast" class="call-pill call-toast" role="status"><bdi>{{ toast }}</bdi></div>
+      <div v-if="tabletPrompt" class="call-board-prompt" role="dialog" :aria-label="t('tabletBoardTitle')">
+        <strong>{{ t('tabletBoardTitle') }}</strong>
+        <p>{{ t('tabletBoardBody') }}</p>
+        <div class="call-board-prompt-actions">
+          <button class="call-board-prompt-later" type="button" @click="answerTabletPrompt(false)">{{ t('notNow') }}</button>
+          <button class="call-board-prompt-allow" type="button" @click="answerTabletPrompt(true)">{{ t('allow') }}</button>
+        </div>
+      </div>
 
       <footer class="call-controls">
         <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="micOn ? t('mute') : t('unmute')" :aria-label="micOn ? t('mute') : t('unmute')" :disabled="status !== 'connected'" @click="setMicrophone(!micOn)">
@@ -1132,6 +1252,9 @@ onBeforeUnmount(cleanup);
           <button v-if="fullScreenChoice" class="call-sheet-row" type="button" @click="enterFullScreen(fullScreenChoice.key)">
             <Maximize :size="20" />{{ t('fullscreen') }}
           </button>
+          <button v-if="offerTabletBoard" class="call-sheet-row" type="button" @click="askToDrawOverApps(); sheet = null">
+            <Pencil :size="20" />{{ t('showDrawingsOnMyScreen') }}
+          </button>
           <button class="call-sheet-row" type="button" @click="toggleTheme">
             <Moon v-if="theme === 'light'" :size="20" /><Sun v-else :size="20" />{{ theme === 'light' ? t('darkMode') : t('lightMode') }}
           </button>
@@ -1148,12 +1271,15 @@ onBeforeUnmount(cleanup);
         :small="spotOf(tile) === 'strip' || spotOf(tile) === 'mini'"
         :full="spotOf(tile) === 'full'"
         :dark="darkScreen"
+        :me="me"
+        :can-save="canSavePicture"
         :style="{ order: index }"
         @focus="toggleFocus(tile.key)"
         @fullscreen="enterFullScreen(tile.key)"
         @dark-screen="toggleDarkScreen"
         @click="onTileClick(tile)"
         @video-size="size => onVideoSize(tile, size)"
+        @save="savePicture(tile)"
       />
     </Teleport>
   </section>
@@ -1488,6 +1614,11 @@ onBeforeUnmount(cleanup);
   pointer-events: none;
 }
 
+/* Above the bottom bar while it shows. */
+.call-full:not(.idle) .call-full-speaker {
+  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 64px);
+}
+
 .call-full-speaker::before {
   content: '';
   width: 5px;
@@ -1505,6 +1636,65 @@ onBeforeUnmount(cleanup);
 .call-full-speaker-enter-from,
 .call-full-speaker-leave-to {
   opacity: 0;
+}
+
+.call-full-btn.on {
+  color: var(--text-on-accent);
+  background: var(--text-accent);
+}
+
+/* Asks the person sharing their tablet's screen to let the app draw over other apps. */
+.call-board-prompt {
+  width: min(420px, calc(100% - 32px));
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  border-radius: 22px;
+  color: var(--call-text);
+  background: var(--call-sheet);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  translate: -50% -50%;
+  animation: anime-rise 420ms var(--soft-spring) both;
+}
+
+.call-board-prompt strong {
+  font-size: 17px;
+}
+
+.call-board-prompt p {
+  color: var(--call-text-muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.call-board-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.call-board-prompt-actions button {
+  min-height: 46px;
+  padding: 0 18px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.call-board-prompt-later {
+  color: var(--call-text);
+  background: var(--call-surface);
+}
+
+.call-board-prompt-allow {
+  color: var(--text-on-accent);
+  background: var(--text-accent);
 }
 
 .call-full-bar.top {

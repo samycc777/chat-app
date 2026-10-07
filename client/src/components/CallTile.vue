@@ -9,11 +9,13 @@ const isRealPicture = (width: number, height: number) => width > 16 && height > 
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { Maximize, Maximize2, MicOff, Minimize2, Moon, ScreenShare, Sun, WifiOff } from 'lucide-vue-next';
+import { Download, Eraser, Maximize, Maximize2, MicOff, Minimize2, Moon, Pencil, ScreenShare, Sun, WifiOff } from 'lucide-vue-next';
 import type { VideoTrack } from 'livekit-client';
 import { useI18n } from '../i18n';
 import { usePinchZoom } from '../pinchZoom';
 import Avatar from './Avatar.vue';
+import BoardLayer from './BoardLayer.vue';
+import { boardVersion, drawBoard, erase, hasDrawings, penOn } from '../board';
 
 export interface Tile {
   key: string;
@@ -35,8 +37,10 @@ export interface Tile {
 // `full` is the tile shown full screen: it fills the screen alone, can be zoomed into, and leaves
 // its name and buttons to the call screen's own bar on top of it.
 // `dark` shows a shared screen in dark colours for this viewer only; the person sharing sees nothing change.
-const props = defineProps<{ tile: Tile; focused: boolean; small?: boolean; full?: boolean; dark?: boolean }>();
-const emit = defineEmits<{ focus: []; fullscreen: []; darkScreen: []; videoSize: [size: { width: number; height: number }] }>();
+// `me` is who is watching, for the colour and name of what they draw on a shared screen. `canSave`
+// says whether this device can keep a picture of a shared screen.
+const props = defineProps<{ tile: Tile; focused: boolean; small?: boolean; full?: boolean; dark?: boolean; me?: { color: string; name: string }; canSave?: boolean }>();
+const emit = defineEmits<{ focus: []; fullscreen: []; darkScreen: []; videoSize: [size: { width: number; height: number }]; save: [] }>();
 const { t } = useI18n();
 const NO_POSTER = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 const root = ref<HTMLElement>();
@@ -49,7 +53,29 @@ const zoom = usePinchZoom(root, () => Boolean(props.full));
 // piece of the screen in the small window over the other apps; it now shows the whole picture
 // there, and coming back to full screen finds the zoom as it was.
 const zoomStyle = computed(() => props.full ? zoom.style.value : undefined);
-defineExpose({ resetZoom: zoom.reset, zoomed: zoom.zoomed });
+// Someone else's shared screen is a blackboard: they can point at it and draw on it (see board.ts).
+const isBoard = computed(() => props.tile.kind === 'screen' && !ownScreen.value && Boolean(props.tile.track) && Boolean(props.me));
+// The pen and eraser show on a shared screen made big; small tiles have no room for them, and full
+// screen has them in the call screen's own bar.
+const boardTools = computed(() => isBoard.value && props.focused && !props.full && !props.small);
+const drawn = computed(() => { void boardVersion.value; return hasDrawings(props.tile.key); });
+// A picture of the shared screen as it is now, with what is drawn on it, at the size it was sent.
+function picture() {
+  const element = video.value;
+  const source = holding.value ? lastPictures.get(props.tile.key) : element;
+  const width = holding.value ? source?.width : element?.videoWidth;
+  const height = holding.value ? source?.height : element?.videoHeight;
+  if (!source || !width || !height) return null;
+  const copy = document.createElement('canvas');
+  copy.width = width;
+  copy.height = height;
+  const context = copy.getContext('2d');
+  if (!context) return null;
+  context.drawImage(source, 0, 0, width, height);
+  drawBoard(context, props.tile.key, { left: 0, top: 0, width, height });
+  return copy;
+}
+defineExpose({ resetZoom: zoom.reset, zoomed: zoom.zoomed, picture });
 // The page does not zoom (see index.html), so pinching a shared screen to read it opens it full
 // screen, where the pinch zooms the screen itself.
 function pinchToFullScreen(event: TouchEvent) {
@@ -129,6 +155,18 @@ onBeforeUnmount(() => {
       <video v-show="tile.track && !ownScreen" ref="video" autoplay playsinline muted :poster="NO_POSTER" @loadedmetadata="reportSize" @resize="reportSize" />
       <!-- Over the video rather than instead of it: a hidden video is no longer sent, so it would never come back. -->
       <canvas v-show="holding" ref="held" class="call-tile-held" />
+      <BoardLayer v-if="isBoard && me" :board-key="tile.key" :video="video" :color="me.color" :name="me.name" :drawable="(focused || Boolean(full)) && !small" />
+    </div>
+    <div v-if="boardTools" class="call-tile-board" @click.stop>
+      <button v-if="penOn && drawn" class="call-tile-board-btn" type="button" :title="t('eraseBoard')" :aria-label="t('eraseBoard')" @click="erase(tile.key)">
+        <Eraser :size="17" />
+      </button>
+      <button class="call-tile-board-btn" :class="{ on: penOn }" type="button" :aria-pressed="penOn" @click="penOn = !penOn">
+        <Pencil :size="17" />{{ penOn ? t('stopDrawing') : t('draw') }}
+      </button>
+      <button v-if="canSave" class="call-tile-board-btn" type="button" :title="t('savePicture')" :aria-label="t('savePicture')" @click="emit('save')">
+        <Download :size="17" />
+      </button>
     </div>
     <span v-if="holding" class="call-tile-waiting">{{ t('screenCatchingUp') }}</span>
     <div v-if="ownScreen" class="call-tile-placeholder">
@@ -277,7 +315,8 @@ onBeforeUnmount(() => {
 /* Dark screen turns white pages black and black text white; turning the hues back round keeps
    blue, red and green roughly their own colours, so the teacher's colour-coded writing still reads. */
 .call-tile.dark video,
-.call-tile.dark .call-tile-held {
+.call-tile.dark .call-tile-held,
+.call-tile.dark :deep(.board-layer) {
   filter: invert(1) hue-rotate(180deg);
 }
 
@@ -389,6 +428,36 @@ onBeforeUnmount(() => {
 
 .call-tile.small .call-tile-waiting {
   display: none;
+}
+
+/* The pen, eraser and save buttons, together at the bottom of a shared screen made big. */
+.call-tile-board {
+  position: absolute;
+  bottom: 8px;
+  inset-inline-end: 8px;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+}
+
+.call-tile-board-btn {
+  min-width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 12px;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.call-tile-board-btn.on {
+  color: var(--text-on-accent);
+  background: var(--text-accent);
 }
 
 .call-tile.small {

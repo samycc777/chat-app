@@ -284,7 +284,7 @@ async function copyInvite() {
   text-underline-offset: 3px;
 }
 
-/* Each part of the screen rises in after the one above it, a beat after the slash between screens. */
+/* Each part of the screen rises in after the one above it. */
 .lobby-card > * {
   animation: anime-rise 520ms var(--spring) both;
 }

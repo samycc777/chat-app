@@ -138,15 +138,15 @@ function joinCall(choice: { mic: boolean; camera: boolean }) {
     if (joining.value) { joining.value = false; callError.value = t('callConnectFailed'); }
   });
 }
-// Moving from one screen to the next, coloured bands slash across the screen, as anime cuts between
-// scenes. They run on their own over the new screen and never block a tap.
-const screen = computed(() => creatingRoom ? 'new' : !currentUser.value ? 'name' : inCall.value ? 'call' : 'lobby');
-const wipe = ref(0);
-let wipeTimer: ReturnType<typeof setTimeout> | undefined;
-watch(screen, () => {
-  wipe.value++;
-  clearTimeout(wipeTimer);
-  wipeTimer = setTimeout(() => { wipe.value = 0; }, 1000);
+// Joining the call, lines rush out from the middle of the screen, as at the start of an anime
+// fight. They run on their own over the call and never block a tap.
+const speedLines = ref(0);
+let speedLinesTimer: ReturnType<typeof setTimeout> | undefined;
+watch(() => Boolean(inCall.value), now => {
+  if (!now) return;
+  speedLines.value++;
+  clearTimeout(speedLinesTimer);
+  speedLinesTimer = setTimeout(() => { speedLines.value = 0; }, 1000);
 });
 
 function leftCall() {
@@ -193,7 +193,7 @@ function backToName() {
         @change-name="backToName"
       />
     </main>
-    <div v-if="wipe" :key="wipe" class="scene-wipe" :class="screen" aria-hidden="true"><span /><span /><span /></div>
+    <div v-if="speedLines" :key="speedLines" class="speed-lines" aria-hidden="true" />
   </div>
 </template>
 
@@ -238,7 +238,7 @@ function backToName() {
   from { opacity: 0; }
 }
 
-.scene-wipe {
+.speed-lines {
   position: fixed;
   inset: 0;
   z-index: 50;
@@ -246,55 +246,17 @@ function backToName() {
   pointer-events: none;
 }
 
-/* Three slanted bands, the widest first, each a moment after the one before. They start and end
-   well beyond the screen's edges, because the slant reaches further out on a tall phone. */
-.scene-wipe span {
-  width: 150vw;
-  position: absolute;
-  inset-block: -20%;
-  left: 0;
-  transform: skewX(-12deg);
-  translate: calc(-100% - 60vh) 0;
-  animation: scene-slash 760ms cubic-bezier(0.6, 0, 0.25, 1) forwards;
-}
-
-.scene-wipe span:nth-child(1) {
-  background: var(--accent-strong);
-}
-
-.scene-wipe span:nth-child(2) {
-  width: 110vw;
-  background: var(--text-accent);
-  animation-delay: 70ms;
-}
-
-.scene-wipe span:nth-child(3) {
-  width: 10vw;
-  background: #ffffff;
-  opacity: 0.8;
-  animation-delay: 150ms;
-}
-
-/* Joining the call ends with lines rushing out from the middle, as at the start of an anime fight. */
-.scene-wipe.call::after {
+.speed-lines::after {
   content: '';
   position: absolute;
   inset: -50%;
   background: repeating-conic-gradient(from 0deg, color-mix(in srgb, var(--text-accent) 70%, transparent) 0deg 1.2deg, transparent 1.2deg 9deg);
   mask: radial-gradient(circle, transparent 18%, #000000 40%);
   opacity: 0;
-  animation: scene-lines 640ms ease-out 300ms forwards;
+  animation: speed-lines 640ms ease-out 100ms forwards;
 }
 
-[dir='rtl'] .scene-wipe {
-  scale: -1 1;
-}
-
-@keyframes scene-slash {
-  to { translate: calc(100vw + 60vh) 0; }
-}
-
-@keyframes scene-lines {
+@keyframes speed-lines {
   0% { opacity: 0; scale: 0.7; }
   25% { opacity: 1; }
   100% { opacity: 0; scale: 1.25; }

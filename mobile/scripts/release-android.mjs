@@ -2,6 +2,7 @@
 //
 //   npm run release:android                      (from mobile/)
 //   npm run release:android -- "What changed"    (with release notes, in English)
+//   npm run release:android -- "What changed" --ar "ما الذي تغيّر"   (and in Arabic, for the class)
 //
 // It asks Google Play for the highest version number already uploaded and uses the next one, so
 // nobody has to raise versionCode by hand. The testers get the update from Google Play by themselves.
@@ -36,7 +37,10 @@ if (!existsSync(join(mobileDir, 'android', 'keystore.properties'))) stop('androi
 const releaseConfig = existsSync(join(mobileDir, 'release.json')) ? JSON.parse(readFileSync(join(mobileDir, 'release.json'), 'utf8')) : {};
 const hangoutUrl = process.env.HANGOUT_URL?.trim() || releaseConfig.hangoutUrl;
 if (!hangoutUrl?.startsWith('https://')) stop('Set HANGOUT_URL (or hangoutUrl in release.json) to the live invite link.');
-const notes = process.argv.slice(2).join(' ').trim();
+const args = process.argv.slice(2);
+const arabicAt = args.indexOf('--ar');
+const arabicNotes = arabicAt === -1 ? '' : args.splice(arabicAt, 2)[1]?.trim() ?? '';
+const notes = args.join(' ').trim();
 
 // Google's sign-in for a service account: a short signed note swapped for an hour-long access token.
 async function accessToken() {
@@ -96,7 +100,10 @@ await play('PUT', `${API}/edits/${edit.id}/tracks/${TRACK}`, JSON.stringify({
     name: `${versionName} (${bundle.versionCode})`,
     versionCodes: [String(bundle.versionCode)],
     status: 'completed',
-    ...(notes ? { releaseNotes: [{ language: 'en-US', text: notes }] } : {}),
+    releaseNotes: [
+      ...(notes ? [{ language: 'en-US', text: notes }] : []),
+      ...(arabicNotes ? [{ language: 'ar', text: arabicNotes }] : []),
+    ],
   }],
 }));
 await play('POST', `${API}/edits/${edit.id}:commit`);

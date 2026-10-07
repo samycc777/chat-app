@@ -156,7 +156,7 @@ After the first release, new versions go out with one command, without opening P
 
 ```sh
 cd mobile
-npm run release:android                     # or: npm run release:android -- "What changed"
+npm run release:android                     # or: npm run release:android -- "What changed" --ar "ما الذي تغيّر"
 ```
 
 It asks Google Play for the highest version number uploaded so far, builds the next one (signed with the

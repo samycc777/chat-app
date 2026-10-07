@@ -203,13 +203,17 @@ function backToName() {
   flex: 1;
   display: flex;
   flex-direction: column;
+  position: relative;
   overflow: hidden;
   background: var(--call-bg);
 }
 
-/* Appears only after a short delay, so a brief network blip does not flash it. */
+/* Appears only after a short delay, so a brief network blip does not flash it. It floats over the
+   screen rather than pushing it down, so while it is still invisible it leaves no empty band at the top. */
 .connection-banner {
-  flex: 0 0 auto;
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: center;

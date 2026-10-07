@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="call-tile"
-    :class="[tile.kind, { speaking: tile.speaking && tile.kind === 'camera' && !full, focused, small, full, mirrored: tile.local && tile.kind === 'camera', dark: dark && tile.kind === 'screen' }]"
+    :class="[tile.kind, { speaking: tile.speaking && tile.kind === 'camera' && !full, focused, small, full, mirrored: tile.local && tile.kind === 'camera', dark: dark && tile.kind === 'screen', 'board-tools': boardTools }]"
     v-on="zoom.listeners"
     @click.capture="zoom.clickCapture"
     @touchstart.passive="pinchToFullScreen"
@@ -354,6 +354,11 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* On a phone the label and the drawing buttons don't fit side by side, so the label sits above them. */
+.call-tile.board-tools .call-tile-label {
+  bottom: 50px;
 }
 
 .call-tile-label bdi {

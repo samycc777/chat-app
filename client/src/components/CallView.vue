@@ -1357,8 +1357,8 @@ onBeforeUnmount(cleanup);
   flex-direction: column;
   overflow: hidden;
   color: var(--call-text);
-  /* The lofi glow stays still here, so nothing moves behind the videos. */
-  background: var(--lofi-glow), var(--call-bg);
+  /* Only the still corner glow here, no grid, so nothing busy sits behind the videos. */
+  background: var(--neon-glow), var(--call-bg);
 }
 
 /* In the Android app's small window, the call covers the whole page, even when a text channel was open. */
@@ -1452,7 +1452,7 @@ onBeforeUnmount(cleanup);
   justify-content: center;
   gap: 4px;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: 2px;
   color: var(--call-text-muted);
 }
 
@@ -1508,7 +1508,7 @@ onBeforeUnmount(cleanup);
   align-items: center;
   gap: 8px;
   padding: 22px 24px;
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--call-surface);
   text-align: center;
 }
@@ -1530,7 +1530,7 @@ onBeforeUnmount(cleanup);
   gap: 7px;
   margin-top: 6px;
   padding: 0 16px;
-  border-radius: 12px;
+  border-radius: 4px;
   color: var(--text-on-accent);
   background: var(--text-accent);
   font-size: 14px;
@@ -1701,7 +1701,7 @@ onBeforeUnmount(cleanup);
   flex-direction: column;
   gap: 10px;
   padding: 20px;
-  border-radius: 22px;
+  border-radius: 6px;
   color: var(--call-text);
   background: var(--call-sheet);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
@@ -1729,7 +1729,7 @@ onBeforeUnmount(cleanup);
 .call-board-prompt-actions button {
   min-height: 46px;
   padding: 0 18px;
-  border-radius: 14px;
+  border-radius: 4px;
   font-size: 15px;
   font-weight: 700;
 }
@@ -1772,7 +1772,7 @@ onBeforeUnmount(cleanup);
   gap: 6px;
   overflow: hidden;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: 2px;
   color: #ffffff;
   background: rgba(0, 0, 0, 0.6);
   font-size: 13px;
@@ -1836,7 +1836,7 @@ onBeforeUnmount(cleanup);
   animation: anime-pop 480ms ease-out;
   width: max-content;
   max-width: min(460px, calc(100% - 32px));
-  border-radius: 14px;
+  border-radius: 4px;
   white-space: normal;
   text-align: center;
 }
@@ -1897,7 +1897,7 @@ onBeforeUnmount(cleanup);
 
 .call-chat-message.private {
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: rgba(88, 101, 242, 0.18);
 }
 
@@ -1957,7 +1957,7 @@ onBeforeUnmount(cleanup);
   height: 34px;
   padding: 0 8px;
   border: 1px solid var(--call-line-strong);
-  border-radius: 8px;
+  border-radius: 2px;
   color: var(--call-text);
   background: var(--call-input);
   font-size: 14px;
@@ -1978,7 +1978,7 @@ onBeforeUnmount(cleanup);
   height: 44px;
   padding: 0 12px;
   border: 1px solid var(--call-line-strong);
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--call-text);
   background: var(--call-input);
   /* 16px keeps iPhones from zooming in on the box. */
@@ -1991,7 +1991,7 @@ onBeforeUnmount(cleanup);
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 14px;
+  border-radius: 4px;
   color: var(--text-on-accent);
   background: var(--text-accent);
 }
@@ -2024,7 +2024,7 @@ onBeforeUnmount(cleanup);
   overflow: auto;
   margin-inline: auto;
   padding: 10px 16px max(18px, env(safe-area-inset-bottom));
-  border-radius: 24px 24px 0 0;
+  border-radius: 6px 6px 0 0;
   background: var(--call-sheet);
   box-shadow: 0 -16px 50px rgba(0, 0, 0, 0.45);
   animation: call-sheet-in 380ms var(--soft-spring);
@@ -2165,7 +2165,7 @@ onBeforeUnmount(cleanup);
   gap: 12px;
   margin-top: 8px;
   padding: 0 8px;
-  border-radius: 8px;
+  border-radius: 2px;
   font-size: 14px;
   font-weight: 600;
 }

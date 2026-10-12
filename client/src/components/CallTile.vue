@@ -225,7 +225,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: 4px;
   background: var(--call-surface);
   cursor: pointer;
 }
@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   padding: 3px 8px;
-  border-radius: 6px;
+  border-radius: 2px;
   color: #ffffff;
   background: rgba(0, 0, 0, 0.6);
   font-size: 12px;
@@ -365,7 +365,7 @@ onBeforeUnmount(() => {
   z-index: 2;
   display: grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: 2px;
   color: #ffffff;
   background: rgba(0, 0, 0, 0.55);
   opacity: 0;
@@ -400,7 +400,7 @@ onBeforeUnmount(() => {
   max-width: calc(100% - 16px);
   transform: translateX(-50%);
   padding: 3px 10px;
-  border-radius: 6px;
+  border-radius: 2px;
   color: #ffffff;
   background: rgba(0, 0, 0, 0.6);
   font-size: 12px;
@@ -432,7 +432,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 6px;
   padding: 0 10px;
-  border-radius: 12px;
+  border-radius: 4px;
   color: #ffffff;
   background: rgba(0, 0, 0, 0.6);
   font-size: 13px;
@@ -445,7 +445,7 @@ onBeforeUnmount(() => {
 }
 
 .call-tile.small {
-  border-radius: 10px;
+  border-radius: 4px;
 }
 
 .call-tile.small .call-tile-label {

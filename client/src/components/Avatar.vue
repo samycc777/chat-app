@@ -43,9 +43,10 @@ const initials = computed(() => {
   place-items: center;
   border-radius: 50%;
   color: #ffffff;
-  /* Each person's colour, softened towards cream to suit the lofi look. */
-  background: color-mix(in srgb, var(--avatar-color) 72%, #f3dcc4);
-  text-shadow: 0 1px 2px rgba(40, 20, 10, 0.25);
+  /* Each person's own colour, deepened a little so white letters stay readable, with a thin neon ring. */
+  background: color-mix(in srgb, var(--avatar-color) 82%, #07080f);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--avatar-color) 70%, #ffffff), 0 0 14px color-mix(in srgb, var(--avatar-color) 45%, transparent);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   font-size: 15px;
   font-weight: 700;
 }

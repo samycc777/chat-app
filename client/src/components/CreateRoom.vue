@@ -49,7 +49,7 @@ async function copy() {
 }
 </script>
 <template>
-  <div class="create-container lofi-sky">
+  <div class="create-container neon-backdrop">
     <div class="create-card">
       <div class="create-topline">
         <span class="create-mark" aria-hidden="true">{{ t('appName').slice(0, 1) }}</span>
@@ -90,7 +90,7 @@ async function copy() {
   align-items: center;
   justify-content: center;
   padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
-  background: var(--lofi-glow), var(--app-bg);
+  background: var(--neon-glow), var(--app-bg);
 }
 
 .create-card {
@@ -98,9 +98,9 @@ async function copy() {
   max-width: 460px;
   padding: clamp(24px, 7vw, 42px);
   border: 1px solid var(--border-color);
-  border-radius: 28px;
+  border-radius: 6px;
   background: var(--bg-primary);
-  box-shadow: 0 18px 60px var(--shadow-color);
+  box-shadow: var(--neon-edge), 0 18px 60px var(--shadow-color);
 }
 
 .create-topline {
@@ -115,7 +115,7 @@ async function copy() {
   height: 44px;
   display: grid;
   place-items: center;
-  border-radius: 15px;
+  border-radius: 4px;
   color: var(--text-on-accent);
   background: var(--text-accent);
   font-size: 21px;
@@ -132,7 +132,7 @@ async function copy() {
   height: 38px;
   padding: 0 12px;
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: 4px;
   color: var(--text-secondary);
   background: var(--bg-primary);
 }
@@ -173,7 +173,7 @@ async function copy() {
   margin-bottom: 16px;
   padding: 12px 14px;
   border: 1px solid var(--border-color);
-  border-radius: 13px;
+  border-radius: 4px;
   color: var(--text-primary);
   background: var(--bg-secondary);
   font-size: 16px;
@@ -200,7 +200,7 @@ async function copy() {
   flex: 0 0 auto;
   min-height: 50px;
   padding: 0 16px;
-  border-radius: 13px;
+  border-radius: 4px;
   color: var(--text-on-accent);
   background: var(--text-accent);
   font-size: 14px;
@@ -218,7 +218,7 @@ async function copy() {
   margin-bottom: 14px;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
-  border-radius: 12px;
+  border-radius: 4px;
   color: var(--danger);
   background: var(--danger-soft);
   font-size: 13px;

@@ -597,34 +597,18 @@ html[dir='rtl'] body {
   animation: anime-wave 1.1s ease-in-out 3;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition: none !important;
-    animation: none !important;
-  }
-}
-
-/* Calm on the first visit, before Vue mounts, as well as when a device requests reduced motion.
-   Disable effects instead of speeding them up, which can compress brightness changes into a flash. */
-:root[data-calm='true'] *,
-:root[data-calm='true'] *::before,
-:root[data-calm='true'] *::after {
+/* The app never moves: no animations or transitions anywhere, for everyone. They are turned off
+   rather than sped up, because a fast brightness change can look like a flash. */
+*,
+*::before,
+*::after {
   scroll-behavior: auto !important;
   transition: none !important;
   animation: none !important;
 }
 
-:root[data-calm='true'] .lofi-sky::before,
-:root[data-calm='true'] .lofi-sky::after,
-:root[data-calm='true'] .auth-btn::after {
-  display: none;
-}
-
-:root[data-calm='true'] .auth-btn:active,
-:root[data-calm='true'] .lobby-toggle:active,
-:root[data-calm='true'] .call-control:active {
+.auth-btn:active,
+.lobby-toggle:active,
+.call-control:active {
   scale: 1;
 }

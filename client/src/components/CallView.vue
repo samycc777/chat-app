@@ -12,8 +12,6 @@ import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import { useTheme } from '../theme';
-import { calm } from '../visualComfort';
-import VisualComfort from './VisualComfort.vue';
 import { cleanVoice, prepareCleanVoice, type CleanVoice } from '../cleanVoice';
 import {
   bridge, onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
@@ -120,21 +118,18 @@ const weakTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const savingData = ref(false);
 const startedAt = ref(0);
 const now = ref(Date.now());
-// The tile shown full screen, alone over everything else, and whether its bar of buttons is showing.
+// The tile shown full screen, alone over everything else.
 const fullKey = ref<string | null>(null);
-const fullBarShown = ref(true);
 const fullTileView = ref<InstanceType<typeof CallTile>>();
 // Inside the phone apps, Capacitor cancels a page's full screen as soon as it starts, so there the
 // call fills the app itself, and the Android app hides the phone's bars.
 const browserFullscreen = typeof document !== 'undefined' && document.fullscreenEnabled && !bridge;
-const landscapeQuery = window.matchMedia('(orientation: landscape)');
 let room: Room | null = null;
 // Only on iPhones and iPads. The call keeps it across rejoins and resumes it itself, because
 // LiveKit only resumes a suspended mixer and an iPhone back from another app can leave it interrupted.
 let audioContext: AudioContext | undefined;
 let wakeLock: WakeLockSentinel | null = null;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
-let fullBarTimer: ReturnType<typeof setTimeout> | undefined;
 let weakTimer: ReturnType<typeof setTimeout> | undefined;
 let stopListeningWhileMuted: (() => void) | undefined;
 let listeningContext: AudioContext | undefined;
@@ -221,8 +216,8 @@ function spotOf(tile: Tile): TileSpot {
 }
 function onTileClick(tile: Tile) {
   const spot = spotOf(tile);
-  if (spot === 'full') toggleFullBar();
-  else if (spot !== 'mini') toggleFocus(tile.key);
+  // A full-screen tile keeps its buttons showing, so a tap on it does nothing.
+  if (spot !== 'full' && spot !== 'mini') toggleFocus(tile.key);
 }
 const tileViews = new Map<string, InstanceType<typeof CallTile>>();
 function setTileView(tile: Tile, view: unknown) {
@@ -490,10 +485,6 @@ function refresh() {
   }
   const speaker = next.find(tile => tile.speaking && tile.kind === 'camera' && tile.track && !tile.local);
   if (speaker) lastSpeakerKey.value = speaker.key;
-  // Calm mode leaves new screens in the grid, so someone else cannot suddenly fill this viewer's screen.
-  const screens = next.filter(tile => tile.kind === 'screen' && !tile.local);
-  const newScreen = screens.find(tile => !tiles.value.some(old => old.key === tile.key));
-  if (newScreen && !focusedTile.value && !calm.value) focusedKey.value = newScreen.key;
   if (focusedKey.value && !next.some(tile => tile.key === focusedKey.value)) focusedKey.value = null;
   // A screen that stops being shared, or a camera turned off, leaves full screen.
   if (fullKey.value && !next.some(tile => tile.key === fullKey.value && watchable(tile))) exitFullScreen();
@@ -843,7 +834,6 @@ async function enterFullScreen(key: string) {
   sheet.value = null;
   focusedKey.value = key;
   fullKey.value = key;
-  showFullBar();
   showZoomHint();
   if (phoneFullScreenAvailable) { setPhoneFullScreen(true, wantsLandscape()); return; }
   if (!browserFullscreen || document.fullscreenElement) return;
@@ -856,7 +846,6 @@ function exitFullScreen() {
   // Otherwise the next full screen would open zoomed in where this one was left.
   fullTileView.value?.resetZoom();
   fullKey.value = null;
-  clearTimeout(fullBarTimer);
   if (phoneFullScreenAvailable) setPhoneFullScreen(false, false);
   if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
   try { screen.orientation?.unlock(); } catch { /* Nothing was locked. */ }
@@ -875,25 +864,7 @@ watch(wantsLandscape, () => {
 });
 // Leaving the browser's full screen, for example with Escape or the Back gesture, leaves the call's too.
 function onFullscreenChange() { if (!document.fullscreenElement) exitFullScreen(); }
-// Turning a phone sideways while a video is big shows it full screen.
-function onOrientationChange() {
-  if (calm.value || !landscapeQuery.matches || fullKey.value || inMiniWindow.value || !props.visible || sheet.value || !onPhone()) return;
-  if (focusedTile.value && watchable(focusedTile.value)) void enterFullScreen(focusedTile.value.key);
-}
 watch(() => props.visible, visible => { if (!visible) exitFullScreen(); });
-function showFullBar() {
-  fullBarShown.value = true;
-  clearTimeout(fullBarTimer);
-  // While the pen is on, its buttons stay, so it is clear that touching the screen draws.
-  if (!penOn.value && !calm.value) fullBarTimer = setTimeout(() => { fullBarShown.value = false; }, 3000);
-}
-watch([penOn, calm], showFullBar);
-function toggleFullBar() {
-  if (calm.value) { showFullBar(); return; }
-  if (!fullBarShown.value) { showFullBar(); return; }
-  fullBarShown.value = false;
-  clearTimeout(fullBarTimer);
-}
 // Once per device, the first time, so everyone learns that the teacher's writing can be made bigger.
 function showZoomHint() {
   try {
@@ -1080,7 +1051,6 @@ function cleanup() {
   clearTimeout(toastTimer);
   clearInterval(clockTimer);
   document.removeEventListener('fullscreenchange', onFullscreenChange);
-  landscapeQuery.removeEventListener('change', onOrientationChange);
   document.removeEventListener('keydown', onKeydown);
   document.removeEventListener('visibilitychange', onVisibilityChange);
   window.removeEventListener('pageshow', onVisibilityChange);
@@ -1112,7 +1082,6 @@ function leave() { cleanup(); emit('leave'); }
 defineExpose({ toggleMicrophone: () => setMicrophone(!micOn.value), leave });
 onMounted(() => {
   document.addEventListener('fullscreenchange', onFullscreenChange);
-  landscapeQuery.addEventListener('change', onOrientationChange);
   // Escape closes an open panel wherever keyboard focus happens to be.
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('visibilitychange', onVisibilityChange);
@@ -1179,34 +1148,34 @@ onBeforeUnmount(cleanup);
         <div v-else-if="status === 'joining'" class="call-state-card" role="status">
           <strong>{{ t('joiningCall') }}</strong>
         </div>
-        <div v-else-if="fullTile" class="call-full" :class="{ idle: !fullBarShown }" @pointermove="$event.pointerType === 'mouse' && showFullBar()">
+        <div v-else-if="fullTile" class="call-full">
           <div id="call-spot-full" class="call-full-spot" />
           <Transition name="call-full-speaker">
             <span v-if="fullSpeaker" class="call-full-speaker" aria-hidden="true"><bdi>{{ fullSpeaker }}</bdi></span>
           </Transition>
-          <div class="call-full-bar top" :class="{ hidden: !fullBarShown }">
+          <div class="call-full-bar top">
             <span class="call-full-name">
               <ScreenShare v-if="fullTile.kind === 'screen'" :size="16" aria-hidden="true" />
               <bdi>{{ fullTile.kind === 'screen' ? t('screenOf', { name: fullTile.name }) : fullTile.name }}</bdi>
             </span>
             <span class="call-full-actions">
-              <button v-if="fullTile.kind === 'screen'" class="call-full-btn" type="button" :aria-pressed="darkScreen" @click="toggleDarkScreen(); showFullBar()">
+              <button v-if="fullTile.kind === 'screen'" class="call-full-btn" type="button" :aria-pressed="darkScreen" @click="toggleDarkScreen()">
                 <Sun v-if="darkScreen" :size="18" /><Moon v-else :size="18" />{{ darkScreen ? t('lightScreen') : t('darkScreen') }}
               </button>
               <button class="call-full-btn" type="button" @click="exitFullScreen"><Minimize :size="18" />{{ t('exitFullscreen') }}</button>
             </span>
           </div>
-          <div class="call-full-bar bottom" :class="{ hidden: !fullBarShown }">
+          <div class="call-full-bar bottom">
             <!-- A student can answer the teacher without leaving full screen. -->
-            <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="micOn ? t('mute') : t('unmute')" :aria-label="micOn ? t('mute') : t('unmute')" @click="setMicrophone(!micOn); showFullBar()">
+            <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="micOn ? t('mute') : t('unmute')" :aria-label="micOn ? t('mute') : t('unmute')" @click="setMicrophone(!micOn)">
               <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
             </button>
-            <button v-if="fullZoomed" class="call-full-btn" type="button" @click="fullTileView?.resetZoom(); showFullBar()"><ZoomOut :size="18" />{{ t('zoomOut') }}</button>
+            <button v-if="fullZoomed" class="call-full-btn" type="button" @click="fullTileView?.resetZoom()"><ZoomOut :size="18" />{{ t('zoomOut') }}</button>
             <!-- The blackboard's pen, eraser and save, beside the microphone (see board.ts). -->
             <template v-if="fullTile.kind === 'screen' && !fullTile.local">
               <button v-if="penOn && fullDrawn" class="call-full-btn" type="button" :title="t('eraseBoard')" :aria-label="t('eraseBoard')" @click="erase(fullTile.key)"><Eraser :size="18" /></button>
               <button class="call-full-btn" :class="{ on: penOn }" type="button" :aria-pressed="penOn" @click="penOn = !penOn"><Pencil :size="18" />{{ penOn ? t('stopDrawing') : t('draw') }}</button>
-              <button v-if="canSavePicture" class="call-full-btn" type="button" :title="t('savePicture')" :aria-label="t('savePicture')" @click="savePicture(fullTile); showFullBar()"><Download :size="18" /></button>
+              <button v-if="canSavePicture" class="call-full-btn" type="button" :title="t('savePicture')" :aria-label="t('savePicture')" @click="savePicture(fullTile)"><Download :size="18" /></button>
             </template>
           </div>
         </div>
@@ -1262,7 +1231,7 @@ onBeforeUnmount(cleanup);
             <button class="call-icon-btn" type="button" :aria-label="t('close')" @click="sheet = null"><X :size="18" /></button>
           </div>
           <ul class="call-people">
-            <li v-for="person in participants" :key="person.identity" :class="{ speaking: person.speaking && !calm }">
+            <li v-for="person in participants" :key="person.identity" >
               <Avatar :name="person.name" :color="colorOf(person.identity)" size="small" />
               <div class="call-person-main">
                 <span class="call-person-name">
@@ -1335,7 +1304,6 @@ onBeforeUnmount(cleanup);
 
         <section v-else-if="sheet === 'more'" class="call-sheet" :aria-label="t('more')">
           <span class="call-sheet-handle" />
-          <VisualComfort />
           <label v-if="canAdjustVolume" class="call-volume">
             <Volume1 :size="20" aria-hidden="true" />
             <span>{{ t('callVolume') }}</span>
@@ -1659,11 +1627,6 @@ onBeforeUnmount(cleanup);
   background: #000000;
 }
 
-.call-full.idle,
-.call-full.idle .call-tile {
-  cursor: none;
-}
-
 .call-full-bar {
   position: absolute;
   inset-inline: 0;
@@ -1672,19 +1635,10 @@ onBeforeUnmount(cleanup);
   gap: 10px;
   padding: 12px max(12px, env(safe-area-inset-right)) 12px max(12px, env(safe-area-inset-left));
   pointer-events: none;
-  transition: opacity 200ms ease;
 }
 
 .call-full-bar > * {
   pointer-events: auto;
-}
-
-.call-full-bar.hidden {
-  opacity: 0;
-}
-
-.call-full-bar.hidden > * {
-  pointer-events: none;
 }
 
 .call-full-speaker {
@@ -1707,8 +1661,8 @@ onBeforeUnmount(cleanup);
   pointer-events: none;
 }
 
-/* Above the bottom bar while it shows. */
-.call-full:not(.idle) .call-full-speaker {
+/* Above the bottom bar. */
+.call-full .call-full-speaker {
   bottom: calc(max(14px, env(safe-area-inset-bottom)) + 64px);
 }
 
@@ -2113,10 +2067,6 @@ onBeforeUnmount(cleanup);
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
-}
-
-.call-people li.speaking .avatar {
-  box-shadow: 0 0 0 2px var(--call-sheet), 0 0 0 4px var(--speaking);
 }
 
 .call-person-main {

@@ -4,7 +4,6 @@ import { Moon, Sun } from 'lucide-vue-next';
 import { api, session } from '../api';
 import { useI18n } from '../i18n';
 import { useTheme } from '../theme';
-import VisualComfort from './VisualComfort.vue';
 import type { JoinResult } from '../types';
 const emit = defineEmits<{ auth: [result: JoinResult] }>();
 const props = defineProps<{ serverName: string; openInvite?: string }>();
@@ -91,7 +90,6 @@ watch(() => props.openInvite, key => {
     <div v-if="error" class="auth-error" role="alert">{{ error }}</div>
     <div v-if="!inviteKey" class="input-group"><label for="invite-link">{{ t('inviteLink') }}</label><input id="invite-link" v-model="pastedLink" type="text" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="300" required :placeholder="t('inviteLinkPlaceholder')"></div>
     <div class="input-group"><label for="display-name">{{ t('displayName') }}</label><input id="display-name" v-model="displayName" :placeholder="t('yourName')" autocomplete="name" maxlength="60" required></div>
-    <VisualComfort />
     <button class="auth-btn" type="submit" :disabled="loading">{{ loading ? t('pleaseWait') : t('continue') }}</button>
   </form></div>
 </template>

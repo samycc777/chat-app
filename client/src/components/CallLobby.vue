@@ -4,7 +4,6 @@ import { Mic, MicOff, Moon, Sun, Video, VideoOff } from 'lucide-vue-next';
 import type { OnlineUser, User } from '../types';
 import { useI18n } from '../i18n';
 import { useTheme } from '../theme';
-import VisualComfort from './VisualComfort.vue';
 import Avatar from './Avatar.vue';
 
 const props = defineProps<{ user: User; members: OnlineUser[]; error: string; joining: boolean; canJoin: boolean }>();
@@ -102,7 +101,6 @@ async function copyInvite() {
         </ul>
       </div>
 
-      <VisualComfort />
       <p v-if="error" class="lobby-error" role="alert">{{ error }}</p>
       <button class="auth-btn" type="button" :disabled="joining || !canJoin" @click="join">
         {{ joining ? t('joiningCall') : t('joinCall') }}

@@ -12,7 +12,6 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Download, Eraser, Maximize, Maximize2, MicOff, Minimize2, Moon, Pencil, ScreenShare, Sun, WifiOff } from 'lucide-vue-next';
 import type { VideoTrack } from 'livekit-client';
 import { useI18n } from '../i18n';
-import { calm } from '../visualComfort';
 import { usePinchZoom } from '../pinchZoom';
 import Avatar from './Avatar.vue';
 import BoardLayer from './BoardLayer.vue';
@@ -146,7 +145,7 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="call-tile"
-    :class="[tile.kind, { speaking: !calm && tile.speaking && tile.kind === 'camera' && !full, focused, small, full, mirrored: tile.local && tile.kind === 'camera', dark: dark && tile.kind === 'screen', 'board-tools': boardTools }]"
+    :class="[tile.kind, { focused, small, full, mirrored: tile.local && tile.kind === 'camera', dark: dark && tile.kind === 'screen', 'board-tools': boardTools }]"
     v-on="zoom.listeners"
     @click.capture="zoom.clickCapture"
     @touchstart.passive="pinchToFullScreen"
@@ -243,27 +242,6 @@ onBeforeUnmount(() => {
   55% { opacity: 1; scale: 1.04; }
   78% { scale: 0.985; }
   100% { scale: 1; }
-}
-
-/* Whoever is speaking glows softly green from the edges. It comes on at once, with their voice,
-   and fades out gently; it stays steady through the pauses between words (see speaking.ts), so it
-   does not flicker, which people sensitive to flashing find hard. Only its opacity changes, which
-   phones draw cheaply over a moving video. */
-.call-tile::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  border-radius: inherit;
-  box-shadow: inset 0 0 0 3px var(--speaking), inset 0 0 20px 1px color-mix(in srgb, var(--speaking) 55%, transparent);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 350ms ease;
-}
-
-.call-tile.speaking::after {
-  opacity: 1;
-  transition-duration: 80ms;
 }
 
 .call-tile-media,

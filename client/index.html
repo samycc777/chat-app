@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-calm="true">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <!-- The page itself never zooms: a pinch on it once left a friend's whole call stuck zoomed in,
@@ -13,10 +13,9 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <!-- Apply theme and visual comfort before the first paint; Vue keeps them in sync afterwards. -->
+    <!-- Chooses light or dark before anything is drawn, as src/theme.ts does once the app runs. -->
     <script>
       try {
-        document.documentElement.dataset.calm = String(localStorage.getItem('reduceVisualEffects') !== '0' || matchMedia('(prefers-reduced-motion: reduce)').matches);
         var choice = localStorage.getItem('themeChoice');
         document.documentElement.dataset.theme = choice === 'light' || choice === 'dark' ? choice
           : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

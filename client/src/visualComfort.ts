@@ -12,9 +12,6 @@ export const deviceReducesMotion = ref(motionQuery.matches);
 motionQuery.addEventListener('change', event => { deviceReducesMotion.value = event.matches; });
 export const reduceEffects = ref(read('reduceVisualEffects') !== '0');
 export const calm = computed(() => reduceEffects.value || deviceReducesMotion.value);
-// This only hides what this person sees; microphone, outgoing camera and call audio keep working.
-export const hideVideos = ref(read('hideCallVideos') === '1');
 
 watch(calm, value => { document.documentElement.dataset.calm = String(value); }, { immediate: true, flush: 'sync' });
 watch(reduceEffects, value => save('reduceVisualEffects', value), { flush: 'sync' });
-watch(hideVideos, value => save('hideCallVideos', value), { flush: 'sync' });

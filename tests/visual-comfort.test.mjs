@@ -27,16 +27,12 @@ test('visual preferences start calm, persist and respect live device changes', a
   changeMotion({ matches: false });
   assert.equal(prefs.calm.value, false);
 
-  prefs.hideVideos.value = true;
-  assert.equal(values.get('hideCallVideos'), '1');
   const reloaded = await import('../client/src/visualComfort.ts?reload');
-  assert.equal(reloaded.hideVideos.value, true, 'hiding survives a reload');
   assert.equal(reloaded.reduceEffects.value, false);
 
   blocked = true;
-  assert.doesNotThrow(() => { prefs.reduceEffects.value = true; prefs.hideVideos.value = false; });
+  assert.doesNotThrow(() => { prefs.reduceEffects.value = true; });
   assert.equal(prefs.calm.value, true);
-  assert.equal(prefs.hideVideos.value, false, 'controls still work without storage');
   const privateVisit = await import('../client/src/visualComfort.ts?private');
   assert.equal(privateVisit.calm.value, true, 'unavailable storage defaults to calm');
 });

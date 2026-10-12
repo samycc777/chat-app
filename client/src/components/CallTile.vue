@@ -12,6 +12,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Download, Eraser, Maximize, Maximize2, MicOff, Minimize2, Moon, Pencil, ScreenShare, Sun, WifiOff } from 'lucide-vue-next';
 import type { VideoTrack } from 'livekit-client';
 import { useI18n } from '../i18n';
+import { calm, hideVideos } from '../visualComfort';
 import { usePinchZoom } from '../pinchZoom';
 import Avatar from './Avatar.vue';
 import BoardLayer from './BoardLayer.vue';
@@ -54,7 +55,7 @@ const zoom = usePinchZoom(root, () => Boolean(props.full));
 // there, and coming back to full screen finds the zoom as it was.
 const zoomStyle = computed(() => props.full ? zoom.style.value : undefined);
 // Someone else's shared screen is a blackboard: they can point at it and draw on it (see board.ts).
-const isBoard = computed(() => props.tile.kind === 'screen' && !ownScreen.value && Boolean(props.tile.track) && Boolean(props.me));
+const isBoard = computed(() => !hideVideos.value && props.tile.kind === 'screen' && !ownScreen.value && Boolean(props.tile.track) && Boolean(props.me));
 // The pen and eraser show on a shared screen made big; small tiles have no room for them, and full
 // screen has them in the call screen's own bar.
 const boardTools = computed(() => isBoard.value && props.focused && !props.full && !props.small);
@@ -79,7 +80,7 @@ defineExpose({ resetZoom: zoom.reset, zoomed: zoom.zoomed, picture });
 // The page does not zoom (see index.html), so pinching a shared screen to read it opens it full
 // screen, where the pinch zooms the screen itself.
 function pinchToFullScreen(event: TouchEvent) {
-  if (event.touches.length >= 2 && !props.full && props.tile.kind === 'screen' && props.tile.track && !ownScreen.value) emit('fullscreen');
+  if (!hideVideos.value && event.touches.length >= 2 && !props.full && props.tile.kind === 'screen' && props.tile.track && !ownScreen.value) emit('fullscreen');
 }
 
 // A tile keeps its video element while the track behind it changes, for example when a camera is
@@ -89,7 +90,7 @@ function show(track: VideoTrack | null) {
   attached = null;
   hasPicture.value = false;
   zoom.reset();
-  if (!track || !video.value || ownScreen.value) return;
+  if (!track || !video.value || ownScreen.value || hideVideos.value) return;
   track.attach(video.value);
   attached = track;
 }
@@ -107,7 +108,7 @@ function reportSize() {
 // go on reading the lesson.
 const hasPicture = ref(false);
 const held = ref<HTMLCanvasElement>();
-const holding = computed(() => props.tile.kind === 'screen' && !ownScreen.value && Boolean(props.tile.track) && !hasPicture.value && lastPictures.has(props.tile.key));
+const holding = computed(() => !hideVideos.value && props.tile.kind === 'screen' && !ownScreen.value && Boolean(props.tile.track) && !hasPicture.value && lastPictures.has(props.tile.key));
 let savedAt = 0;
 let frameRequest: number | undefined;
 function onFrame(_now: number, frame: VideoFrameCallbackMetadata) {
@@ -134,7 +135,7 @@ watch([holding, held], ([hold, canvas]) => {
   canvas.height = copy.height;
   canvas.getContext('2d')?.drawImage(copy, 0, 0);
 });
-watch([() => props.tile.track, video], ([track]) => show(track), { immediate: true });
+watch([() => props.tile.track, video, hideVideos], ([track]) => show(track), { immediate: true });
 onBeforeUnmount(() => {
   if (frameRequest !== undefined) video.value?.cancelVideoFrameCallback(frameRequest);
   show(null);
@@ -145,12 +146,12 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="call-tile"
-    :class="[tile.kind, { speaking: tile.speaking && tile.kind === 'camera' && !full, focused, small, full, mirrored: tile.local && tile.kind === 'camera', dark: dark && tile.kind === 'screen', 'board-tools': boardTools }]"
+    :class="[tile.kind, { speaking: !calm && tile.speaking && tile.kind === 'camera' && !full, focused, small, full, mirrored: tile.local && tile.kind === 'camera', dark: dark && tile.kind === 'screen', 'board-tools': boardTools }]"
     v-on="zoom.listeners"
     @click.capture="zoom.clickCapture"
     @touchstart.passive="pinchToFullScreen"
   >
-    <div class="call-tile-media" :style="zoomStyle">
+    <div v-show="!hideVideos" class="call-tile-media" :style="zoomStyle">
       <!-- The empty poster replaces the grey play button Android shows until the first picture arrives. -->
       <video v-show="tile.track && !ownScreen" ref="video" autoplay playsinline muted :poster="NO_POSTER" @loadedmetadata="reportSize" @resize="reportSize" />
       <!-- Over the video rather than instead of it: a hidden video is no longer sent, so it would never come back. -->
@@ -173,7 +174,7 @@ onBeforeUnmount(() => {
       <ScreenShare :size="small ? 22 : 34" />
       <span>{{ t('youAreSharing') }}</span>
     </div>
-    <div v-else-if="!tile.track" class="call-tile-placeholder">
+    <div v-else-if="!tile.track || hideVideos" class="call-tile-placeholder">
       <Avatar :name="tile.name" :color="tile.color" :size="small ? 'small' : 'large'" />
     </div>
     <div v-if="!full" class="call-tile-label">
@@ -184,7 +185,7 @@ onBeforeUnmount(() => {
       <bdi>{{ tile.kind === 'screen' ? t('screenOf', { name: tile.name }) : tile.name }}</bdi>
     </div>
     <button
-      v-if="!small && !full && tile.track && !ownScreen"
+      v-if="!hideVideos && !small && !full && tile.track && !ownScreen"
       class="call-tile-button call-tile-fullscreen"
       type="button"
       :title="t('fullscreen')"
@@ -194,7 +195,7 @@ onBeforeUnmount(() => {
       <Maximize :size="16" />
     </button>
     <button
-      v-if="!small && !full && tile.kind === 'screen' && tile.track && !ownScreen"
+      v-if="!hideVideos && !small && !full && tile.kind === 'screen' && tile.track && !ownScreen"
       class="call-tile-button call-tile-dark"
       type="button"
       :aria-pressed="dark"

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import {
-  Download, Ellipsis, Eraser, Hand, Maximize, MessageSquare, Mic, MicOff, Minimize, Moon, Pencil, PhoneOff, RotateCcw, ScreenShare,
+  Download, Eye, EyeOff, Ellipsis, Eraser, Hand, Maximize, MessageSquare, Mic, MicOff, Minimize, Moon, Pencil, PhoneOff, RotateCcw, ScreenShare,
   ScreenShareOff, SendHorizontal, Sun, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
@@ -12,6 +12,8 @@ import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import { useTheme } from '../theme';
+import { calm, hideVideos } from '../visualComfort';
+import VisualComfort from './VisualComfort.vue';
 import { cleanVoice, prepareCleanVoice, type CleanVoice } from '../cleanVoice';
 import {
   bridge, onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
@@ -228,7 +230,7 @@ function setTileView(tile: Tile, view: unknown) {
   if (tile.key === fullKey.value) fullTileView.value = (view ?? undefined) as InstanceType<typeof CallTile> | undefined;
 }
 // A tile with a video to look at; your own shared screen is never shown back to you.
-const watchable = (tile: Tile) => Boolean(tile.track) && !(tile.local && tile.kind === 'screen');
+const watchable = (tile: Tile) => !hideVideos.value && Boolean(tile.track) && !(tile.local && tile.kind === 'screen');
 // What Full screen in the More menu shows: the big tile, else a shared screen, else a camera.
 const fullScreenChoice = computed(() => {
   const videos = tiles.value.filter(watchable);
@@ -239,7 +241,7 @@ const fullScreenChoice = computed(() => {
 // a shared screen, else whoever spoke last with their camera on. Never your own video, and nothing
 // while you share your screen, because the small window would then appear in what you share.
 const miniTile = computed(() => {
-  if (sharingScreen.value) return null;
+  if (sharingScreen.value || hideVideos.value) return null;
   const watchable = tiles.value.filter(tile => !tile.local && tile.track);
   return watchable.find(tile => tile.key === focusedKey.value) ?? watchable.find(tile => tile.kind === 'screen')
     ?? watchable.find(tile => tile.key === lastSpeakerKey.value) ?? watchable[0] ?? null;
@@ -488,11 +490,10 @@ function refresh() {
   }
   const speaker = next.find(tile => tile.speaking && tile.kind === 'camera' && tile.track && !tile.local);
   if (speaker) lastSpeakerKey.value = speaker.key;
-  // A screen someone starts sharing is made big straight away, as in a video call; it goes back
-  // to the grid when they stop.
+  // Calm mode leaves new screens in the grid, so someone else cannot suddenly fill this viewer's screen.
   const screens = next.filter(tile => tile.kind === 'screen' && !tile.local);
   const newScreen = screens.find(tile => !tiles.value.some(old => old.key === tile.key));
-  if (newScreen && !focusedTile.value) focusedKey.value = newScreen.key;
+  if (newScreen && !focusedTile.value && !calm.value && !hideVideos.value) focusedKey.value = newScreen.key;
   if (focusedKey.value && !next.some(tile => tile.key === focusedKey.value)) focusedKey.value = null;
   // A screen that stops being shared, or a camera turned off, leaves full screen.
   if (fullKey.value && !next.some(tile => tile.key === fullKey.value && watchable(tile))) exitFullScreen();
@@ -839,6 +840,7 @@ function toggleDarkScreen() {
 }
 
 async function enterFullScreen(key: string) {
+  if (hideVideos.value) return;
   sheet.value = null;
   focusedKey.value = key;
   fullKey.value = key;
@@ -876,18 +878,28 @@ watch(wantsLandscape, () => {
 function onFullscreenChange() { if (!document.fullscreenElement) exitFullScreen(); }
 // Turning a phone sideways while a video is big shows it full screen.
 function onOrientationChange() {
-  if (!landscapeQuery.matches || fullKey.value || inMiniWindow.value || !props.visible || sheet.value || !onPhone()) return;
+  if (calm.value || hideVideos.value || !landscapeQuery.matches || fullKey.value || inMiniWindow.value || !props.visible || sheet.value || !onPhone()) return;
   if (focusedTile.value && watchable(focusedTile.value)) void enterFullScreen(focusedTile.value.key);
 }
 watch(() => props.visible, visible => { if (!visible) exitFullScreen(); });
+const videoToggle = ref<HTMLButtonElement>();
+watch(hideVideos, hidden => {
+  if (hidden) {
+    const wasFull = Boolean(fullKey.value);
+    exitFullScreen(); focusedKey.value = null; penOn.value = false;
+    // The full-screen button disappears; keep keyboard focus on the way to show video again.
+    if (wasFull) void nextTick(() => videoToggle.value?.focus());
+  }
+}, { flush: 'sync' });
 function showFullBar() {
   fullBarShown.value = true;
   clearTimeout(fullBarTimer);
   // While the pen is on, its buttons stay, so it is clear that touching the screen draws.
-  if (!penOn.value) fullBarTimer = setTimeout(() => { fullBarShown.value = false; }, 3000);
+  if (!penOn.value && !calm.value) fullBarTimer = setTimeout(() => { fullBarShown.value = false; }, 3000);
 }
-watch(penOn, showFullBar);
+watch([penOn, calm], showFullBar);
 function toggleFullBar() {
+  if (calm.value) { showFullBar(); return; }
   if (!fullBarShown.value) { showFullBar(); return; }
   fullBarShown.value = false;
   clearTimeout(fullBarTimer);
@@ -1163,6 +1175,13 @@ onBeforeUnmount(cleanup);
           <MessageSquare :size="20" /><span v-if="chatUnread" class="call-chat-badge">{{ chatUnread > 99 ? '99+' : chatUnread }}</span>
         </button>
       </header>
+      <div class="call-visual-toolbar">
+        <button ref="videoToggle" class="call-visual-toggle" type="button" @click="hideVideos = !hideVideos">
+          <EyeOff v-if="hideVideos" :size="18" aria-hidden="true" /><Eye v-else :size="18" aria-hidden="true" />
+          {{ hideVideos ? t('showVideos') : t('hideVideos') }}
+        </button>
+        <span v-if="hideVideos" role="status">{{ t('videosHidden') }}</span>
+      </div>
 
       <main class="call-stage">
         <div v-if="error" class="call-state-card error" role="alert">
@@ -1188,6 +1207,7 @@ onBeforeUnmount(cleanup);
               <bdi>{{ fullTile.kind === 'screen' ? t('screenOf', { name: fullTile.name }) : fullTile.name }}</bdi>
             </span>
             <span class="call-full-actions">
+              <button class="call-full-btn" type="button" @click="hideVideos = true"><EyeOff :size="18" />{{ t('hideVideos') }}</button>
               <button v-if="fullTile.kind === 'screen'" class="call-full-btn" type="button" :aria-pressed="darkScreen" @click="toggleDarkScreen(); showFullBar()">
                 <Sun v-if="darkScreen" :size="18" /><Moon v-else :size="18" />{{ darkScreen ? t('lightScreen') : t('darkScreen') }}
               </button>
@@ -1260,7 +1280,7 @@ onBeforeUnmount(cleanup);
             <button class="call-icon-btn" type="button" :aria-label="t('close')" @click="sheet = null"><X :size="18" /></button>
           </div>
           <ul class="call-people">
-            <li v-for="person in participants" :key="person.identity" :class="{ speaking: person.speaking }">
+            <li v-for="person in participants" :key="person.identity" :class="{ speaking: person.speaking && !calm }">
               <Avatar :name="person.name" :color="colorOf(person.identity)" size="small" />
               <div class="call-person-main">
                 <span class="call-person-name">
@@ -1333,6 +1353,7 @@ onBeforeUnmount(cleanup);
 
         <section v-else-if="sheet === 'more'" class="call-sheet" :aria-label="t('more')">
           <span class="call-sheet-handle" />
+          <VisualComfort />
           <label v-if="canAdjustVolume" class="call-volume">
             <Volume1 :size="20" aria-hidden="true" />
             <span>{{ t('callVolume') }}</span>
@@ -1376,6 +1397,28 @@ onBeforeUnmount(cleanup);
 </template>
 
 <style scoped>
+.call-visual-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 0 12px;
+  background: var(--call-bar);
+  color: var(--call-text-muted);
+  font-size: 12px;
+}
+.call-visual-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--call-text);
+  text-align: start;
+  font-size: 13px;
+}
+.call-visual-toggle svg { flex-shrink: 0; }
+
 /* A voice channel's call fills the main area: near-black like most video calls, or white in light mode. */
 .call-view {
   position: relative;

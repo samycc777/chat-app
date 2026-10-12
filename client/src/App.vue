@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watchEffect } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue';
 import { WifiOff } from 'lucide-vue-next';
 import type { Socket } from 'socket.io-client';
 import type { Channel, JoinResult, OnlineUser, User, VoiceCall } from './types';
@@ -48,6 +48,14 @@ const { t, translateError } = useI18n();
 const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 const currentUser = ref<User | null>(null);
 const connection = ref<'connecting' | 'connected' | 'reconnecting'>('connecting');
+const showConnection = ref(false);
+let connectionTimer: ReturnType<typeof setTimeout> | undefined;
+watch(connection, state => {
+  clearTimeout(connectionTimer);
+  showConnection.value = false;
+  if (state !== 'connected') connectionTimer = setTimeout(() => { showConnection.value = true; }, 1500);
+}, { immediate: true });
+onBeforeUnmount(() => clearTimeout(connectionTimer));
 const onlineUsers = ref(new Map<string, OnlineUser>());
 const channels = ref<Channel[]>([]);
 const calls = ref<VoiceCall[]>([]);
@@ -155,7 +163,7 @@ function backToName() {
     <CreateRoom v-if="creatingRoom" />
     <Auth v-else-if="!currentUser" :server-name="serverName" :open-invite="openInvite" @auth="joined" />
     <main v-else class="main-pane">
-      <div v-if="connection !== 'connected'" class="connection-banner" role="status">
+      <div v-if="showConnection" class="connection-banner" role="status">
         <WifiOff :size="15" />{{ connection === 'connecting' ? t('connecting') : t('reconnecting') }}
       </div>
       <CallView
@@ -223,7 +231,7 @@ function backToName() {
   background: var(--danger);
   font-size: 12px;
   font-weight: 700;
-  animation: connection-banner-in 200ms ease-out 1.5s both;
+  animation: connection-banner-in 200ms ease-out both;
 }
 
 @keyframes connection-banner-in {

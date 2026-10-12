@@ -602,8 +602,29 @@ html[dir='rtl'] body {
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
+    transition: none !important;
+    animation: none !important;
   }
+}
+
+/* Calm on the first visit, before Vue mounts, as well as when a device requests reduced motion.
+   Disable effects instead of speeding them up, which can compress brightness changes into a flash. */
+:root[data-calm='true'] *,
+:root[data-calm='true'] *::before,
+:root[data-calm='true'] *::after {
+  scroll-behavior: auto !important;
+  transition: none !important;
+  animation: none !important;
+}
+
+:root[data-calm='true'] .lofi-sky::before,
+:root[data-calm='true'] .lofi-sky::after,
+:root[data-calm='true'] .auth-btn::after {
+  display: none;
+}
+
+:root[data-calm='true'] .auth-btn:active,
+:root[data-calm='true'] .lobby-toggle:active,
+:root[data-calm='true'] .call-control:active {
+  scale: 1;
 }

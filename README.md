@@ -11,6 +11,7 @@ Until September 2026 Majlis was a Discord-style server with text channels, voice
 ## What everyone can do
 
 - **Type your name.** Every time the app opens, it asks for your name, already filled in with the one you used last time on that device, so it is one tap to go on. Change it there if you like. The first time, you open the invite link a friend sent; nobody types a code, because the key is inside the link. When the server has `OPEN_JOIN` on, the site's plain address works the same way.
+- **Add your photo.** On the screen before the call, tap your circle (or **Add your photo** at the bottom) and pick a picture. It shows instead of your initials to everyone in the room: in the list of who is in the call, on your tile when your camera is off, and in the call's list of people, and it changes for them straight away. A picture of any shape is cut to a square from its middle. **Change your photo** picks another; **Remove photo** brings your initials back.
 - **Invite someone.** Before joining, **Copy invite link** copies the link to the room you are in, ready to send.
 - **See who is in the call, then join.** The next screen shows who is in the call right now, and two big switches for your microphone and camera, so you choose before anyone hears or sees you. With the camera on you see yourself first. Your choice is remembered for next time. Then tap **Join call**.
 - **In the call**, anyone can:

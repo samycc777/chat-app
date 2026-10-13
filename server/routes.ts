@@ -17,6 +17,7 @@ import { rateLimit } from './rateLimit';
 import recordingsRouter from './recordings';
 import { streamLink } from './stream';
 import { pushRouter } from './push';
+import { avatarRouter, avatarUrl } from './avatars';
 
 const router = Router();
 router.use(authMiddleware);
@@ -101,7 +102,8 @@ router.post('/livekit/screen-token', async (req: AuthRequest, res: Response) => 
 
 router.get('/me', (req: AuthRequest, res: Response) => {
   const user = db.prepare(
-    'SELECT id, username, display_name, avatar_color, status, notify_level FROM users WHERE id = ?'
+    `SELECT u.id, u.username, u.display_name, u.avatar_color, u.status, u.notify_level, a.id AS avatar_id
+     FROM users u LEFT JOIN avatars a ON a.user_id = u.id WHERE u.id = ?`
   ).get(req.userId!) as any;
   if (!user) { res.status(404).json({ error: 'User not found' }); return; }
   res.json({
@@ -109,12 +111,14 @@ router.get('/me', (req: AuthRequest, res: Response) => {
     username: user.username,
     displayName: user.display_name,
     avatarColor: user.avatar_color,
+    avatarUrl: avatarUrl(user.avatar_id),
     status: user.status,
     notifyLevel: user.notify_level,
   });
 });
 
 router.use('/push', pushRouter);
+router.use('/me/avatar', avatarRouter);
 
 // Messages, files and recordings belong to the home room's text channels, which no other room has.
 function homeOnly(req: AuthRequest, res: Response, next: NextFunction) {

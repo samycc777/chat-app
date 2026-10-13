@@ -3,6 +3,8 @@ export interface User {
   username: string;
   displayName: string;
   avatarColor: string;
+  /** Their own picture, or null to show their initials. */
+  avatarUrl?: string | null;
   status: string;
   lastSeen?: number;
 }
@@ -18,6 +20,7 @@ export interface OnlineUser {
   id: string;
   displayName: string;
   avatarColor: string;
+  avatarUrl?: string | null;
 }
 
 export interface Message {

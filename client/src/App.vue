@@ -100,6 +100,8 @@ function listen(socket: Socket) {
   socket.on('presence', (data: { userId: string; online: boolean; user?: OnlineUser }) => {
     const next = new Map(onlineUsers.value);
     if (data.online && data.user) next.set(data.userId, data.user);
+    // Your own photo can change after the screen that changed it has closed, or on another device.
+    if (data.user && currentUser.value?.id === data.userId) currentUser.value.avatarUrl = data.user.avatarUrl ?? null;
     else next.delete(data.userId);
     onlineUsers.value = next;
   });
@@ -188,6 +190,7 @@ function backToName() {
         :can-join="connection === 'connected' && Boolean(voiceChannel)"
         @join="joinCall"
         @change-name="backToName"
+        @picture="url => { if (currentUser) currentUser.avatarUrl = url; }"
       />
     </main>
   </div>

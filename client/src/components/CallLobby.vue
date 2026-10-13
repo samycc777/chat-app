@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
-import { Mic, MicOff, Moon, Sun, Video, VideoOff } from 'lucide-vue-next';
+import { Camera, Mic, MicOff, Moon, Sun, Video, VideoOff } from 'lucide-vue-next';
+import { api } from '../api';
 import type { OnlineUser, User } from '../types';
 import { useI18n } from '../i18n';
 import { useTheme } from '../theme';
 import Avatar from './Avatar.vue';
 
 const props = defineProps<{ user: User; members: OnlineUser[]; error: string; joining: boolean; canJoin: boolean }>();
-const emit = defineEmits<{ join: [choice: { mic: boolean; camera: boolean }]; 'change-name': [] }>();
+const emit = defineEmits<{ join: [choice: { mic: boolean; camera: boolean }]; 'change-name': []; picture: [url: string | null] }>();
 const { t } = useI18n();
 const { theme, toggleTheme } = useTheme();
 
@@ -53,6 +54,37 @@ function join() {
   emit('join', { mic: micOn.value, camera: cameraOn.value });
 }
 
+// Your photo shows wherever your initials did, to everyone in the room. Any picture works: it is
+// cut to a square from its middle and made small here, so it uploads quickly on mobile data.
+const PICTURE_SIZE = 256;
+const pictureInput = ref<HTMLInputElement>();
+const pictureBusy = ref(false);
+const pictureProblem = ref('');
+async function shrinkPicture(file: File) {
+  const image = await createImageBitmap(file);
+  const side = Math.min(image.width, image.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = Math.min(PICTURE_SIZE, side);
+  const context = canvas.getContext('2d')!;
+  // A see-through picture would turn black as a JPEG.
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, (image.width - side) / 2, (image.height - side) / 2, side, side, 0, 0, canvas.width, canvas.height);
+  image.close();
+  return new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('No picture')), 'image/jpeg', 0.85));
+}
+async function changePicture(action: () => Promise<{ avatarUrl: string | null }>) {
+  pictureBusy.value = true;
+  pictureProblem.value = '';
+  try { emit('picture', (await action()).avatarUrl); } catch { pictureProblem.value = t('photoNotSaved'); }
+  pictureBusy.value = false;
+}
+function pictureChosen() {
+  const file = pictureInput.value?.files?.[0];
+  if (pictureInput.value) pictureInput.value.value = '';
+  if (file) void changePicture(async () => api.setAvatar(await shrinkPicture(file)));
+}
+
 // Whoever is here can bring others in: the invite link is the one this device joined with.
 const inviteCopied = ref(false);
 async function copyInvite() {
@@ -74,7 +106,10 @@ async function copyInvite() {
       </div>
       <div class="lobby-preview">
         <video v-show="cameraOn" ref="preview" autoplay playsinline muted />
-        <Avatar v-if="!cameraOn" :name="user.displayName" :color="user.avatarColor" size="large" />
+        <button v-if="!cameraOn" class="lobby-picture" type="button" :disabled="pictureBusy" :aria-label="user.avatarUrl ? t('changePhoto') : t('addPhoto')" @click="pictureInput?.click()">
+          <Avatar :name="user.displayName" :color="user.avatarColor" :picture="user.avatarUrl" size="large" />
+          <span class="lobby-picture-badge" aria-hidden="true"><Camera :size="15" /></span>
+        </button>
         <bdi class="lobby-me">{{ user.displayName }}</bdi>
       </div>
 
@@ -95,7 +130,7 @@ async function copyInvite() {
         <p v-if="!members.length">{{ t('callEmptyBody') }}</p>
         <ul v-else>
           <li v-for="member in members" :key="member.id">
-            <Avatar :name="member.displayName" :color="member.avatarColor" size="small" />
+            <Avatar :name="member.displayName" :color="member.avatarColor" :picture="member.avatarUrl" size="small" />
             <bdi>{{ member.displayName }}</bdi>
           </li>
         </ul>
@@ -107,7 +142,14 @@ async function copyInvite() {
       </button>
       <button class="lobby-invite" type="button" @click="copyInvite">{{ t('copyInviteLink') }}</button>
       <p v-if="inviteCopied" class="lobby-copied" role="status">{{ t('inviteCopied') }}</p>
-      <button class="lobby-change-name" type="button" @click="emit('change-name')">{{ t('changeName') }}</button>
+      <div class="lobby-links">
+        <button class="lobby-link" type="button" @click="emit('change-name')">{{ t('changeName') }}</button>
+        <button class="lobby-link" type="button" :disabled="pictureBusy" @click="pictureInput?.click()">{{ user.avatarUrl ? t('changePhoto') : t('addPhoto') }}</button>
+        <button v-if="user.avatarUrl" class="lobby-link" type="button" :disabled="pictureBusy" @click="changePicture(api.removeAvatar)">{{ t('removePhoto') }}</button>
+      </div>
+      <p v-if="pictureBusy" class="lobby-copied" role="status">{{ t('savingPhoto') }}</p>
+      <p v-if="pictureProblem" class="lobby-error" role="alert">{{ pictureProblem }}</p>
+      <input ref="pictureInput" type="file" accept="image/*" hidden @change="pictureChosen" />
     </div>
   </section>
 </template>
@@ -185,6 +227,26 @@ async function copyInvite() {
   background: rgba(0, 0, 0, 0.6);
   font-size: 13px;
   font-weight: 700;
+}
+
+.lobby-picture {
+  position: relative;
+  border-radius: 50%;
+}
+
+/* Says that tapping your initials or photo changes it. */
+.lobby-picture-badge {
+  width: 28px;
+  height: 28px;
+  position: absolute;
+  inset-inline-end: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--call-surface);
+  border-radius: 50%;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
 }
 
 .lobby-toggles {
@@ -277,8 +339,14 @@ async function copyInvite() {
   text-align: center;
 }
 
-.lobby-change-name {
-  align-self: center;
+.lobby-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 20px;
+}
+
+.lobby-link {
   color: var(--call-text-muted);
   font-size: 14px;
   text-decoration: underline;
@@ -301,7 +369,7 @@ async function copyInvite() {
 .lobby-card > :nth-child(9) { animation-delay: 540ms; }
 
 /* Your picture floats gently while you get ready. */
-.lobby-preview > :deep(.avatar) {
+.lobby-picture > :deep(.avatar) {
   animation: anime-float 1.8s ease-in-out infinite alternate;
 }
 

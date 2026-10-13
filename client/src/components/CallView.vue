@@ -433,6 +433,10 @@ function colorOf(identity: string) {
   return FALLBACK_COLORS[Math.abs(hash) % FALLBACK_COLORS.length];
 }
 
+const pictureOf = (identity: string) => props.people.get(identity)?.avatarUrl ?? null;
+// Someone who changes their picture during the call shows it on their tile straight away.
+watch(() => props.people, () => refresh());
+
 function openSheet(next: Sheet) { sheet.value = sheet.value === next ? null : next; }
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape') return;
@@ -470,7 +474,7 @@ function refresh() {
     const phoneScreen = owner !== participant.identity;
     const local = remoteOrLocal || owner === props.userId;
     const base = {
-      identity: owner, name: participant.name || owner, color: colorOf(owner), local,
+      identity: owner, name: participant.name || owner, color: colorOf(owner), picture: pictureOf(owner), local,
       micOn: participant.isMicrophoneEnabled, speaking: isSpeaking(participant), hand: raisedHands.value.has(owner),
       weak: weakPeople.value.has(participant.identity),
     };
@@ -1106,7 +1110,7 @@ onBeforeUnmount(cleanup);
     <div v-if="miniWindowAvailable" v-show="inMiniWindow" class="call-mini">
       <div v-show="miniTile && status === 'connected'" id="call-spot-mini" class="call-mini-spot" />
       <div v-if="!miniTile || status !== 'connected'" class="call-mini-card">
-        <Avatar v-if="miniSpeaker" :name="miniSpeaker.name" :color="colorOf(miniSpeaker.identity)" size="small" />
+        <Avatar v-if="miniSpeaker" :name="miniSpeaker.name" :color="colorOf(miniSpeaker.identity)" :picture="pictureOf(miniSpeaker.identity)" size="small" />
         <Volume2 v-else :size="22" aria-hidden="true" />
         <bdi>{{ miniSpeaker?.name ?? channelName }}</bdi>
       </div>
@@ -1232,7 +1236,7 @@ onBeforeUnmount(cleanup);
           </div>
           <ul class="call-people">
             <li v-for="person in participants" :key="person.identity" >
-              <Avatar :name="person.name" :color="colorOf(person.identity)" size="small" />
+              <Avatar :name="person.name" :color="colorOf(person.identity)" :picture="pictureOf(person.identity)" size="small" />
               <div class="call-person-main">
                 <span class="call-person-name">
                   <bdi>{{ person.name }}</bdi>

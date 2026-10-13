@@ -7,6 +7,7 @@ import { production } from './config';
 import { HOME_ROOM } from './channels';
 import { addRoomMember, getRoom, roomForKey } from './rooms';
 import { createLimiter } from './rateLimit';
+import { avatarUrl } from './avatars';
 
 const JWT_SECRET = process.env.JWT_SECRET || (production
   ? (() => { throw new Error('JWT_SECRET is required in production'); })()
@@ -117,6 +118,7 @@ router.post('/join', (req: Request, res: Response) => {
   res.json({ token, room: { id: room.id, name: room.name || null }, user: {
     id: user.id, username: user.username, displayName: user.display_name,
     avatarColor: user.avatar_color, status: user.status || '',
+    avatarUrl: avatarUrl((db.prepare('SELECT id FROM avatars WHERE user_id = ?').get(user.id) as { id: string } | undefined)?.id),
   } });
 });
 export default router;

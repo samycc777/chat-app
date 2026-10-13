@@ -11,6 +11,7 @@ import { inviteKey, openJoin, serverName, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_B
 import { roomForKey, roomsRouter } from './rooms';
 import { rateLimit } from './rateLimit';
 import { streamAttachment } from './stream';
+import { serveAvatar } from './avatars';
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -55,6 +56,8 @@ app.use('/api/rooms', rateLimit(60, 15 * 60_000), roomsRouter);
 // A player opens sound and video with the pass in its link rather than a session header, so this
 // comes before the API's session check. Seeking asks for many small parts, hence the generous limit.
 app.get('/api/attachments/:id/stream', rateLimit(1200, 60_000), streamAttachment);
+// Pictures are shown by images, which cannot send the session header either (see avatars.ts).
+app.get('/api/avatars/:id', rateLimit(1200, 60_000), serveAvatar);
 app.use('/api', rateLimit(1200, 60_000), apiRouter);
 app.use('/uploads', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -63,6 +66,7 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
     const limitMb = MAX_UPLOAD_BYTES === DEFAULT_MAX_UPLOAD_BYTES ? '100 MB by default' : `${(MAX_UPLOAD_BYTES / 1024 / 1024).toFixed(1)} MB`;
     return res.status(413).json({ error: `File exceeds the upload size limit (${limitMb}).` });
   }
+  if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Too large' });
   if (err?.message === 'Origin not allowed') return res.status(403).json({ error: 'Origin not allowed' });
   if (err instanceof SyntaxError && 'body' in err) return res.status(400).json({ error: 'Invalid JSON' });
   console.error('Request failed:', err?.message || 'unknown error');

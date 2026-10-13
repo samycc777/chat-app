@@ -386,6 +386,54 @@ async function leaveCall(channelId, ...leaving) {
   assert.ok(await eventually(() => !getCall(channelId)));
 }
 
+test('anyone can set, replace and remove their photo, and everyone online sees it at once', async () => {
+  const piaVisitor = nextVisitorId();
+  const pia = await (await joinRequest({ inviteKey: '0000', visitorId: piaVisitor, displayName: 'Pia' })).json();
+  const quinn = await join('Quinn');
+  assert.equal(pia.user.avatarUrl, null);
+  const quinnSocket = await connect(quinn.token);
+  await connect(pia.token);
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(2000, 7)]);
+  const setPhoto = (token, body, type = 'image/jpeg') => fetch(`${baseUrl}/api/me/avatar`, {
+    method: 'PUT', headers: { ...auth(token), 'Content-Type': type }, body,
+  });
+
+  // Only a signed-in person can set a photo, only a JPEG, and only a small one.
+  assert.equal((await setPhoto('', jpeg)).status, 401);
+  assert.equal((await setPhoto(pia.token, Buffer.from('<svg onload="alert(1)"/>'))).status, 400);
+  assert.equal((await setPhoto(pia.token, Buffer.from('<svg/>'), 'image/svg+xml')).status, 400);
+  assert.equal((await setPhoto(pia.token, Buffer.concat([jpeg, Buffer.alloc(400 * 1024)]))).status, 413);
+
+  const quinnSees = eventWhere(quinnSocket, 'presence', data => data.userId === pia.user.id && data.user?.avatarUrl);
+  const first = await setPhoto(pia.token, jpeg);
+  assert.equal(first.status, 200);
+  const { avatarUrl } = await first.json();
+  assert.match(avatarUrl, /^\/api\/avatars\/[0-9a-f-]{36}$/);
+  assert.equal((await quinnSees).user.avatarUrl, avatarUrl);
+  const picture = await fetch(`${baseUrl}${avatarUrl}`);
+  assert.equal(picture.status, 200);
+  assert.equal(picture.headers.get('content-type'), 'image/jpeg');
+  assert.deepEqual(Buffer.from(await picture.arrayBuffer()), jpeg);
+
+  // The photo comes back on the next opening and with who you are.
+  const again = await (await joinRequest({ inviteKey: '0000', visitorId: piaVisitor, displayName: 'Pia' })).json();
+  assert.equal(again.user.avatarUrl, avatarUrl);
+  assert.equal((await (await fetch(`${baseUrl}/api/me`, { headers: auth(pia.token) })).json()).avatarUrl, avatarUrl);
+
+  // A new photo has a new address, and the old one stops working.
+  const second = await (await setPhoto(pia.token, Buffer.concat([jpeg, Buffer.from([1])]))).json();
+  assert.notEqual(second.avatarUrl, avatarUrl);
+  assert.equal((await fetch(`${baseUrl}${avatarUrl}`)).status, 404);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM avatars WHERE user_id = ?').get(pia.user.id).count, 1);
+
+  const quinnSeesRemoved = eventWhere(quinnSocket, 'presence', data => data.userId === pia.user.id && data.user?.avatarUrl === null);
+  const removed = await fetch(`${baseUrl}/api/me/avatar`, { method: 'DELETE', headers: auth(pia.token) });
+  assert.deepEqual(await removed.json(), { avatarUrl: null });
+  await quinnSeesRemoved;
+  assert.equal((await fetch(`${baseUrl}${second.avatarUrl}`)).status, 404);
+  assert.equal((await fetch(`${baseUrl}/api/avatars/not-an-id`)).status, 404);
+});
+
 test('anyone in a call can record it, everyone sees it, and it is posted as a video in the chosen channel', async () => {
   const voice = firstChannel('voice');
   const general = firstChannel('text');

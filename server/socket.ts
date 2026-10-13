@@ -12,6 +12,7 @@ import { messageById } from './messages';
 import { forgetSocket, notifyCallStarted, notifyNewMessage, setAppActive } from './push';
 import { registerChatEvents } from './chat';
 import { connectRecordings } from './recordings';
+import { avatarUrl, onProfileChanged } from './avatars';
 
 // Who is online in each room, by room ID, then by user ID with their connections. Everyone in a
 // room is in every one of its channels, so each connection joins its room's Socket.IO room.
@@ -26,9 +27,11 @@ const SOFT_EVENT_LIMIT = 120;
 const HARD_EVENT_LIMIT = 600;
 const MAX_CHANNELS = 50;
 
-const profileQuery = db.prepare('SELECT id, display_name AS displayName, avatar_color AS avatarColor FROM users WHERE id = ?');
+const profileQuery = db.prepare(`SELECT u.id, u.display_name AS displayName, u.avatar_color AS avatarColor, a.id AS avatarId
+  FROM users u LEFT JOIN avatars a ON a.user_id = u.id WHERE u.id = ?`);
 function profile(userId: string) {
-  return profileQuery.get(userId) as { id: string; displayName: string; avatarColor: string } | undefined;
+  const row = profileQuery.get(userId) as { id: string; displayName: string; avatarColor: string; avatarId: string | null } | undefined;
+  return row && { id: row.id, displayName: row.displayName, avatarColor: row.avatarColor, avatarUrl: avatarUrl(row.avatarId) };
 }
 
 // Who is in each voice channel is kept by the server rather than read from LiveKit, so the sidebar
@@ -123,6 +126,17 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
   const broadcastChannels = () => io.to(HOME).emit('channels', { channels: listChannels() });
   // Recordings and text channels exist only in the home room.
   connectRecordings({ voiceChanged: () => broadcastVoice(HOME_ROOM), messagePosted: message => io.to(HOME).emit('new_message', message) });
+  // A new picture reaches everyone in the rooms its owner is in at once, in the list of people
+  // and in the call, the way they would see it after reconnecting.
+  onProfileChanged(userId => {
+    const user = profile(userId);
+    if (!user) return;
+    for (const [roomId, online] of onlineByRoom) {
+      if (!online.has(userId)) continue;
+      io.to(roomChannel(roomId)).emit('presence', { userId, online: true, user });
+      broadcastVoice(roomId);
+    }
+  });
 
   // A phone's screen connection is closed on the server's side too when its owner leaves:
   // otherwise a phone whose app was killed would keep showing its screen to the call.

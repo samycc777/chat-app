@@ -1,4 +1,6 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '';
+/** The full address of something the server gives as a path, such as a profile picture. */
+export const serverUrl = (path: string) => `${API_URL}${path}`;
 export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 type UploadResult = { attachmentId: string; name: string; type: 'image' | 'file'; mimeType: string; durationMs: number | null };
 export type LiveKitCredentials = { url: string; token: string; roomName: string; startedAt: number };
@@ -29,7 +31,8 @@ export async function request(path: string, options: RequestInit = {}) {
     ...options.headers as Record<string, string>,
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  if (!(options.body instanceof FormData)) {
+  // Form data and pictures carry their own type.
+  if (!(options.body instanceof FormData) && !(options.body instanceof Blob)) {
     headers['Content-Type'] = 'application/json';
   }
 
@@ -68,6 +71,8 @@ export const api = {
     request('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteKey, visitorId, displayName }) }),
 
   getMe: () => request('/api/me'),
+  setAvatar: (picture: Blob): Promise<{ avatarUrl: string }> => request('/api/me/avatar', { method: 'PUT', body: picture }),
+  removeAvatar: (): Promise<{ avatarUrl: null }> => request('/api/me/avatar', { method: 'DELETE' }),
 
   // Pages back from the given message, or forwards with `after`; a message's ID separates messages
   // sent in the same millisecond. `around` opens the history at one message.

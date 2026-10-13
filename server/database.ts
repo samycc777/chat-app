@@ -296,4 +296,15 @@ if (!db.prepare("SELECT 1 FROM app_settings WHERE key = 'room_members_started'")
   })();
 }
 
+// Everyone's own picture, small enough to keep in the database beside them. Its ID is its address
+// (see avatars.ts), so a new picture gets a new row.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS avatars (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    data BLOB NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`);
+
 export default db;

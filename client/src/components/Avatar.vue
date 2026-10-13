@@ -1,14 +1,19 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
+import { serverUrl } from "../api";
 const props = withDefaults(
   defineProps<{
     name: string;
     color: string;
+    /** Their own picture; their initials show without one, or if it cannot load. */
+    picture?: string | null;
     size?: "normal" | "small" | "tiny" | "large";
     online?: boolean;
   }>(),
-  { size: "normal", online: false },
+  { size: "normal", online: false, picture: null },
 );
+const broken = ref(false);
+watch(() => props.picture, () => { broken.value = false; });
 const ARABIC = /\p{Script=Arabic}/u;
 // Arabic names take one initial, skipping the article "ال" that starts so many of them; other
 // names take the first letter of their first two words. Array.from keeps emoji whole.
@@ -27,7 +32,8 @@ const initials = computed(() => {
 </script>
 <template>
   <div class="avatar" :class="size" :style="{ '--avatar-color': color }">
-    {{ initials }}
+    <img v-if="picture && !broken" :src="serverUrl(picture)" alt="" draggable="false" @error="broken = true" />
+    <template v-else>{{ initials }}</template>
     <div v-if="online" class="online-dot" />
   </div>
 </template>
@@ -49,6 +55,13 @@ const initials = computed(() => {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   font-size: 15px;
   font-weight: 700;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
 }
 
 .avatar.small {

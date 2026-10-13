@@ -22,6 +22,7 @@ export interface Tile {
   identity: string;
   name: string;
   color: string;
+  picture: string | null;
   kind: 'camera' | 'screen';
   local: boolean;
   track: VideoTrack | null;
@@ -174,7 +175,7 @@ onBeforeUnmount(() => {
       <span>{{ t('youAreSharing') }}</span>
     </div>
     <div v-else-if="!tile.track" class="call-tile-placeholder">
-      <Avatar :name="tile.name" :color="tile.color" :size="small ? 'small' : 'large'" />
+      <Avatar :name="tile.name" :color="tile.color" :picture="tile.picture" :size="small ? 'small' : 'large'" />
     </div>
     <div v-if="!full" class="call-tile-label">
       <span v-if="tile.hand" class="anime-wave" aria-hidden="true">✋</span>

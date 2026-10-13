@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
 import { Camera, Mic, MicOff, Moon, Sun, Video, VideoOff } from 'lucide-vue-next';
-import { api } from '../api';
+import { usePhoto } from '../photo';
 import type { OnlineUser, User } from '../types';
 import { useI18n } from '../i18n';
 import { useTheme } from '../theme';
@@ -54,36 +54,7 @@ function join() {
   emit('join', { mic: micOn.value, camera: cameraOn.value });
 }
 
-// Your photo shows wherever your initials did, to everyone in the room. Any picture works: it is
-// cut to a square from its middle and made small here, so it uploads quickly on mobile data.
-const PICTURE_SIZE = 256;
-const pictureInput = ref<HTMLInputElement>();
-const pictureBusy = ref(false);
-const pictureProblem = ref('');
-async function shrinkPicture(file: File) {
-  const image = await createImageBitmap(file);
-  const side = Math.min(image.width, image.height);
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = Math.min(PICTURE_SIZE, side);
-  const context = canvas.getContext('2d')!;
-  // A see-through picture would turn black as a JPEG.
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(image, (image.width - side) / 2, (image.height - side) / 2, side, side, 0, 0, canvas.width, canvas.height);
-  image.close();
-  return new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('No picture')), 'image/jpeg', 0.85));
-}
-async function changePicture(action: () => Promise<{ avatarUrl: string | null }>) {
-  pictureBusy.value = true;
-  pictureProblem.value = '';
-  try { emit('picture', (await action()).avatarUrl); } catch { pictureProblem.value = t('photoNotSaved'); }
-  pictureBusy.value = false;
-}
-function pictureChosen() {
-  const file = pictureInput.value?.files?.[0];
-  if (pictureInput.value) pictureInput.value.value = '';
-  if (file) void changePicture(async () => api.setAvatar(await shrinkPicture(file)));
-}
+const { busy: pictureBusy, problem: pictureProblem, choose: choosePicture, remove: removePicture } = usePhoto(url => emit('picture', url));
 
 // Whoever is here can bring others in: the invite link is the one this device joined with.
 const inviteCopied = ref(false);
@@ -106,7 +77,7 @@ async function copyInvite() {
       </div>
       <div class="lobby-preview">
         <video v-show="cameraOn" ref="preview" autoplay playsinline muted />
-        <button v-if="!cameraOn" class="lobby-picture" type="button" :disabled="pictureBusy" :aria-label="user.avatarUrl ? t('changePhoto') : t('addPhoto')" @click="pictureInput?.click()">
+        <button v-if="!cameraOn" class="lobby-picture" type="button" :disabled="pictureBusy" :aria-label="user.avatarUrl ? t('changePhoto') : t('addPhoto')" @click="choosePicture">
           <Avatar :name="user.displayName" :color="user.avatarColor" :picture="user.avatarUrl" size="large" />
           <span class="lobby-picture-badge" aria-hidden="true"><Camera :size="15" /></span>
         </button>
@@ -144,12 +115,11 @@ async function copyInvite() {
       <p v-if="inviteCopied" class="lobby-copied" role="status">{{ t('inviteCopied') }}</p>
       <div class="lobby-links">
         <button class="lobby-link" type="button" @click="emit('change-name')">{{ t('changeName') }}</button>
-        <button class="lobby-link" type="button" :disabled="pictureBusy" @click="pictureInput?.click()">{{ user.avatarUrl ? t('changePhoto') : t('addPhoto') }}</button>
-        <button v-if="user.avatarUrl" class="lobby-link" type="button" :disabled="pictureBusy" @click="changePicture(api.removeAvatar)">{{ t('removePhoto') }}</button>
+        <button class="lobby-link" type="button" :disabled="pictureBusy" @click="choosePicture">{{ user.avatarUrl ? t('changePhoto') : t('addPhoto') }}</button>
+        <button v-if="user.avatarUrl" class="lobby-link" type="button" :disabled="pictureBusy" @click="removePicture">{{ t('removePhoto') }}</button>
       </div>
       <p v-if="pictureBusy" class="lobby-copied" role="status">{{ t('savingPhoto') }}</p>
       <p v-if="pictureProblem" class="lobby-error" role="alert">{{ pictureProblem }}</p>
-      <input ref="pictureInput" type="file" accept="image/*" hidden @change="pictureChosen" />
     </div>
   </section>
 </template>

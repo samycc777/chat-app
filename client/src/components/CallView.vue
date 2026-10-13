@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import {
-  Download, Ellipsis, Eraser, Hand, Maximize, MessageSquare, Mic, MicOff, Minimize, Moon, Pencil, PhoneOff, RotateCcw, ScreenShare,
-  ScreenShareOff, SendHorizontal, Sun, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
+  Camera, Download, Ellipsis, Eraser, Hand, Maximize, MessageSquare, Mic, MicOff, Minimize, Moon, Pencil, PhoneOff, RotateCcw, ScreenShare,
+  ScreenShareOff, SendHorizontal, Sun, UserRound, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
 } from 'lucide-vue-next';
 import {
   AudioPresets, ConnectionQuality, createLocalAudioTrack, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPreset, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
   type RemoteTrack, type RemoteTrackPublication, type VideoTrack,
 } from 'livekit-client';
 import { api, ApiError } from '../api';
+import { usePhoto } from '../photo';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
 import { useTheme } from '../theme';
@@ -434,6 +435,9 @@ function colorOf(identity: string) {
 }
 
 const pictureOf = (identity: string) => props.people.get(identity)?.avatarUrl ?? null;
+// Your photo can be changed in the call too; your tile changes once the server tells everyone.
+const { busy: photoBusy, problem: photoProblem, choose: choosePhoto, remove: removePhoto } = usePhoto();
+watch(photoProblem, problem => { if (problem) showToast(problem); });
 // Someone who changes their picture during the call shows it on their tile straight away.
 watch(() => props.people, () => refresh());
 
@@ -1319,6 +1323,12 @@ onBeforeUnmount(cleanup);
           </button>
           <button v-if="offerTabletBoard" class="call-sheet-row" type="button" @click="askToDrawOverApps(); sheet = null">
             <Pencil :size="20" />{{ t('showDrawingsOnMyScreen') }}
+          </button>
+          <button class="call-sheet-row" type="button" :disabled="photoBusy" @click="choosePhoto">
+            <Camera :size="20" />{{ photoBusy ? t('savingPhoto') : pictureOf(userId) ? t('changePhoto') : t('addPhoto') }}
+          </button>
+          <button v-if="pictureOf(userId)" class="call-sheet-row" type="button" :disabled="photoBusy" @click="removePhoto">
+            <UserRound :size="20" />{{ t('removePhoto') }}
           </button>
           <button class="call-sheet-row" type="button" @click="toggleTheme">
             <Moon v-if="theme === 'light'" :size="20" /><Sun v-else :size="20" />{{ theme === 'light' ? t('darkMode') : t('lightMode') }}

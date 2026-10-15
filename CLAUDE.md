@@ -20,7 +20,7 @@ A Zoom-like call app with many rooms, one per customer; the first step to sellin
 - The app never animates (one global rule at the end of `styles.css`); don't add animations or transitions.
 - `tests/security.test.mjs` — end-to-end server tests (real server, temporary database, fake LiveKit and push services).
 - For the detailed file-by-file layout, read docs/notes/layout.md.
-- Calls run on our own LiveKit server on AWS, not LiveKit Cloud: docs/notes/call-server.md.
+- Calls run on our own LiveKit server on Hetzner, not LiveKit Cloud: docs/notes/call-server.md.
 
 ## Commands
 

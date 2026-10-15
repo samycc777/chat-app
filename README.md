@@ -55,7 +55,7 @@ Until September 2026 Majlis was a Discord-style server with text channels, voice
 | `OPEN_JOIN` | no | Set to `1` to let the site's plain address work like the invite link, so anyone who opens it can join. Leave it unset to keep the invite link needed. To close the server again afterwards, unset it and change `INVITE_KEY`. |
 | `SERVER_NAME` | no | The home room's name, shown on the join screen, in the browser tab and under the home-screen icon. |
 | `ROOM_CREATION_KEY` | to make rooms | The secret that lets you make new rooms on the live site at `https://<your site>/new?key=<ROOM_CREATION_KEY>`. Without it, making rooms is closed on the live site. |
-| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | for calls | Credentials of a LiveKit server (ours runs on AWS, see docs/notes/call-server.md; LiveKit Cloud works too). Without them the text channels work but calls cannot start. |
+| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | for calls | Credentials of a LiveKit server (ours runs on Hetzner, see docs/notes/call-server.md; LiveKit Cloud works too). Without them the text channels work but calls cannot start. |
 | `MAX_UPLOAD_BYTES` | no | Largest upload in bytes; 100 MB by default. |
 | `MAX_RECORDING_BYTES` | no | Largest call recording in bytes; 2 GB by default (about eight hours). A recording that reaches it stops, and what was recorded is kept. |
 | `FCM_SERVICE_ACCOUNT` | for Android app notifications | The Firebase service account JSON file, pasted whole or in base64 (see below). |

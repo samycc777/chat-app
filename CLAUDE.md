@@ -41,3 +41,4 @@ npm run dev     # server on :3001, client on https://localhost:5173/?invite=0000
 - Comments explain why, not what, in full sentences.
 - Commit messages: short plain-English title from the friends' point of view ("Let anyone share their screen in a call"), then prose paragraphs on why and how.
 - Pushing main redeploys the live site on Railway immediately (`railway.json` watchPatterns): check nobody is in a call first. A server restart disconnects every call.
+- Railway stops reading `railway.json` on 2026-12-01. Don't apply `railway config migrate` as generated: it names the service `app-majlis` (the real one is `nurturing-dedication`), leaves out the `/data` volume (undeclared resources get deleted), and its format has no watchPatterns or restart policy.

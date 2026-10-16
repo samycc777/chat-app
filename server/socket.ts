@@ -61,7 +61,9 @@ const canSee = (message: CallChatMessage, userId: string) => !message.toId || me
 // the screen stops only once the wait is over and the owner is not in the call's sound and video
 // either, for example because the app was killed.
 export const DROPPED_SCREEN_MS = 5 * 60_000;
-const droppedScreens = new Map<string, { call: VoiceCall; since: number }>();
+// Keyed by room and person, since the same person may share a screen in two rooms' calls.
+const droppedScreens = new Map<string, { userId: string; call: VoiceCall; since: number }>();
+const droppedKey = (roomId: string, userId: string) => `${roomId}\n${userId}`;
 function endPhoneScreen(userId: string, call: VoiceCall, why: string) {
   console.log(`Stopping the shared screen of ${userId} in ${call.roomName}: ${why}`);
   roomService()?.removeParticipant(call.roomName, screenIdentity(userId)).catch(() => { /* It had already stopped sharing. */ });
@@ -77,15 +79,16 @@ async function stillInCall(userId: string, call: VoiceCall) {
   }
 }
 export async function sweepDroppedScreens(now = Date.now()) {
-  for (const [userId, dropped] of droppedScreens) {
+  for (const [key, dropped] of droppedScreens) {
     if (now - dropped.since < DROPPED_SCREEN_MS) continue;
+    const { userId } = dropped;
     if (await stillInCall(userId, dropped.call)) {
       // They may have come back in the meantime, which ends this wait on its own.
-      if (droppedScreens.get(userId) === dropped) dropped.since = now;
+      if (droppedScreens.get(key) === dropped) dropped.since = now;
       continue;
     }
-    if (droppedScreens.get(userId) !== dropped) continue;
-    droppedScreens.delete(userId);
+    if (droppedScreens.get(key) !== dropped) continue;
+    droppedScreens.delete(key);
     endPhoneScreen(userId, dropped.call, `they did not come back within ${DROPPED_SCREEN_MS / 60_000} minutes`);
   }
 }
@@ -128,18 +131,18 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
 
   // A phone's screen connection is closed on the server's side too when its owner leaves:
   // otherwise a phone whose app was killed would keep showing its screen to the call.
-  function takeOutOfCall(userId: string, dropped = false) {
-    const call = removeFromCall(userId);
+  function takeOutOfCall(userId: string, roomId: string, dropped = false) {
+    const call = removeFromCall(userId, roomId);
     if (call?.phoneScreens.delete(userId)) {
       if (dropped) {
         console.log(`The connection of ${userId}, who shares a screen in ${call.roomName}, dropped`);
-        droppedScreens.set(userId, { call, since: Date.now() });
+        droppedScreens.set(droppedKey(roomId, userId), { userId, call, since: Date.now() });
       } else endPhoneScreen(userId, call, 'they left the call');
     }
     return call;
   }
-  function leaveCall(userId: string, dropped = false) {
-    const call = takeOutOfCall(userId, dropped);
+  function leaveCall(userId: string, roomId: string, dropped = false) {
+    const call = takeOutOfCall(userId, roomId, dropped);
     if (call) broadcastVoice(call.roomId);
   }
 
@@ -182,8 +185,8 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       forgetSocket(userId, socket.id);
       // The connection that joined a call carries it; if it drops, the app joins again when it
       // reconnects, so nobody is shown sitting in a call they have left.
-      const call = callOf(userId);
-      if (call?.members.get(userId) === socket.id) leaveCall(userId, true);
+      const call = callOf(userId, roomId);
+      if (call?.members.get(userId) === socket.id) leaveCall(userId, roomId, true);
       const sockets = onlineUsers.get(userId);
       if (!sockets) return;
       sockets.delete(socket.id);
@@ -195,22 +198,19 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     });
 
     function registerCallEvents() {
-      // Like Discord, a person is in at most one voice channel; joining another moves them.
+      // Like Discord, a person is in at most one voice channel of a room; joining another moves them.
       socket.on('voice_join', (data: { channelId: unknown }, callback?: unknown) => {
         const reply = (payload: object) => { if (typeof callback === 'function') callback(payload); };
         const channel = getChannel(data?.channelId, roomId);
         if (channel?.kind !== 'voice') return reply({ error: 'Unknown channel' });
-        const previous = callOf(userId);
-        if (previous && previous.channelId !== channel.id) {
-          takeOutOfCall(userId);
-          if (previous.roomId !== roomId) broadcastVoice(previous.roomId);
-        }
+        const previous = callOf(userId, roomId);
+        if (previous && previous.channelId !== channel.id) takeOutOfCall(userId, roomId);
         const startsCall = !getCall(channel.id);
         const call = addToCall(channel.id, roomId, userId, socket.id);
         // Back after a dropped connection: their phone's screen, still going, is theirs again.
-        const dropped = droppedScreens.get(userId);
+        const dropped = droppedScreens.get(droppedKey(roomId, userId));
         if (dropped) {
-          droppedScreens.delete(userId);
+          droppedScreens.delete(droppedKey(roomId, userId));
           if (dropped.call.channelId === channel.id) call.phoneScreens.add(userId);
           else endPhoneScreen(userId, dropped.call, 'they came back in another call');
         }
@@ -223,13 +223,13 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
         if (startsCall && (data as { rejoin?: unknown })?.rejoin !== true) notifyCallStarted(channel, roomId, userId);
       });
 
-      socket.on('voice_leave', () => leaveCall(userId));
+      socket.on('voice_leave', () => leaveCall(userId, roomId));
 
       // The call's chat, to everyone in the call or privately to one of them. Only people in the call
       // can write in it, and only to people who are in it too.
       socket.on('call_chat_send', (data: { text?: unknown; to?: unknown }, callback?: unknown) => {
         const reply = (payload: object) => { if (typeof callback === 'function') callback(payload); };
-        const call = callOf(userId);
+        const call = callOf(userId, roomId);
         if (!call) return reply({ error: 'Not in a call' });
         const text = typeof data?.text === 'string' ? data.text.trim() : '';
         if (!text || text.length > MAX_CALL_CHAT_TEXT) return reply({ error: 'Invalid message' });
@@ -255,7 +255,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
 
       socket.on('raise_hand', (data: { channelId: string; raised: boolean }) => {
         if (!data || typeof data.raised !== 'boolean') return;
-        const call = callOf(userId);
+        const call = callOf(userId, roomId);
         if (!call || call.channelId !== data.channelId || data.raised === call.hands.has(userId)) return;
         if (data.raised) call.hands.set(userId, Date.now());
         else call.hands.delete(userId);

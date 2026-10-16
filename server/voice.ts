@@ -41,8 +41,11 @@ export function allCalls(roomId?: string): VoiceCall[] {
   return [...calls.values()].filter(call => roomId === undefined || call.roomId === roomId);
 }
 
-export function callOf(userId: string): VoiceCall | undefined {
-  return allCalls().find(call => call.members.has(userId));
+// One person can be in two rooms at once (on two devices, or two invite links on one), so a call is
+// always looked up within the room of the session asking: a session from one room must never be
+// able to leave, chat in or raise a hand in another room's call.
+export function callOf(userId: string, roomId: string): VoiceCall | undefined {
+  return allCalls(roomId).find(call => call.members.has(userId));
 }
 
 export function addToCall(channelId: string, roomId: string, userId: string, socketId: string): VoiceCall {
@@ -57,8 +60,8 @@ export function addToCall(channelId: string, roomId: string, userId: string, soc
 }
 
 /** Returns the call the user was in, if any. */
-export function removeFromCall(userId: string): VoiceCall | undefined {
-  const call = callOf(userId);
+export function removeFromCall(userId: string, roomId: string): VoiceCall | undefined {
+  const call = callOf(userId, roomId);
   if (!call) return undefined;
   call.members.delete(userId);
   call.hands.delete(userId);

@@ -583,6 +583,47 @@ test("a room's people see and hear only each other, and never the home room's ca
   bakerSocket.emit('voice_leave');
 });
 
+test("one person in two rooms' calls at once cannot leave, chat in or raise a hand in one room's call from the other", async () => {
+  const room = await (await createRoom({ name: 'Workshop' })).json();
+  const visitorId = nextVisitorId();
+  const atHome = await (await joinRequest({ inviteKey: '0000', visitorId, displayName: 'Two rooms' })).json();
+  const inRoom = await (await joinRequest({ inviteKey: room.invite, visitorId })).json();
+  assert.equal(inRoom.user.id, atHome.user.id);
+  const friend = await join('Stays home');
+  const [homeSocket, roomSocket, friendSocket] = await Promise.all([atHome, inRoom, friend].map(person => connect(person.token)));
+  const homeCall = newCall('Kitchen');
+  const roomCall = db.prepare('SELECT id FROM channels WHERE room_id = ?').get(room.id).id;
+  const { getCall } = await import('../server/voice.ts');
+
+  await emitWithAck(homeSocket, 'voice_join', { channelId: homeCall });
+  await emitWithAck(friendSocket, 'voice_join', { channelId: homeCall });
+  // Joining the other room's call does not take them out of the home room's call.
+  await emitWithAck(roomSocket, 'voice_join', { channelId: roomCall });
+  assert.ok(getCall(homeCall).members.has(atHome.user.id));
+  assert.ok(getCall(roomCall).members.has(atHome.user.id));
+
+  // The room's session chats only in the room's call, so the home call's friend hears nothing.
+  const friendHearsNothing = quietFor(friendSocket, 'call_chat_message');
+  assert.deepEqual(await emitWithAck(roomSocket, 'call_chat_send', { text: 'hello', to: friend.user.id }), { error: 'Not in the call' });
+  assert.deepEqual(await emitWithAck(roomSocket, 'call_chat_send', { text: 'hello' }), { ok: true });
+  assert.ok(await friendHearsNothing);
+  assert.equal(getCall(homeCall).chat.length, 0);
+
+  // A hand raised for the home call from the room's session is ignored.
+  roomSocket.emit('raise_hand', { channelId: homeCall, raised: true });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(getCall(homeCall).hands.size, 0);
+
+  // Leaving from the room's session, or losing its connection, leaves only the room's call.
+  roomSocket.emit('voice_leave');
+  assert.ok(await eventually(() => !getCall(roomCall)));
+  await emitWithAck(roomSocket, 'voice_join', { channelId: roomCall });
+  roomSocket.disconnect();
+  assert.ok(await eventually(() => !getCall(roomCall)));
+  assert.ok(getCall(homeCall).members.has(atHome.user.id));
+  await leaveCall(homeCall, homeSocket, friendSocket);
+});
+
 test("a room's call is announced only to people who joined that room", async () => {
   const room = await (await createRoom({ name: 'Studio' })).json();
   const [host, guest] = [await join('Host', room.invite), await join('Guest', room.invite)];

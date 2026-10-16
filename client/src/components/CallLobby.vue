@@ -8,7 +8,7 @@ import { useTheme } from '../theme';
 import Avatar from './Avatar.vue';
 
 const props = defineProps<{ user: User; members: OnlineUser[]; error: string; joining: boolean; canJoin: boolean }>();
-const emit = defineEmits<{ join: [choice: { mic: boolean; camera: boolean }]; 'change-name': []; picture: [url: string | null] }>();
+const emit = defineEmits<{ join: [choice: { mic: boolean; camera: boolean }]; 'change-name': []; 'delete-data': []; picture: [url: string | null] }>();
 const { t } = useI18n();
 const { theme, toggleTheme } = useTheme();
 
@@ -54,6 +54,11 @@ function join() {
   emit('join', { mic: micOn.value, camera: cameraOn.value });
 }
 
+// A native question is enough here: it is rare, it must not be tapped by accident, and it needs no
+// extra screen for friends to learn.
+function deleteData() {
+  if (window.confirm(t('deleteMyDataConfirm'))) emit('delete-data');
+}
 const { busy: pictureBusy, problem: pictureProblem, choose: choosePicture, remove: removePicture } = usePhoto(url => emit('picture', url));
 
 // Whoever is here can bring others in: the invite link is the one this device joined with.
@@ -120,6 +125,7 @@ async function copyInvite() {
       </div>
       <p v-if="pictureBusy" class="lobby-copied" role="status">{{ t('savingPhoto') }}</p>
       <p v-if="pictureProblem" class="lobby-error" role="alert">{{ pictureProblem }}</p>
+      <button class="lobby-delete" type="button" @click="deleteData">{{ t('deleteMyData') }}</button>
     </div>
   </section>
 </template>
@@ -329,6 +335,24 @@ async function copyInvite() {
   font-size: 14px;
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* Kept quiet and apart from the other links, so nobody taps it by mistake. */
+.lobby-delete {
+  justify-self: center;
+  margin-top: 4px;
+  color: var(--call-text-muted);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  opacity: 0.8;
+}
+
+@media (pointer: coarse) {
+  .lobby-delete {
+    min-height: 44px;
+    padding: 0 12px;
+  }
 }
 
 /* Each part of the screen rises in after the one above it. */

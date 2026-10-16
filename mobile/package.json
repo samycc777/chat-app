@@ -2,7 +2,7 @@
   "name": "hangout-mobile",
   "private": true,
   "version": "1.0.0",
-  "description": "iPhone and Android apps for Hangout: native shells that load the website.",
+  "description": "iPhone and Android apps for Majlis: native shells that load the website.",
   "type": "module",
   "scripts": {
     "sync": "cap sync",

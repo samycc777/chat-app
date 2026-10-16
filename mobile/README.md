@@ -1,12 +1,12 @@
-# Hangout phone apps (iPhone and Android)
+# Majlis phone apps (iPhone and Android)
 
-This folder holds the iPhone and Android apps for Hangout.
+This folder holds the iPhone and Android apps for Majlis.
 
 ## What these apps are
 
 The apps are thin "wrappers" made with [Capacitor](https://capacitorjs.com). Each one is a full-screen
-web view (a browser window with no address bar) that opens the Hangout website. There is no separate
-phone version of Hangout to maintain: the website, the iPhone app and the Android app are the same app.
+web view (a browser window with no address bar) that opens the Majlis website. There is no separate
+phone version of Majlis to maintain: the website, the iPhone app and the Android app are the same app.
 
 Why it works this way: when the website is updated and deployed, everyone with the app gets the change
 the next time they open it. You only need to build and send out a new app when something in this
@@ -138,7 +138,7 @@ without the "unknown source" warning of an APK. Random people cannot find or ins
    ```
 
    The file is `mobile/android/app/build/outputs/bundle/release/app-release.aab`.
-2. In [Play Console](https://play.google.com/console): **Create app** → name "Hangout", app, free. Then
+2. In [Play Console](https://play.google.com/console): **Create app** → name "Majlis", app, free. Then
    **Test and release → Testing → Internal testing → Testers**: create an email list with the Gmail
    addresses of the teacher and the students, and save.
 3. **Internal testing → Create new release**: let Google manage the app signing key, upload the `.aab`,
@@ -193,9 +193,9 @@ app for testing apps before they're in the App Store. It needs a paid Apple deve
    **Signing & Capabilities** tab and choose your **Team**. Leave "Automatically manage signing" on.
    The bundle identifier must stay `com.samycc777.majlis`.
 5. Go to <https://appstoreconnect.apple.com> → **Apps** → **+** → **New App**. Platform iOS, name
-   "Hangout" (if the name is taken, add something, e.g. "Hangout Friends"; the name on the phone stays
+   "Majlis" (if the name is taken, add something, e.g. "Majlis Friends"; the name on the phone stays
    "Majlis"), any language, bundle ID `com.samycc777.majlis` (if it isn't in the list, Xcode creates
-   it after step 4; refresh the page), SKU anything, e.g. `hangout`.
+   it after step 4; refresh the page), SKU anything, e.g. `majlis`.
 6. In Xcode, choose **Any iOS Device (arm64)** as the destination at the top of the window, then
    **Product → Archive**. This takes a few minutes.
 7. When the Organizer window opens, select the new archive and click **Distribute App** → **TestFlight
@@ -220,7 +220,7 @@ people's shared screens.
 
 **Sharing your own screen works in the Android app.** A web page inside an app can't capture the screen,
 so the Android app does it with its own code: `ScreenSharePlugin.kt` shows Android's "Share your screen
-with Hangout?" prompt, then joins the call a second time with a screen-only pass from the server and sends
+with Majlis?" prompt, then joins the call a second time with a screen-only pass from the server and sends
 the screen with LiveKit's Android library. `ScreenShareService.kt` keeps a notification with a **Stop
 sharing** button while it lasts; Android needs it to keep the microphone on while another app is in front.
 Everyone sees it as that person's screen, not as an extra person.

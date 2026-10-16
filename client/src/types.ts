@@ -14,6 +14,8 @@ export interface JoinResult {
   token: string;
   user: User;
   room?: { id: string; name: string | null };
+  /** Given only when a hand-off made this device someone it was not yet: their identity to keep. */
+  visitorId?: string;
 }
 
 export interface OnlineUser {

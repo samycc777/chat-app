@@ -3,7 +3,7 @@ import http from 'http';
 import compression from 'compression';
 import cors from 'cors';
 import path from 'path';
-import authRouter, { authMiddleware, cleanDisplayName } from './auth';
+import authRouter, { authMiddleware, cleanDisplayName, handoffFormat } from './auth';
 import { signOut } from './account';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
@@ -67,19 +67,19 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 // Named after the room, so someone who adds the app to their home screen sees its name.
 // An iPhone keeps a Home Screen app's storage apart from Safari's, so the app would open knowing
-// nothing: no invite, no name. The page therefore asks for the manifest with its invite, visitor
-// identity and name, and the app's start link carries them, so it opens already signed in as the
-// same person. They are only echoed back when the invite is right, to someone who already has them.
+// nothing: no invite, no name. The page therefore asks for the manifest with its invite, a hand-off
+// pass (see makeHandoff in auth.ts) and the name, and the app's start link carries them, so it opens
+// as the same person. They are only echoed back when the invite is right, to someone who already has them.
 // It checks the invite, so it is limited like joining is, and cannot be used to guess the key.
 app.get('/manifest.webmanifest', rateLimit(300, 15 * 60_000), (req, res) => {
   const param = (key: string) => typeof req.query[key] === 'string' ? req.query[key] as string : '';
-  const invite = param('invite'), visitor = param('visitor'), person = cleanDisplayName(param('name')).slice(0, 60);
+  const invite = param('invite'), handoff = param('handoff'), person = cleanDisplayName(param('name')).slice(0, 60);
   const room = invite ? roomForKey(invite) : undefined;
   const name = (room ? room.name : serverName()) || 'Majlis';
   let startUrl = '/';
   if (room) {
     const start = new URLSearchParams({ invite });
-    if (/^[0-9a-f-]{36}$/i.test(visitor)) start.set('visitor', visitor);
+    if (handoffFormat(handoff)) start.set('handoff', handoff);
     if (person) start.set('name', person);
     startUrl = `/?${start}`;
   }

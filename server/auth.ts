@@ -35,8 +35,10 @@ function keyFingerprint(roomId = HOME_ROOM) {
 
 const sessionRow = db.prepare('SELECT 1 FROM sessions WHERE id = ? AND user_id = ? AND room_id = ? AND expires_at > ?');
 export function verifyToken(token: string): Session | null {
-  let claims: { userId?: unknown; roomId?: unknown; code?: unknown; sid?: unknown };
+  let claims: { userId?: unknown; roomId?: unknown; code?: unknown; sid?: unknown; purpose?: unknown };
   try { claims = jwt.verify(token, JWT_SECRET) as typeof claims; } catch { return null; }
+  // Other passes signed with the same secret (the home-screen hand-off below) are not sessions.
+  if (claims.purpose !== undefined) return null;
   // Sessions from before rooms existed carry no room; they were all opened in the home room.
   const roomId = claims.roomId === undefined ? HOME_ROOM : claims.roomId;
   if (typeof claims.userId !== 'string' || typeof roomId !== 'string' || !claims.code || claims.code !== keyFingerprint(roomId)) return null;
@@ -68,6 +70,27 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   next();
 }
 
+// An iPhone's Home Screen app starts with empty storage, so the page puts a hand-off pass in the
+// app's start link (see homeScreen.ts and the manifest route in index.ts) that lets the new app
+// carry on as the same person. Before, the link carried the device's permanent identity, which
+// then sat in the app's start link and could be copied out of it for good. A hand-off pass lasts
+// two days, and it works only from the network it was made on: the Home Screen app is added and
+// opened on the same phone a moment later, while anyone else could make a pass for their own
+// account and send it in a link, signing a friend's new device in as them without noticing.
+const HANDOFF_FORMAT = /^[\w-]+\.[\w-]+\.[\w-]+$/;
+const networkOf = (ip: string) => createHmac('sha256', JWT_SECRET).update(`network:${ip}`).digest('base64url').slice(0, 22);
+export const handoffFormat = (value: string) => value.length <= 1000 && HANDOFF_FORMAT.test(value);
+export function makeHandoff(userId: string, ip: string) {
+  return jwt.sign({ purpose: 'handoff', net: networkOf(ip) }, JWT_SECRET, { subject: userId, expiresIn: '2d' });
+}
+function handoffUser(handoff: unknown, ip: string): string | null {
+  if (typeof handoff !== 'string' || !handoffFormat(handoff)) return null;
+  let claims: { purpose?: unknown; sub?: unknown; net?: unknown };
+  try { claims = jwt.verify(handoff, JWT_SECRET) as typeof claims; } catch { return null; }
+  if (claims.purpose !== 'handoff' || typeof claims.sub !== 'string' || claims.net !== networkOf(ip)) return null;
+  return claims.sub;
+}
+
 // Control and bidirectional-override characters could make a name render as someone else's.
 export function cleanDisplayName(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -96,7 +119,21 @@ router.post('/join', (req: Request, res: Response) => {
   if (!/^[0-9a-f-]{36}$/i.test(visitorId)) { res.status(400).json({ error: 'Invalid visitor identity' }); return; }
   if (displayName.length > 60) { res.status(400).json({ error: 'Display name must be at most 60 characters' }); return; }
 
-  let user = db.prepare('SELECT id, username, display_name, avatar_color, status FROM users WHERE visitor_id = ?').get(visitorId) as any;
+  const userColumns = 'SELECT id, username, display_name, avatar_color, status, visitor_id FROM users';
+  let user = db.prepare(`${userColumns} WHERE visitor_id = ?`).get(visitorId) as any;
+  // A new device with a valid hand-off becomes the person who made it, and learns their identity.
+  // A hand-off that does not check out is ignored, and the device starts as a new person.
+  let adopted = false;
+  if (!user) {
+    const handedOff = handoffUser(body.handoff, ip);
+    user = handedOff ? db.prepare(`${userColumns} WHERE id = ?`).get(handedOff) : undefined;
+    adopted = Boolean(user);
+    // Someone from the class app's days may never have had a device identity; this one becomes it.
+    if (user && !user.visitor_id) {
+      db.prepare('UPDATE users SET visitor_id = ? WHERE id = ?').run(visitorId, user.id);
+      user.visitor_id = visitorId;
+    }
+  }
   if (!user && !displayName) { res.status(400).json({ error: 'Display name is required' }); return; }
   if (user) {
     db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(displayName || user.display_name, user.id);
@@ -107,11 +144,11 @@ router.post('/join', (req: Request, res: Response) => {
     const avatarColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
     db.prepare('INSERT INTO users (id, username, display_name, password_hash, avatar_color, visitor_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(id, username, displayName, 'disabled', avatarColor, visitorId, '');
-    user = { id, username, display_name: displayName, avatar_color: avatarColor, status: '' };
+    user = { id, username, display_name: displayName, avatar_color: avatarColor, status: '', visitor_id: visitorId };
   }
   addRoomMember(room.id, user.id);
   const token = openSession(user.id, room.id);
-  res.json({ token, room: { id: room.id, name: room.name || null }, user: {
+  res.json({ token, room: { id: room.id, name: room.name || null }, ...(adopted ? { visitorId: user.visitor_id } : {}), user: {
     id: user.id, username: user.username, displayName: user.display_name,
     avatarColor: user.avatar_color, status: user.status || '',
     avatarUrl: avatarUrl((db.prepare('SELECT id FROM avatars WHERE user_id = ?').get(user.id) as { id: string } | undefined)?.id),

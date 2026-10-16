@@ -116,7 +116,7 @@ function joined(result: JoinResult) {
   const socket = connectSocket(result.token);
   listen(socket);
   void startNotifications(socket);
-  rememberForHomeScreen(result.user.displayName);
+  void rememberForHomeScreen(result.user.displayName);
   preloadCall();
 }
 

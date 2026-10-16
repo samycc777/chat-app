@@ -1,6 +1,6 @@
 import { Response, Router } from 'express';
 import db from './database';
-import { AuthRequest, authMiddleware } from './auth';
+import { AuthRequest, authMiddleware, makeHandoff } from './auth';
 import { getCall, screenIdentity } from './voice';
 import { isVoiceChannel } from './channels';
 import { AccessToken, TrackSource } from 'livekit-server-sdk';
@@ -83,6 +83,12 @@ router.post('/livekit/screen-token', async (req: AuthRequest, res: Response) => 
 });
 
 router.delete('/me', deleteMyData);
+
+// A pass for the iPhone Home Screen app to carry on as this person (see makeHandoff in auth.ts).
+router.get('/me/handoff', (req: AuthRequest, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ handoff: makeHandoff(req.userId!, req.ip || 'unknown') });
+});
 
 router.get('/me', (req: AuthRequest, res: Response) => {
   const user = db.prepare(

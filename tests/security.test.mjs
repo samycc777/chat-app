@@ -186,18 +186,62 @@ after(async () => {
 });
 
 
-test('the home screen app starts with the invite, identity and name only when the invite is right', async () => {
+test('the home screen app starts with the invite, a hand-off pass and the name only when the invite is right, never the identity', async () => {
   const visitor = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  const handoff = 'eyJhbGciOiJIUzI1NiJ9.eyJwdXJwb3NlIjoiaGFuZG9mZiJ9.c2lnbmF0dXJl';
   const manifest = async query => (await fetch(`${baseUrl}/manifest.webmanifest${query}`)).json();
   assert.equal((await manifest('')).start_url, '/');
-  assert.equal((await manifest(`?invite=wrong&visitor=${visitor}&name=Salma`)).start_url, '/');
-  const start = new URL((await manifest(`?invite=0000&visitor=${visitor}&name=${encodeURIComponent('Sal\u202Ema')}`)).start_url, baseUrl);
+  assert.equal((await manifest(`?invite=wrong&handoff=${handoff}&name=Salma`)).start_url, '/');
+  const start = new URL((await manifest(`?invite=0000&handoff=${handoff}&visitor=${visitor}&name=${encodeURIComponent('Sal\u202Ema')}`)).start_url, baseUrl);
   assert.equal(start.pathname, '/');
   assert.equal(start.searchParams.get('invite'), '0000');
-  assert.equal(start.searchParams.get('visitor'), visitor);
+  assert.equal(start.searchParams.get('handoff'), handoff);
+  assert.equal(start.searchParams.get('visitor'), null);
   assert.equal(start.searchParams.get('name'), 'Salma');
-  const badVisitor = new URL((await manifest('?invite=0000&visitor=nope')).start_url, baseUrl);
-  assert.equal(badVisitor.searchParams.get('visitor'), null);
+  for (const bad of ['nope', `${handoff}.extra`, `<script>.a.b`, `${'a'.repeat(600)}.${'b'.repeat(600)}.c`]) {
+    const refused = new URL((await manifest(`?invite=0000&handoff=${encodeURIComponent(bad)}`)).start_url, baseUrl);
+    assert.equal(refused.searchParams.get('handoff'), null, bad);
+  }
+});
+
+test("a new device with a hand-off pass from the same network becomes the person who made it, and any other pass is ignored", async () => {
+  const salma = await join('Salma on Safari');
+  const salmaVisitor = db.prepare('SELECT visitor_id FROM users WHERE id = ?').get(salma.user.id).visitor_id;
+  assert.equal((await fetch(`${baseUrl}/api/me/handoff`)).status, 401);
+  const { handoff } = await (await fetch(`${baseUrl}/api/me/handoff`, { headers: auth(salma.token) })).json();
+  // It is not a session.
+  assert.equal((await fetch(`${baseUrl}/api/me`, { headers: auth(handoff) })).status, 401);
+
+  // The Home Screen app, on a device that has never been anyone, carries on as Salma.
+  const homeScreen = await (await joinRequest({ inviteKey: '0000', visitorId: nextVisitorId(), handoff })).json();
+  assert.equal(homeScreen.user.id, salma.user.id);
+  assert.equal(homeScreen.visitorId, salmaVisitor);
+
+  // A device that is already someone stays who it is.
+  const known = await join('Already someone');
+  const knownVisitor = db.prepare('SELECT visitor_id FROM users WHERE id = ?').get(known.user.id).visitor_id;
+  const stays = await (await joinRequest({ inviteKey: '0000', visitorId: knownVisitor, handoff })).json();
+  assert.equal(stays.user.id, known.user.id);
+  assert.equal(stays.visitorId, undefined);
+
+  // A made-up, expired or other network's pass, or a session in its place, starts a new person.
+  const secret = process.env.JWT_SECRET;
+  const { net } = jwt.decode(handoff);
+  const otherNetwork = crypto.createHmac('sha256', secret).update('network:203.0.113.9').digest('base64url').slice(0, 22);
+  const subject = salma.user.id;
+  const passes = {
+    forged: jwt.sign({ purpose: 'handoff', net }, 'someone-elses-secret-that-is-long-enough', { subject, expiresIn: '2d' }),
+    expired: jwt.sign({ purpose: 'handoff', net, exp: Math.floor(Date.now() / 1000) - 60 }, secret, { subject }),
+    elsewhere: jwt.sign({ purpose: 'handoff', net: otherNetwork }, secret, { subject, expiresIn: '2d' }),
+    session: salma.token,
+  };
+  for (const [kind, pass] of Object.entries(passes)) {
+    const response = await joinRequest({ inviteKey: '0000', visitorId: nextVisitorId(), displayName: 'Stranger', handoff: pass });
+    assert.equal(response.status, 200, kind);
+    const stranger = await response.json();
+    assert.notEqual(stranger.user.id, salma.user.id, kind);
+    assert.equal(stranger.visitorId, undefined, kind);
+  }
 });
 
 // Later tests expect the voice channel to start empty.

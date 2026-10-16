@@ -29,24 +29,26 @@ function keyFrom(text: string) {
 }
 // The key arrives in the invite link. It is remembered and taken out of the address bar, so it does
 // not end up in a screenshot or a link copied from the address bar later.
-// An app added to an iPhone's Home Screen also starts with who this is and their name (see
-// homeScreen.ts), because it does not share Safari's storage. They never replace what this device
-// already knows, so a link cannot switch someone into another person.
+// An app added to an iPhone's Home Screen also starts with a hand-off pass and the name (see
+// homeScreen.ts), because it does not share Safari's storage. They are used only on a device that
+// has never been anyone, so a link cannot switch someone into another person. The pass is kept
+// until joining works, in case the app is closed before that. Links from before the pass existed
+// carried the device's identity itself ("visitor"); that is ignored now.
 const params = new URLSearchParams(window.location.search);
 const linkKey = params.get('invite');
 if (linkKey) {
   store('inviteKey', linkKey);
-  const linkVisitor = params.get('visitor'), linkName = params.get('name');
-  if (linkVisitor && /^[0-9a-f-]{36}$/i.test(linkVisitor) && !stored('visitorId')) {
-    store('visitorId', linkVisitor);
+  const linkHandoff = params.get('handoff'), linkName = params.get('name');
+  if (!stored('visitorId')) {
+    if (linkHandoff && linkHandoff.length <= 1000 && /^[\w-]+\.[\w-]+\.[\w-]+$/.test(linkHandoff)) store('handoff', linkHandoff);
     if (linkName && !stored('displayName')) store('displayName', linkName.slice(0, 60));
   }
   const url = new URL(window.location.href);
-  for (const key of ['invite', 'visitor', 'name']) url.searchParams.delete(key);
+  for (const key of ['invite', 'visitor', 'name', 'handoff']) url.searchParams.delete(key);
   window.history.replaceState(null, '', url);
 }
 
-const visitorId = stored('visitorId') || randomId();
+let visitorId = stored('visitorId') || randomId();
 store('visitorId', visitorId);
 const inviteKey = ref(stored('inviteKey'));
 const pastedLink = ref('');
@@ -59,7 +61,10 @@ async function submit() {
   const key = inviteKey.value || keyFrom(pastedLink.value);
   try {
     const name = displayName.value.trim();
-    const result = await api.join(key, visitorId, name);
+    const result = await api.join(key, visitorId, name, stored('handoff') || undefined);
+    // Handed off from another device: this device is that person from now on.
+    if (result.visitorId) { visitorId = result.visitorId; store('visitorId', visitorId); }
+    store('handoff', '');
     store('inviteKey', key);
     store('displayName', result.user.displayName);
     session.token = result.token;

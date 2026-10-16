@@ -50,8 +50,11 @@ export const api = {
     request('/api/livekit/token', { method: 'POST', body: JSON.stringify({ channelId }) }),
   getScreenToken: (channelId: string): Promise<{ url: string; token: string }> =>
     request('/api/livekit/screen-token', { method: 'POST', body: JSON.stringify({ channelId }) }),
-  join: (inviteKey: string, visitorId: string, displayName: string) =>
-    request('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteKey, visitorId, displayName }) }),
+  // A hand-off from the link of an iPhone Home Screen app (see homeScreen.ts) makes this new device
+  // the same person; the answer then gives that person's identity to keep (visitorId).
+  join: (inviteKey: string, visitorId: string, displayName: string, handoff?: string) =>
+    request('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteKey, visitorId, displayName, ...(handoff ? { handoff } : {}) }) }),
+  getHandoff: (): Promise<{ handoff: string }> => request('/api/me/handoff'),
 
   getMe: () => request('/api/me'),
   // Ends this session on the server, so a copy of its token stops working too.

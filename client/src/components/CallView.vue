@@ -72,7 +72,9 @@ const MICROPHONE_WAIT_MS = 4000;
 // Computers share their screen from the browser, and the Android app from its own code; phone
 // browsers and the iPhone app cannot share yet.
 const canShareScreen = typeof navigator.mediaDevices?.getDisplayMedia === 'function' || phoneScreenShareAvailable;
-const FALLBACK_COLORS = ['#5865f2', '#3ba55c', '#faa61a', '#ed4245', '#eb459e', '#9b84ee'];
+// The same palette the server hands out (auth.ts), so someone whose colour is not known yet still
+// looks like the rest of the call.
+const FALLBACK_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 
 const props = defineProps<{
   channelId: string; channelName: string; userId: string; visible: boolean;
@@ -110,6 +112,8 @@ const lastSpeakerKey = ref('');
 const raisedHands = computed(() => new Set(props.hands.map(hand => hand.userId)));
 const toast = ref('');
 const weakConnection = ref(false);
+// Stays true until the microphone works, so what to fix is still on screen after the notice is gone.
+const micBlocked = ref(false);
 // Others whose internet has been weak for a few seconds, shown by a small sign on their tile, so
 // a voice that keeps cutting out is understood. A short dip is not shown.
 const weakPeople = ref(new Set<string>());
@@ -441,6 +445,8 @@ watch(photoProblem, problem => { if (problem) showToast(problem); });
 // Someone who changes their picture during the call shows it on their tile straight away.
 watch(() => props.people, () => refresh());
 
+// A disabled button gives no hint why, so while the call is still connecting its name says so.
+function whileConnecting(label: string) { return status.value === 'connected' ? label : `${label} (${t('connecting')})`; }
 function openSheet(next: Sheet) { sheet.value = sheet.value === next ? null : next; }
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape') return;
@@ -700,7 +706,9 @@ async function setMicrophone(enabled: boolean) {
     if (enabled) await cleanMicrophone();
     // The first time, the phone has only just been allowed to use the microphone.
     if (enabled) keepPhoneCallGoing();
+    micBlocked.value = false;
   } catch (cause) {
+    micBlocked.value = true;
     // Instructions to follow take longer to read than a notice.
     showToast(microphoneProblem(cause), 10_000);
   } finally {
@@ -1199,7 +1207,10 @@ onBeforeUnmount(cleanup);
       <button v-if="audioBlocked" class="call-pill call-sound-pill" type="button" @click="enableAudio">
         <Volume2 :size="17" />{{ t('tapToEnableSound') }}
       </button>
-      <div v-if="toast" class="call-pill call-toast" role="status"><bdi>{{ toast }}</bdi></div>
+      <!-- Always in the page, empty when there is nothing to say: a screen reader only announces
+           changes to a live region that already exists. -->
+      <div v-show="toast" class="call-pill call-toast" role="status"><bdi>{{ toast }}</bdi></div>
+      <p v-if="micBlocked" id="call-mic-hint" class="call-pill call-mic-hint" role="status"><MicOff :size="16" aria-hidden="true" />{{ t('micBlockedShort') }}</p>
       <div v-if="tabletPrompt" class="call-board-prompt" role="dialog" :aria-label="t('tabletBoardTitle')">
         <strong>{{ t('tabletBoardTitle') }}</strong>
         <p>{{ t('tabletBoardBody') }}</p>
@@ -1210,13 +1221,13 @@ onBeforeUnmount(cleanup);
       </div>
 
       <footer class="call-controls">
-        <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="micOn ? t('mute') : t('unmute')" :aria-label="micOn ? t('mute') : t('unmute')" :disabled="status !== 'connected'" @click="setMicrophone(!micOn)">
+        <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="whileConnecting(micOn ? t('mute') : t('unmute'))" :aria-label="whileConnecting(micOn ? t('mute') : t('unmute'))" :aria-describedby="micBlocked ? 'call-mic-hint' : undefined" :disabled="status !== 'connected'" @click="setMicrophone(!micOn)">
           <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
         </button>
-        <button class="call-control" :class="{ on: cameraOn }" type="button" :aria-pressed="cameraOn" :title="cameraOn ? t('cameraOff') : t('cameraOn')" :aria-label="cameraOn ? t('cameraOff') : t('cameraOn')" :disabled="status !== 'connected'" @click="toggleCamera">
+        <button class="call-control" :class="{ on: cameraOn }" type="button" :aria-pressed="cameraOn" :title="whileConnecting(cameraOn ? t('cameraOff') : t('cameraOn'))" :aria-label="whileConnecting(cameraOn ? t('cameraOff') : t('cameraOn'))" :disabled="status !== 'connected'" @click="toggleCamera">
           <Video v-if="cameraOn" :size="22" /><VideoOff v-else :size="22" />
         </button>
-        <button class="call-control" :class="{ on: sharingScreen }" type="button" :aria-pressed="sharingScreen" :title="sharingScreen ? t('stopSharing') : t('shareScreen')" :aria-label="sharingScreen ? t('stopSharing') : t('shareScreen')" :disabled="status !== 'connected'" @click="toggleScreenShare">
+        <button v-if="canShareScreen" class="call-control" :class="{ on: sharingScreen }" type="button" :aria-pressed="sharingScreen" :title="whileConnecting(sharingScreen ? t('stopSharing') : t('shareScreen'))" :aria-label="whileConnecting(sharingScreen ? t('stopSharing') : t('shareScreen'))" :disabled="status !== 'connected'" @click="toggleScreenShare">
           <ScreenShareOff v-if="sharingScreen" :size="22" /><ScreenShare v-else :size="22" />
         </button>
         <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="myHandRaised ? t('lowerHand') : t('raiseHand')" :aria-label="myHandRaised ? t('lowerHand') : t('raiseHand')" @click="toggleHand">
@@ -1275,7 +1286,7 @@ onBeforeUnmount(cleanup);
             <strong>{{ t('chat') }}</strong>
             <button class="call-icon-btn" type="button" :aria-label="t('close')" @click="sheet = null"><X :size="18" /></button>
           </div>
-          <ol ref="chatList" class="call-chat-list">
+          <ol ref="chatList" class="call-chat-list" role="log" aria-live="polite" aria-relevant="additions">
             <li v-if="!callChat.length" class="call-chat-empty">{{ t('chatEmpty') }}</li>
             <li v-for="message in callChat" :key="message.id" class="call-chat-message" :class="{ private: message.to, mine: message.from.id === userId }">
               <div class="call-chat-meta">
@@ -1468,6 +1479,14 @@ onBeforeUnmount(cleanup);
   padding: 0 6px;
   border-radius: 2px;
   color: var(--call-text-muted);
+}
+
+/* Fingers need more room than a mouse pointer. */
+@media (pointer: coarse) {
+  .call-icon-btn {
+    min-width: 44px;
+    height: 44px;
+  }
 }
 
 .call-icon-btn:hover {
@@ -1669,7 +1688,7 @@ onBeforeUnmount(cleanup);
   border-radius: 999px;
   color: rgba(255, 255, 255, 0.85);
   background: rgba(0, 0, 0, 0.3);
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   text-overflow: ellipsis;
   pointer-events: none;
@@ -1829,8 +1848,9 @@ onBeforeUnmount(cleanup);
   overflow: hidden;
   padding: 9px 15px;
   border-radius: 999px;
-  color: #f3eadf;
-  background: rgba(36, 30, 44, 0.94);
+  color: var(--call-text);
+  background: var(--call-sheet);
+  border: 1px solid var(--call-outline);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   font-size: 13px;
   font-weight: 600;
@@ -1866,6 +1886,13 @@ onBeforeUnmount(cleanup);
   text-align: center;
 }
 
+/* Above the weak-connection sign, so the two never cover each other. */
+.call-mic-hint {
+  bottom: calc(env(safe-area-inset-bottom) + 128px);
+  border-color: var(--leave);
+  color: var(--leave);
+}
+
 /* The call's chat: messages above, and who they go to and what they say below. */
 .call-chat-badge {
   min-width: 18px;
@@ -1876,7 +1903,7 @@ onBeforeUnmount(cleanup);
   border-radius: 999px;
   color: #ffffff;
   background: var(--leave);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -1912,7 +1939,7 @@ onBeforeUnmount(cleanup);
 .call-chat-message.private {
   padding: 8px 10px;
   border-radius: 4px;
-  background: rgba(88, 101, 242, 0.18);
+  background: var(--accent-soft);
 }
 
 .call-chat-meta {

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Majlis privacy policy</title>
-<meta name="description" content="What the Majlis app keeps about you, and what it does not.">
+<meta name="description" content="What the Majlis call app keeps about you, and what it does not. Also in Arabic.">
 <link rel="icon" href="/icon.svg">
 <style>
   :root { color-scheme: light dark; --text: #1f2328; --muted: #57606a; --bg: #ffffff; --line: #d0d7de; }
@@ -15,73 +15,107 @@
   h2 { font-size: 19px; margin: 28px 0 6px; }
   p, li { margin: 6px 0; }
   .muted { color: var(--muted); }
+  a { color: inherit; }
   section[lang="ar"] { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--line); font-family: "Noto Naskh Arabic", "Geeza Pro", serif; font-size: 18px; line-height: 1.9; }
 </style>
 </head>
 <body>
 <main>
-<section>
+<!-- TODO: add a contact email before selling to customers -->
+<section id="en">
   <h1>Majlis privacy policy</h1>
-  <p class="muted">Last updated 26 September 2026</p>
-  <p>Majlis is a private space for one group: an Arabic class and its friends. Only people who were given the invite link can join. There are no ads, no analytics and no tracking, and nothing is sold or shared with advertisers.</p>
+  <p class="muted">Last updated 16 October 2026 &middot; <a href="#ar" hreflang="ar">العربية (Arabic) below</a></p>
+  <p>Majlis is a call app: you join a room with an invite link, then talk, show your camera, share your screen and chat with the people in the call. Only people who were given a room's invite link can join it. There are no ads, no analytics and no tracking, and nothing is sold or shared with advertisers.</p>
 
   <h2>What Majlis keeps</h2>
   <ul>
-    <li><strong>Your name</strong>, as you typed it when you joined, and a colour for your picture.</li>
-    <li><strong>A random device ID</strong> stored in your browser or app, so the server recognises you next time. It is not linked to your phone number, email or Google account.</li>
-    <li><strong>Your messages, pictures, PDFs, sound and video</strong> in the text channels, so the group can read them later.</li>
-    <li><strong>Call recordings</strong>, when someone in a call records it (see below).</li>
-    <li><strong>When you were last online</strong>, shown to the group.</li>
-    <li><strong>A notification address for each device where you turned on notifications</strong>, given by your browser, by Google (Android app) or by Apple (iPhone app), and which notifications you chose. It is only used to send you notifications, and is deleted when you sign out on that device.</li>
+    <li><strong>Your name</strong>, as you typed it, and a colour for your picture.</li>
+    <li><strong>Your profile picture</strong>, only if you add one.</li>
+    <li><strong>Which rooms you joined</strong>, so the right people see you and get the right notifications.</li>
+    <li><strong>A random device ID</strong> stored in your browser or app, so the server recognises you next time. It is not linked to your phone number, email or any account.</li>
+    <li><strong>A sign-in record for each device</strong>, kept for 30 days or until you go back to the name screen on that device.</li>
+    <li><strong>When you were last online.</strong></li>
+    <li><strong>A notification address for each device where you allow notifications</strong>, given by your browser, by Google (Android app) or by Apple (iPhone app). It is only used to tell you when a call starts.</li>
   </ul>
 
-  <h2>Notifications</h2>
-  <p>If you turn on notifications, a short notice (who wrote, in which channel, and the start of the message) is sent to your device when you are not using the app. On the web it passes encrypted through your browser's push service; in the Android app it passes through Google's Firebase Cloud Messaging, and in the iPhone app through Apple's push service. You can turn notifications off at any time in Settings.</p>
+  <h2>What Majlis does not keep</h2>
+  <ul>
+    <li><strong>Calls.</strong> Sound, camera and shared screens are not recorded or stored. They pass through our call server only while the call goes on.</li>
+    <li><strong>The chat inside a call.</strong> It is held in the server's memory and in the devices of the people in the call, and it is gone when the last person leaves.</li>
+  </ul>
 
-  <h2>Calls, microphone, camera and screen</h2>
-  <p>Majlis uses your microphone only while you are in a voice channel, your camera only when you turn it on, and your screen only when you tap Share screen and allow it. Call sound and video go to the other people in the call through LiveKit Cloud, a calling service, encrypted on the way.</p>
-  <p>Anyone in a call can record it, for example so that students who miss a lesson can watch it later. A call is recorded only when someone in it presses Record, and while it is recorded, everyone in the call sees a red “Recording” sign with that person’s name. The recording shows a shared screen or the camera of whoever is speaking, with everyone’s voices. It is made on that person’s device and posted in a text channel, where every member can watch it, like any other file; deleting its message deletes the recording. Apart from recordings, nothing from a call is stored.</p>
+  <h2>Where it is kept</h2>
+  <ul>
+    <li>The website and its database run on Railway.</li>
+    <li>Calls run on our own call server (LiveKit) in Germany, rented from Hetzner. Call sound and video are encrypted on the way.</li>
+    <li>If you allow notifications, a short notice that a call started passes through your browser's push service, or through Google (Firebase) for the Android app or Apple for the iPhone app.</li>
+  </ul>
 
-  <h2>Who can see what</h2>
-  <p>Messages, files and calls are visible only to members who joined with the invite link. Files are only given to signed-in members and are checked to be real pictures, PDFs, sound or video.</p>
+  <h2>Network addresses</h2>
+  <p>Majlis uses your network (IP) address only for a moment, in the server's memory, to slow down someone who guesses invite links; it is not saved in the database. Railway and the call server, like any web host, may record addresses in their own technical logs.</p>
 
-  <h2>Deleting</h2>
-  <p>You can delete any of your own messages; its text and file are then removed from the server. To have your name and everything you posted removed, ask the person who sent you the invite link, who runs the server.</p>
+  <h2>Backups</h2>
+  <p>The server copies its database every day and keeps the newest seven copies, so a fault can be undone. Data you delete disappears from these copies as they are replaced, normally within a week. A copy made before a major update may be kept longer.</p>
+
+  <h2>Who can join</h2>
+  <p>Only people who have the room's invite link. The room's owner can replace the link, which sends everyone out until they get the new one, or delete the room.</p>
+
+  <h2>Deleting your data</h2>
+  <p>On the screen before the call, tap <strong>Delete my data</strong>. It removes your name, picture, notification devices and sign-ins from the server, on every device. You can join again later with the invite link, as a new person. To ask for anything else, contact the person who gave you the invite link.</p>
+
+  <h2>Contact</h2>
+  <p>For now, the person who gave you the invite link.</p>
 
   <h2>Children</h2>
-  <p>Majlis is meant for the members of the class and is not aimed at children.</p>
+  <p>Majlis is not aimed at children.</p>
 </section>
 
-<section lang="ar" dir="rtl">
+<section id="ar" lang="ar" dir="rtl">
   <h1>سياسة الخصوصية لتطبيق Majlis</h1>
-  <p class="muted">آخر تحديث: ٢٦ سبتمبر ٢٠٢٦</p>
-  <p>Majlis مكان خاص لمجموعة واحدة: فصل لتعلّم العربية وأصدقاؤه. لا يدخله إلا من أُعطي رابط الدعوة. لا إعلانات فيه ولا إحصاءات ولا تتبّع، ولا يُباع شيء ولا يُعطى للمعلنين.</p>
+  <p class="muted">آخر تحديث: ١٦ أكتوبر ٢٠٢٦</p>
+  <p>Majlis تطبيق مكالمات: تدخل غرفة برابط دعوة، ثم تتكلم وتُظهر كاميرتك وتشارك شاشتك وتكتب مع من في المكالمة. لا يدخل الغرفة إلا من أُعطي رابط دعوتها. لا إعلانات ولا إحصاءات ولا تتبّع، ولا يُباع شيء ولا يُعطى للمعلنين.</p>
 
   <h2>ما يحفظه Majlis</h2>
   <ul>
-    <li><strong>اسمك</strong> كما كتبته عند الدخول، ولونًا لصورتك.</li>
-    <li><strong>رقمًا عشوائيًا للجهاز</strong> يُحفظ في متصفحك أو التطبيق ليعرفك الخادم في المرة القادمة، ولا صلة له برقم هاتفك ولا ببريدك ولا بحساب Google.</li>
-    <li><strong>رسائلك وصورك وملفات PDF والصوت والفيديو</strong> في القنوات النصية، لتقرأها المجموعة لاحقًا.</li>
-    <li><strong>تسجيلات المكالمات</strong>، إذا سجّل أحدٌ في المكالمة المكالمةَ (انظر أدناه).</li>
-    <li><strong>آخر وقت كنت فيه متصلًا</strong>، ويظهر للمجموعة.</li>
-    <li><strong>عنوان إشعارات لكل جهاز فعّلت فيه الإشعارات</strong>، يعطيه متصفحك أو Google (تطبيق Android) أو Apple (تطبيق iPhone)، ونوع الإشعارات التي اخترتها. لا يُستعمل إلا لإرسال الإشعارات إليك، ويُحذف عند تسجيل خروجك من ذلك الجهاز.</li>
+    <li><strong>اسمك</strong> كما كتبته، ولونًا لصورتك.</li>
+    <li><strong>صورتك الشخصية</strong>، إن أضفتها فقط.</li>
+    <li><strong>الغرف التي دخلتها</strong>، ليراك الأشخاص المناسبون وتصلك الإشعارات المناسبة.</li>
+    <li><strong>رقمًا عشوائيًا للجهاز</strong> يُحفظ في متصفحك أو التطبيق ليعرفك الخادم في المرة القادمة. لا صلة له برقم هاتفك ولا ببريدك ولا بأي حساب.</li>
+    <li><strong>سجلّ دخول لكل جهاز</strong>، يبقى ٣٠ يومًا أو حتى تعود إلى شاشة الاسم في ذلك الجهاز.</li>
+    <li><strong>آخر وقت كنت فيه متصلًا.</strong></li>
+    <li><strong>عنوان إشعارات لكل جهاز تسمح فيه بالإشعارات</strong>، يعطيه متصفحك أو Google (تطبيق Android) أو Apple (تطبيق iPhone). لا يُستعمل إلا لإخبارك ببدء مكالمة.</li>
   </ul>
 
-  <h2>الإشعارات</h2>
-  <p>إذا فعّلت الإشعارات، يُرسل إلى جهازك إشعار قصير (من كتب، وفي أي قناة، وأول الرسالة) حين لا تكون تستعمل التطبيق. على الويب يمرّ مشفّرًا عبر خدمة الإشعارات في متصفحك، وفي تطبيق Android يمرّ عبر خدمة Firebase Cloud Messaging من Google، وفي تطبيق iPhone عبر خدمة الإشعارات من Apple. تستطيع إيقاف الإشعارات متى شئت من الإعدادات.</p>
+  <h2>ما لا يحفظه Majlis</h2>
+  <ul>
+    <li><strong>المكالمات.</strong> لا يُسجَّل الصوت ولا الكاميرا ولا الشاشات المشاركة ولا تُحفظ. تمرّ عبر خادم الاتصال عندنا ما دامت المكالمة جارية فقط.</li>
+    <li><strong>الدردشة داخل المكالمة.</strong> تبقى في ذاكرة الخادم وفي أجهزة من في المكالمة، وتزول حين يخرج آخر شخص.</li>
+  </ul>
 
-  <h2>المكالمات والميكروفون والكاميرا والشاشة</h2>
-  <p>لا يستعمل Majlis الميكروفون إلا وأنت في قناة صوتية، ولا الكاميرا إلا إذا شغّلتها، ولا الشاشة إلا إذا ضغطت «مشاركة الشاشة» وسمحت بذلك. يصل صوت المكالمة وصورتها إلى من فيها عبر خدمة الاتصال LiveKit Cloud مشفّرًا في الطريق.</p>
-  <p>يستطيع أي شخص في المكالمة أن يسجّلها، ليشاهد الدرسَ مثلًا من فاته من الطلاب. لا تُسجَّل المكالمة إلا إذا ضغط أحدٌ فيها «تسجيل»، وما دام التسجيل جاريًا يرى كل من في المكالمة علامة «تسجيل» حمراء مع اسم من يسجّل. يُظهر التسجيل الشاشة المشارَكة أو كاميرا المتحدّث، مع أصوات الجميع. ويُصنع على جهاز من يسجّل، ثم يُنشر في قناة نصية يشاهده فيها كل الأعضاء كأي ملف آخر، وحذف رسالته يحذف التسجيل. وما عدا التسجيلات لا يُحفظ من المكالمات شيء.</p>
+  <h2>أين تُحفظ</h2>
+  <ul>
+    <li>الموقع وقاعدة بياناته يعملان على Railway.</li>
+    <li>المكالمات تعمل على خادم الاتصال الخاص بنا (LiveKit) في ألمانيا، مستأجَر من Hetzner. صوت المكالمة وصورتها مشفّران في الطريق.</li>
+    <li>إذا سمحت بالإشعارات، يمرّ إشعار قصير ببدء المكالمة عبر خدمة الإشعارات في متصفحك، أو عبر Google (Firebase) لتطبيق Android، أو Apple لتطبيق iPhone.</li>
+  </ul>
 
-  <h2>من يرى ماذا</h2>
-  <p>لا يرى الرسائل والملفات والمكالمات إلا الأعضاء الذين دخلوا برابط الدعوة. ولا تُعطى الملفات إلا للأعضاء المسجّلين، ويُتحقّق من أنها صور أو ملفات PDF أو صوت أو فيديو حقيقية.</p>
+  <h2>عناوين الشبكة</h2>
+  <p>يستعمل Majlis عنوان شبكتك (IP) لحظةً فقط، في ذاكرة الخادم، ليبطّئ من يحاول تخمين روابط الدعوة، ولا يحفظه في قاعدة البيانات. أما Railway وخادم الاتصال، كأي مستضيف مواقع، فقد يسجّلان العناوين في سجلاتهما التقنية.</p>
 
-  <h2>الحذف</h2>
-  <p>تستطيع حذف أي رسالة من رسائلك، فيُزال نصّها وملفها من الخادم. ولإزالة اسمك وكل ما نشرته، اطلب ذلك ممن أرسل إليك رابط الدعوة، فهو الذي يدير الخادم.</p>
+  <h2>النسخ الاحتياطية</h2>
+  <p>ينسخ الخادم قاعدة بياناته كل يوم ويحتفظ بأحدث سبع نسخ، ليمكن التراجع عند حدوث عطل. ما تحذفه يختفي من هذه النسخ حين تُستبدل، وعادةً خلال أسبوع. وقد تبقى نسخة أُخذت قبل تحديث كبير مدة أطول.</p>
+
+  <h2>من يستطيع الدخول</h2>
+  <p>من معه رابط دعوة الغرفة فقط. ويستطيع صاحب الغرفة تغيير الرابط فيخرج الجميع حتى يحصلوا على الرابط الجديد، أو حذف الغرفة.</p>
+
+  <h2>حذف بياناتك</h2>
+  <p>في الشاشة التي قبل المكالمة اضغط <strong>احذف بياناتي</strong>. فيزيل الخادم اسمك وصورتك وأجهزة الإشعارات وسجلّات الدخول، في كل أجهزتك. ويمكنك الانضمام لاحقًا برابط الدعوة كشخص جديد. ولأي طلب آخر، تواصل مع من أعطاك رابط الدعوة.</p>
+
+  <h2>التواصل</h2>
+  <p>في الوقت الحالي: من أعطاك رابط الدعوة.</p>
 
   <h2>الأطفال</h2>
-  <p>Majlis موجّه لأعضاء الفصل، وليس موجّهًا للأطفال.</p>
+  <p>Majlis ليس موجّهًا للأطفال.</p>
 </section>
 </main>
 </body>

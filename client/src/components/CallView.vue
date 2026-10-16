@@ -1,1120 +1,153 @@
 <script setup lang="ts">
-import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
-import {
-  Camera, Download, Ellipsis, Eraser, Hand, Maximize, MessageSquare, Mic, MicOff, Minimize, Moon, Pencil, PhoneOff, RotateCcw, ScreenShare,
-  ScreenShareOff, SendHorizontal, Sun, UserRound, Users, Video, VideoOff, Volume1, Volume2, VolumeX, WifiOff, X, ZoomOut,
-} from 'lucide-vue-next';
-import {
-  AudioPresets, ConnectionQuality, createLocalAudioTrack, DisconnectReason, MediaDeviceFailure, Room, RoomEvent, Track, VideoPreset, VideoPresets, type AudioCaptureOptions, type LocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant,
-  type RemoteTrack, type RemoteTrackPublication, type VideoTrack,
-} from 'livekit-client';
-import { api, ApiError } from '../api';
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { RotateCcw, MicOff, Volume2, WifiOff } from 'lucide-vue-next';
+import { VideoPresets } from 'livekit-client';
 import { usePhoto } from '../photo';
 import { getSocket } from '../socket';
 import { useI18n } from '../i18n';
-import { useTheme } from '../theme';
-import { cleanVoice, prepareCleanVoice, type CleanVoice } from '../cleanVoice';
-import {
-  bridge, onPhoneScreenShareStopped, phoneScreenShareAvailable, SCREEN_SUFFIX, startPhoneScreenShare, stopPhoneScreenShare, wasCancelled,
-} from '../nativeScreenShare';
-import {
-  endPhoneCall, inMiniWindow, keepPhoneCallGoing, miniWindowAvailable, onPhoneCallLeave, onPhoneFullScreenExit, phoneFullScreenAvailable, setMiniWindow,
-  setPhoneFullScreen,
-} from '../nativeCall';
-import { callChat, onCallChatMessage, sendCallChat } from '../callChat';
-import { createSpeakingDetector } from '../speaking';
-import {
-  boardForTablet, boardVersion, clearBoards, erase, hasDrawings, penOn, receiveBoard, sayHello, sendBoardWith, tellBoards, type BoardMessage,
-} from '../board';
-import { askToDrawOverApps, canDrawOverApps, hideOnTablet, onDrawOverAppsChanged, saveToGallery, showOnTablet, tabletBoardAvailable } from '../nativeBoard';
-import type { OnlineUser } from '../types';
+import { prepareCleanVoice } from '../cleanVoice';
+import { endPhoneCall, inMiniWindow, miniWindowAvailable, onPhoneCallLeave } from '../nativeCall';
+import { clearBoards } from '../board';
+import { callKey, createCallState, type CallProps, type CallSession, type CallUpdate, type Sheet } from '../call/context';
+import { useToasts } from '../call/toasts';
+import { useSound } from '../call/sound';
+import { useMicrophone } from '../call/microphone';
+import { useScreenShare } from '../call/screenShare';
+import { useTabletBoard } from '../call/tabletBoard';
+import { useFullScreen } from '../call/fullScreen';
+import { canSavePicture, useTileLayout } from '../call/layout';
+import { useCallTiles } from '../call/tiles';
+import { useCallChat } from '../call/chat';
+import { useLiveKitRoom } from '../call/room';
 import Avatar from './Avatar.vue';
-import CallTile, { type Tile } from './CallTile.vue';
+import CallTile from './CallTile.vue';
+import CallHeader from './CallHeader.vue';
+import CallToolbar from './CallToolbar.vue';
+import CallFullScreen from './CallFullScreen.vue';
+import CallPeopleSheet from './CallPeopleSheet.vue';
+import CallChatSheet from './CallChatSheet.vue';
+import CallMoreSheet from './CallMoreSheet.vue';
+import TabletPrompt from './TabletPrompt.vue';
 
-type Sheet = 'participants' | 'more' | 'chat';
-type Status = 'joining' | 'connected' | 'reconnecting' | 'disconnected';
-type CallParticipant = { identity: string; name: string; local: boolean; micOn: boolean; speaking: boolean };
+// The call screen. Each job lives in its own composable in ../call (sound, microphone, screen
+// sharing, the tablet's board, full screen, where tiles go, the tiles themselves, the chat and the
+// LiveKit room), and the parts of the screen beside this file reach them through the call context.
+// This file wires them together, starts and ends the call, and lays out the stage.
 
-const VOLUME_KEY = 'callVolume';
-const PERSON_VOLUMES_KEY = 'callVolumes';
-const ZOOM_HINT_KEY = 'zoomHintSeen';
-const DARK_SCREEN_KEY = 'darkScreen';
-// Louder than this on the muted microphone, for most of a second, is someone talking.
-const MUTED_SPEECH_DB = -40;
-const MUTED_HINT_EVERY_MS = 20_000;
-// Every voice is sent at the same level (see levelVoiceWorklet.js). The friends asked for the
-// teacher's voice (Ayman2) to be louder than the others: 30%, then 20% more after a lesson. Voices are
-// sent as loud as they can go without crackling, so his cannot be sent louder; instead everyone
-// else's is played softer.
-const LOUDER_VOICES = new Set(['ayman2']);
-const SOFTER_THAN_LOUDER = 1 / (1.3 * 1.2);
-// The sliders stop short of silence, so a call never starts inaudible because of last week's
-// setting; the speaker button is there for turning the sound off.
-const MIN_VOLUME = 0.1;
-const volumeAdjustable = (() => {
-  try { const probe = new Audio(); probe.volume = 0.5; return probe.volume === 0.5; } catch { return false; }
-})();
-// iPhones and iPads ignore a page's volume, so there the voices are played through the browser's
-// audio mixer instead. Everywhere else they stay in plain audio elements: Chrome's echo cancellation
-// does not hear the mixer, and someone on speaker would send everyone's voices back to the call.
-const webAudioVolume = !volumeAdjustable && typeof AudioContext === 'function';
-const canAdjustVolume = volumeAdjustable || webAudioVolume;
-// Chrome on Android, which the Android app is built on, decides once, as a sound starts playing,
-// whether it is a call's sound or a video's, and it only takes the echo out of a call's. A sound
-// counts as a call's only while the microphone is open. Voices that started before it, as they did
-// for anyone who joined muted and spoke later, came out of the speaker and went straight back into
-// the microphone: the echo everyone heard in September 2026, until that person rejoined. So on
-// Android the microphone is opened before any voice plays, muted when its owner joined muted.
-const onAndroid = /Android/i.test(navigator.userAgent);
-// Longer than this, as when the phone is still asking whether the app may use the microphone, and
-// the voices play anyway: hearing the call matters more.
-const MICROPHONE_WAIT_MS = 4000;
-// Computers share their screen from the browser, and the Android app from its own code; phone
-// browsers and the iPhone app cannot share yet.
-const canShareScreen = typeof navigator.mediaDevices?.getDisplayMedia === 'function' || phoneScreenShareAvailable;
-// The same palette the server hands out (auth.ts), so someone whose colour is not known yet still
-// looks like the rest of the call.
-const FALLBACK_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
-
-const props = defineProps<{
-  channelId: string; channelName: string; userId: string; visible: boolean;
-  people: Map<string, OnlineUser>;
-  hands: { userId: string; displayName: string }[];
-  /** Chosen before joining: whether the microphone and camera start on. */
-  startMic: boolean; startCamera: boolean;
-}>();
+const props = defineProps<CallProps>();
 const emit = defineEmits<{
   leave: [];
-  state: [state: { micOn: boolean; cameraOn: boolean; sharing: boolean; speaking: string[] }];
+  state: [state: CallUpdate];
 }>();
-const { t, translateError } = useI18n();
-const { theme, toggleTheme } = useTheme();
+const { t } = useI18n();
 const root = ref<HTMLElement>();
-const status = ref<Status>('joining');
-const error = ref('');
-const micOn = ref(false);
-const cameraOn = ref(false);
-const sharingScreen = ref(false);
-let phoneShareStarting = false;
-const phoneShareListener = onPhoneScreenShareStopped(() => refresh());
+const state = createCallState();
+const { status, error, micOn, cameraOn, sheet, tiles: tileList } = state;
+// Vue must not wrap LiveKit's room, so it is kept, with what goes with it, in a plain object.
+const session: CallSession = { room: null, disposed: false, voicesWaiting: false };
+
+const toasts = useToasts();
+const { toast, showToast } = toasts;
+const sound = useSound(session, showToast);
+const fullScreen = useFullScreen(state, { root, visible: () => props.visible, showToast });
+const layout = useTileLayout(state, fullScreen, showToast);
+const tiles = useCallTiles(session, state, {
+  props, fullScreen, lastSpeakerKey: layout.lastSpeakerKey, showToast, update: update => emit('state', update),
+});
+const { refresh, colorOf, pictureOf } = tiles;
+const microphone = useMicrophone(session, {
+  state, visible: () => props.visible, audioBlocked: sound.audioBlocked, enableAudio: sound.enableAudio, showToast, refresh,
+});
+const screenShare = useScreenShare(session, state, { props, showToast, refresh });
+const tablet = useTabletBoard(session, state, props);
+const chat = useCallChat(state, props, showToast);
+const room = useLiveKitRoom(session, state, {
+  props, sound, microphone, tiles, tablet, tellMiniShape: layout.tellMiniShape, toggleCamera, showToast,
+});
 const phoneLeaveListener = onPhoneCallLeave(() => leave());
-const phoneFullScreenListener = onPhoneFullScreenExit(() => exitFullScreen());
-const audioBlocked = ref(false);
-const soundOn = ref(true);
-const volume = ref(savedVolume());
-const personVolumes = ref(savedPersonVolumes());
-const sheet = ref<Sheet | null>(null);
-const participants = ref<CallParticipant[]>([]);
-// Shallow, because each tile holds a LiveKit track that Vue must not wrap; the list is replaced whole.
-const tiles = shallowRef<Tile[]>([]);
-const focusedKey = ref<string | null>(null);
-const lastSpeakerKey = ref('');
-const raisedHands = computed(() => new Set(props.hands.map(hand => hand.userId)));
-const toast = ref('');
-const weakConnection = ref(false);
-// Stays true until the microphone works, so what to fix is still on screen after the notice is gone.
-const micBlocked = ref(false);
-// Others whose internet has been weak for a few seconds, shown by a small sign on their tile, so
-// a voice that keeps cutting out is understood. A short dip is not shown.
-const weakPeople = ref(new Set<string>());
-const weakTimers = new Map<string, ReturnType<typeof setTimeout>>();
-// Once this device's internet has shown it cannot keep up, other people's cameras stop being
-// downloaded until the call is left, so what little there is goes to voices and the shared screen.
-const savingData = ref(false);
-const startedAt = ref(0);
-const now = ref(Date.now());
-// The tile shown full screen, alone over everything else.
-const fullKey = ref<string | null>(null);
-const fullTileView = ref<InstanceType<typeof CallTile>>();
-// Inside the phone apps, Capacitor cancels a page's full screen as soon as it starts, so there the
-// call fills the app itself, and the Android app hides the phone's bars.
-const browserFullscreen = typeof document !== 'undefined' && document.fullscreenEnabled && !bridge;
-let room: Room | null = null;
-// Only on iPhones and iPads. The call keeps it across rejoins and resumes it itself, because
-// LiveKit only resumes a suspended mixer and an iPhone back from another app can leave it interrupted.
-let audioContext: AudioContext | undefined;
-let wakeLock: WakeLockSentinel | null = null;
-let toastTimer: ReturnType<typeof setTimeout> | undefined;
-let weakTimer: ReturnType<typeof setTimeout> | undefined;
-let stopListeningWhileMuted: (() => void) | undefined;
-let listeningContext: AudioContext | undefined;
-// Measures who is speaking on this device, so their glow follows their voice (see speaking.ts). On
-// an iPhone, where a page gets few audio contexts, the call's mixer does the measuring.
-let speakingContext: AudioContext | undefined;
-const speakingDetector = createSpeakingDetector(() => {
-  if (audioContext) return audioContext;
-  try {
-    if (!speakingContext) { speakingContext = new AudioContext(); void speakingContext.resume().catch(() => {}); }
-  } catch { /* No measuring; LiveKit's answer is used. */ }
-  return speakingContext;
-}, () => refresh());
-let lastMutedHintAt = 0;
-let clockTimer: ReturnType<typeof setInterval> | undefined;
-let disposed = false;
-let rejoinWhenVisible = false;
-let lastAutoRejoinAt = 0;
-// How many times in a row joining has failed and been tried again by itself.
-let joinRetries = 0;
-// On Android, voices wait until the microphone is open (see onAndroid).
-let voicesWaiting = false;
-const detachedAudio: HTMLMediaElement[] = [];
 
-// The call's chat: to everyone, or privately to one person in the call (chatTo, their user ID).
-const chatTo = ref<string | null>(null);
-const chatDraft = ref('');
-const chatSending = ref(false);
-const chatUnread = ref(0);
-const chatList = ref<HTMLElement>();
-const chatPeople = computed(() => participants.value.filter(person => !person.local));
-const stopChatListener = onCallChatMessage(message => {
-  if (message.from.id === props.userId || sheet.value === 'chat') return;
-  chatUnread.value++;
-  const text = message.text.length > 80 ? `${message.text.slice(0, 80)}…` : message.text;
-  showToast(`${message.from.displayName}: ${text}`, 5000);
-});
-function scrollChatToEnd() {
-  void nextTick(() => { if (chatList.value) chatList.value.scrollTop = chatList.value.scrollHeight; });
-}
-watch(sheet, open => { if (open === 'chat') { chatUnread.value = 0; scrollChatToEnd(); } });
-watch(() => callChat.value.length, () => { if (sheet.value === 'chat') scrollChatToEnd(); });
-// Someone who leaves the call can no longer be written to.
-watch(chatPeople, people => { if (chatTo.value && !people.some(person => person.identity === chatTo.value)) chatTo.value = null; });
-function messagePrivately(identity: string) {
-  chatTo.value = identity;
-  sheet.value = 'chat';
-}
-async function sendChat() {
-  const text = chatDraft.value.trim();
-  if (!text || chatSending.value) return;
-  chatSending.value = true;
-  const failure = await sendCallChat(text, chatTo.value);
-  chatSending.value = false;
-  if (failure) { showToast(t('chatSendFailed')); return; }
-  chatDraft.value = '';
-}
-const chatTime = (sentAt: number) => new Date(sentAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-
-const myHandRaised = computed(() => raisedHands.value.has(props.userId));
-const elapsed = computed(() => {
-  if (!startedAt.value) return '';
-  const seconds = Math.max(0, Math.floor((now.value - startedAt.value) / 1000));
-  const pad = (value: number) => String(value).padStart(2, '0');
-  const hours = Math.floor(seconds / 3600);
-  const clock = `${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`;
-  return hours ? `${hours}:${clock}` : clock;
-});
-const focusedTile = computed(() => tiles.value.find(tile => tile.key === focusedKey.value) ?? null);
-const otherTiles = computed(() => tiles.value.filter(tile => tile.key !== focusedKey.value));
-const fullTile = computed(() => tiles.value.find(tile => tile.key === fullKey.value) ?? null);
-const fullZoomed = computed(() => Boolean(fullTileView.value?.zoomed));
-// Each tile's video is made once and moved between the grid, the big spot, full screen and the
-// Android app's small window, never made anew. A new video stays empty until the picture next
-// changes, which for a teacher's still screen can take a long time, so students used to wait
-// for the screen after going in or out of full screen. Hidden tiles wait in a hidden holder.
-type TileSpot = 'grid' | 'focus' | 'strip' | 'full' | 'mini' | 'parked';
-function spotOf(tile: Tile): TileSpot {
-  if (inMiniWindow.value) return tile.key === miniTile.value?.key && status.value === 'connected' ? 'mini' : 'parked';
-  if (error.value || status.value === 'disconnected' || status.value === 'joining') return 'parked';
-  if (fullTile.value) return tile.key === fullTile.value.key ? 'full' : 'parked';
-  if (focusedTile.value) return tile.key === focusedTile.value.key ? 'focus' : 'strip';
-  return 'grid';
-}
-function onTileClick(tile: Tile) {
-  const spot = spotOf(tile);
-  // A full-screen tile keeps its buttons showing, so a tap on it does nothing.
-  if (spot !== 'full' && spot !== 'mini') toggleFocus(tile.key);
-}
-const tileViews = new Map<string, InstanceType<typeof CallTile>>();
-function setTileView(tile: Tile, view: unknown) {
-  if (view) tileViews.set(tile.key, view as InstanceType<typeof CallTile>); else tileViews.delete(tile.key);
-  if (tile.key === fullKey.value) fullTileView.value = (view ?? undefined) as InstanceType<typeof CallTile> | undefined;
-}
-// A tile with a video to look at; your own shared screen is never shown back to you.
-const watchable = (tile: Tile) => Boolean(tile.track) && !(tile.local && tile.kind === 'screen');
-// What Full screen in the More menu shows: the big tile, else a shared screen, else a camera.
-const fullScreenChoice = computed(() => {
-  const videos = tiles.value.filter(watchable);
-  return videos.find(tile => tile.key === focusedKey.value) ?? videos.find(tile => tile.kind === 'screen')
-    ?? videos.find(tile => !tile.local) ?? videos[0] ?? null;
-});
-// The one video the Android app shows in its small window over other apps: the one made big, else
-// a shared screen, else whoever spoke last with their camera on. Never your own video, and nothing
-// while you share your screen, because the small window would then appear in what you share.
-const miniTile = computed(() => {
-  if (sharingScreen.value) return null;
-  const watchable = tiles.value.filter(tile => !tile.local && tile.track);
-  return watchable.find(tile => tile.key === focusedKey.value) ?? watchable.find(tile => tile.kind === 'screen')
-    ?? watchable.find(tile => tile.key === lastSpeakerKey.value) ?? watchable[0] ?? null;
-});
-const miniSpeaker = computed(() => participants.value.find(person => person.speaking && !person.local) ?? null);
-// In full screen nobody's tile is visible, so the name of whoever is talking shows, small and
-// faint, in a corner. It stays a moment after they stop, so pauses between words don't make it
-// blink.
-// The blackboard (see board.ts): what this viewer draws carries their colour and name.
-const me = computed(() => ({ color: colorOf(props.userId), name: participants.value.find(person => person.local)?.name ?? '' }));
-const fullDrawn = computed(() => { void boardVersion.value; return Boolean(fullTile.value && hasDrawings(fullTile.value.key)); });
-const boardEncoder = new TextEncoder();
-const boardDecoder = new TextDecoder();
-sendBoardWith((message: BoardMessage, to?: string[]) => {
-  try {
-    void room?.localParticipant.publishData(boardEncoder.encode(JSON.stringify(message)), { reliable: true, topic: 'board', destinationIdentities: to }).catch(() => {});
-  } catch { /* Not connected; a drawing is not worth interrupting the call for. */ }
-});
-// One person answers someone who joins with what is already drawn, so they do not all send it:
-// the first of the others in a fixed order.
-function answersHello(requester: string) {
-  if (!room) return false;
-  const others = [room.localParticipant.identity, ...room.remoteParticipants.keys()].filter(identity => identity !== requester && !identity.endsWith(SCREEN_SUFFIX)).sort();
-  return others[0] === room.localParticipant.identity;
-}
-
-// A picture of a shared screen, with what is drawn on it. The Android app puts it in the gallery;
-// a phone's browser offers its own share sheet, where "Save image" keeps it in the photos; a
-// computer downloads it. An Android app from before the blackboard cannot save, so it shows no button.
-const canSavePicture = !bridge || tabletBoardAvailable;
-async function savePicture(tile: Tile) {
-  const picture = tileViews.get(tile.key)?.picture();
-  if (!picture) return;
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, '0');
-  const name = `${t('appName')} ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-  try {
-    if (tabletBoardAvailable) {
-      await saveToGallery(picture.toDataURL('image/png').split(',')[1], name);
-      showToast(t('pictureSaved'));
-      return;
-    }
-    const blob = await new Promise<Blob | null>(resolve => picture.toBlob(resolve, 'image/png'));
-    if (!blob) throw new Error('No picture');
-    const file = new File([blob], `${name}.png`, { type: 'image/png' });
-    if (onPhone() && navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file] }); return; }
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = file.name;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
-    showToast(t('pictureSaved'));
-  } catch (cause) {
-    // Closing the share sheet without choosing is not a failure.
-    if ((cause as Error | null)?.name !== 'AbortError') showToast(t('pictureNotSaved'));
-  }
-}
-
-// The teacher shares his tablet's screen from the Android app and is then looking at his book, so
-// the app draws the board over every other app there (see nativeBoard.ts). Android asks once for
-// that; the first time, a short note explains why before its settings screen opens.
-const TABLET_DECLINED_KEY = 'tabletBoardDeclined';
-const tabletAllowed = ref(false);
-const tabletPrompt = ref(false);
-const offerTabletBoard = computed(() => tabletBoardAvailable && sharingScreen.value && !tabletAllowed.value);
-const myBoardKey = () => `${myPhoneScreen()}:screen`;
-let tabletTimer: ReturnType<typeof setTimeout> | undefined;
-function drawOnTablet() {
-  if (tabletTimer) return;
-  // Sent at most twenty times a second while someone draws.
-  tabletTimer = setTimeout(() => {
-    tabletTimer = undefined;
-    if (!sharingScreen.value || !tabletAllowed.value) return;
-    const board = { ...boardForTablet(myBoardKey()), speakers: tabletSpeakers.value, notices: tabletNotices.value.map(notice => notice.text) };
-    showOnTablet(board).catch(() => { tabletAllowed.value = false; });
-  }, 50);
-}
-watch(boardVersion, () => { if (tabletBoardAvailable && sharingScreen.value && tabletAllowed.value) drawOnTablet(); });
-
-// While the teacher shares his screen he is in his book, not in the call, so the same window shows
-// him, small at the top, who is talking and who comes and goes.
-//
-// Only clear speech counts as talking there: LiveKit already ignores the quietest sounds, and a
-// voice must also be loud enough and go on for most of a second. Noise from someone's house, such
-// as a door, dishes or children in another room, is softer than their voice, or over sooner.
-// (LiveKit's own measure is used here because the teacher's copy of the call is in the background,
-// where the page cannot measure voices itself.) The level is LiveKit's 0 to 1 scale, measured in
-// October 2026: a voice gives 0.25 to 0.5, and talking in another room 0.125 (its lowest step).
-const TALKING_LEVEL = 0.2;
-const TALKING_FOR_MS = 800;
-const STILL_TALKING_MS = 1200;
-const NOTICE_MS = 5000;
-// Someone whose connection drops for a moment comes back within seconds; they did not leave.
-const LEFT_AFTER_MS = 10_000;
-const tabletSpeakers = ref<string[]>([]);
-const tabletNotices = ref<{ id: number; text: string }[]>([]);
-const talkingSince = new Map<string, number>();
-const talkingUntil = new Map<string, number>();
-const leftTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const announcedLeaving = new Set<string>();
-let talkingTimer: ReturnType<typeof setTimeout> | undefined;
-let noticeId = 0;
-const showingTeacherSigns = () => tabletBoardAvailable && sharingScreen.value && tabletAllowed.value;
-function noteTalking() {
-  if (!room) return;
-  const now = Date.now();
-  for (const participant of room.remoteParticipants.values()) {
-    const identity = participant.identity;
-    if (identity.endsWith(SCREEN_SUFFIX)) continue;
-    const talking = participant.isSpeaking && participant.isMicrophoneEnabled;
-    if (talking && (talkingSince.has(identity) || participant.audioLevel >= TALKING_LEVEL)) {
-      if (!talkingSince.has(identity)) talkingSince.set(identity, now);
-      talkingUntil.set(identity, now + STILL_TALKING_MS);
-    } else if ((talkingUntil.get(identity) ?? 0) <= now) {
-      talkingSince.delete(identity);
-      talkingUntil.delete(identity);
-    }
-  }
-  for (const identity of talkingSince.keys()) if (!room.remoteParticipants.has(identity)) { talkingSince.delete(identity); talkingUntil.delete(identity); }
-  const names = [...talkingSince].filter(([, since]) => now - since >= TALKING_FOR_MS)
-    .map(([identity]) => room?.remoteParticipants.get(identity)?.name || '').filter(Boolean);
-  if (names.join('\n') !== tabletSpeakers.value.join('\n')) tabletSpeakers.value = names;
-  // Looked at again shortly, to show someone once they have talked long enough and to let go of
-  // someone who stopped; LiveKit only says when the list of speakers changes.
-  clearTimeout(talkingTimer);
-  talkingTimer = talkingSince.size ? setTimeout(noteTalking, 300) : undefined;
-}
-function addNotice(text: string) {
-  if (!showingTeacherSigns()) return;
-  const id = ++noticeId;
-  tabletNotices.value = [...tabletNotices.value, { id, text }].slice(-3);
-  setTimeout(() => { tabletNotices.value = tabletNotices.value.filter(notice => notice.id !== id); }, NOTICE_MS);
-}
-function noteArrival(participant: RemoteParticipant) {
-  if (participant.identity.endsWith(SCREEN_SUFFIX)) return;
-  clearTimeout(leftTimers.get(participant.identity));
-  const wasAway = leftTimers.delete(participant.identity);
-  // Coming back within moments of a dropped connection is no news, unless their leaving was shown.
-  if (wasAway && !announcedLeaving.has(participant.identity)) return;
-  announcedLeaving.delete(participant.identity);
-  addNotice(t('joinedNotice', { name: participant.name || '' }));
-}
-function noteLeaving(participant: RemoteParticipant) {
-  if (participant.identity.endsWith(SCREEN_SUFFIX)) return;
-  const name = participant.name || '';
-  clearTimeout(leftTimers.get(participant.identity));
-  leftTimers.set(participant.identity, setTimeout(() => {
-    if (room?.remoteParticipants.has(participant.identity)) return;
-    announcedLeaving.add(participant.identity);
-    addNotice(t('leftNotice', { name }));
-  }, LEFT_AFTER_MS));
-  noteTalking();
-}
-watch([tabletSpeakers, tabletNotices], () => { if (showingTeacherSigns()) drawOnTablet(); });
-watch(sharingScreen, async sharing => {
-  if (!tabletBoardAvailable) return;
-  if (!sharing) { tabletPrompt.value = false; void hideOnTablet(); return; }
-  tabletAllowed.value = await canDrawOverApps();
-  if (tabletAllowed.value) drawOnTablet();
-  else if (!(() => { try { return localStorage.getItem(TABLET_DECLINED_KEY); } catch { return null; } })()) tabletPrompt.value = true;
-});
-const drawPermissionListener = onDrawOverAppsChanged(allowed => {
-  tabletAllowed.value = allowed;
-  if (allowed && sharingScreen.value) drawOnTablet();
-});
-function answerTabletPrompt(allow: boolean) {
-  tabletPrompt.value = false;
-  if (allow) void askToDrawOverApps();
-  else try { localStorage.setItem(TABLET_DECLINED_KEY, '1'); } catch { /* Private browsing: asked again next time. */ }
-}
-
-const fullSpeaker = ref('');
-let fullSpeakerTimer: ReturnType<typeof setTimeout> | undefined;
-watch(() => participants.value.find(person => person.speaking && !person.local)?.name ?? '', name => {
-  clearTimeout(fullSpeakerTimer);
-  if (name) fullSpeaker.value = name;
-  else fullSpeakerTimer = setTimeout(() => { fullSpeaker.value = ''; }, 1200);
-});
-// Columns grow with the number of tiles, so everyone stays as large as the screen allows; a phone
-// held upright stacks them instead.
-const narrow = ref(window.innerWidth < 700);
-function onResize() { narrow.value = window.innerWidth < 700; }
-const gridStyle = computed(() => {
-  const count = Math.max(1, tiles.value.length);
-  const columns = narrow.value ? (count <= 2 ? 1 : 2) : Math.ceil(Math.sqrt(count));
-  return { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${Math.ceil(count / columns)}, minmax(0, 1fr))` };
-});
-
-function colorOf(identity: string) {
-  const known = props.people.get(identity)?.avatarColor;
-  if (known) return known;
-  let hash = 0;
-  for (const char of identity) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return FALLBACK_COLORS[Math.abs(hash) % FALLBACK_COLORS.length];
-}
-
-const pictureOf = (identity: string) => props.people.get(identity)?.avatarUrl ?? null;
 // Your photo can be changed in the call too; your tile changes once the server tells everyone.
-const { busy: photoBusy, problem: photoProblem, choose: choosePhoto, remove: removePhoto } = usePhoto();
-watch(photoProblem, problem => { if (problem) showToast(problem); });
-// Someone who changes their picture during the call shows it on their tile straight away.
-watch(() => props.people, () => refresh());
+const photo = usePhoto();
+watch(photo.problem, problem => { if (problem) showToast(problem); });
 
-// A disabled button gives no hint why, so while the call is still connecting its name says so.
-function whileConnecting(label: string) { return status.value === 'connected' ? label : `${label} (${t('connecting')})`; }
-function openSheet(next: Sheet) { sheet.value = sheet.value === next ? null : next; }
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Escape') return;
-  if (sheet.value) sheet.value = null;
-  else exitFullScreen();
-}
-function showToast(message: string, duration = 3500) {
-  toast.value = message;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toast.value = ''; }, duration);
-}
+// The blackboard (see board.ts): what this viewer draws carries their colour and name.
+const me = computed(() => ({ color: colorOf(props.userId), name: state.participants.value.find(person => person.local)?.name ?? '' }));
 
-const myPhoneScreen = () => `${props.userId}${SCREEN_SUFFIX}`;
-// A phone's screen arrives as a participant of its own, which stands for its owner's screen rather
-// than for another person.
-const ownerOf = (identity: string) => identity.endsWith(SCREEN_SUFFIX) ? identity.slice(0, -SCREEN_SUFFIX.length) : identity;
-
-// Tiles are rebuilt from LiveKit's view of the room after every change: one per person, showing
-// their camera or their initials, and one more for each shared screen.
-function refresh() {
-  if (!room || disposed) return;
-  const everyone: [Participant, boolean][] = [[room.localParticipant, true], ...[...room.remoteParticipants.values()].map(p => [p, false] as [Participant, boolean])];
-  speakingDetector.follow(new Map(everyone.flatMap(([participant]) => {
-    const microphone = participant.getTrackPublication(Track.Source.Microphone)?.track;
-    return microphone && participant.isMicrophoneEnabled ? [[participant.identity, microphone.mediaStreamTrack] as const] : [];
-  })));
-  const isSpeaking = (participant: Participant) => participant.isMicrophoneEnabled && (speakingDetector.speaking(participant.identity) ?? participant.isSpeaking);
-  participants.value = everyone.filter(([participant]) => !participant.identity.endsWith(SCREEN_SUFFIX)).map(([participant, local]) => ({
-    identity: participant.identity, name: participant.name || participant.identity, local,
-    micOn: participant.isMicrophoneEnabled, speaking: isSpeaking(participant),
-  }));
-  const next: Tile[] = [];
-  for (const [participant, remoteOrLocal] of everyone) {
-    const owner = ownerOf(participant.identity);
-    const phoneScreen = owner !== participant.identity;
-    const local = remoteOrLocal || owner === props.userId;
-    const base = {
-      identity: owner, name: participant.name || owner, color: colorOf(owner), picture: pictureOf(owner), local,
-      micOn: participant.isMicrophoneEnabled, speaking: isSpeaking(participant), hand: raisedHands.value.has(owner),
-      weak: weakPeople.value.has(participant.identity),
-    };
-    const screen = participant.getTrackPublication(Track.Source.ScreenShare);
-    // This phone's own screen is never downloaded (see onTrackPublished), so it has no track here.
-    if (phoneScreen && local && screen && !screen.isMuted) next.push({ ...base, key: `${participant.identity}:screen`, kind: 'screen', track: null });
-    else if (screen?.track && !screen.isMuted) next.push({ ...base, key: `${participant.identity}:screen`, kind: 'screen', track: markRaw(screen.track as VideoTrack), dimensions: screen.dimensions });
-    if (phoneScreen) continue;
-    const camera = participant.getTrackPublication(Track.Source.Camera);
-    const cameraTrack = camera?.track && !camera.isMuted ? markRaw(camera.track as VideoTrack) : null;
-    next.push({ ...base, key: `${participant.identity}:camera`, kind: 'camera', track: cameraTrack, dimensions: camera?.dimensions });
-  }
-  const speaker = next.find(tile => tile.speaking && tile.kind === 'camera' && tile.track && !tile.local);
-  if (speaker) lastSpeakerKey.value = speaker.key;
-  if (focusedKey.value && !next.some(tile => tile.key === focusedKey.value)) focusedKey.value = null;
-  // A screen that stops being shared, or a camera turned off, leaves full screen.
-  if (fullKey.value && !next.some(tile => tile.key === fullKey.value && watchable(tile))) exitFullScreen();
-  tiles.value = next;
-  micOn.value = room.localParticipant.isMicrophoneEnabled;
-  cameraOn.value = room.localParticipant.isCameraEnabled;
-  sharingScreen.value = room.localParticipant.isScreenShareEnabled || room.remoteParticipants.has(myPhoneScreen());
-  emit('state', {
-    micOn: micOn.value, cameraOn: cameraOn.value, sharing: sharingScreen.value,
-    speaking: participants.value.filter(person => person.speaking).map(person => person.identity),
-  });
-}
-// Tells the Android app whether to shrink into the small window when its owner leaves it, and in
-// what shape. Wide or tall, the window matches the video, so none of it is cut off. The shape is
-// compared as text, so the app is only told when it really changes, not on every refresh.
-// The size of the picture each video really shows, once it has arrived. Every tile reports it, so
-// the small window has the right shape as soon as it opens, rather than changing shape once showing.
-const videoSizes = shallowRef<Record<string, { width: number; height: number }>>({});
-function onVideoSize(tile: Tile, size: { width: number; height: number }) {
-  const known = videoSizes.value[tile.key];
-  if (known?.width === size.width && known.height === size.height) return;
-  videoSizes.value = { ...videoSizes.value, [tile.key]: size };
-}
-// Only the shape matters, so a smaller copy of the same picture, sent on weak internet, changes nothing.
-const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
-const miniShape = computed(() => {
-  const tile = miniTile.value;
-  if (!tile) return '';
-  const size = videoSizes.value[tile.key] ?? tile.dimensions
-    ?? (tile.kind === 'screen' ? { width: 16, height: 9 } : { width: 4, height: 3 });
-  const divisor = gcd(Math.round(size.width), Math.round(size.height)) || 1;
-  return `${Math.round(size.width) / divisor}x${Math.round(size.height) / divisor}`;
-});
-function tellMiniShape() {
-  const [width, height] = miniShape.value.split('x').map(Number);
-  setMiniWindow(miniShape.value ? { width, height } : null);
-}
-watch(miniShape, tellMiniShape);
-function noteWeak(identity: string, weak: boolean) {
-  clearTimeout(weakTimers.get(identity));
-  weakTimers.delete(identity);
-  const update = (on: boolean) => {
-    const next = new Set(weakPeople.value);
-    if (on) next.add(identity); else next.delete(identity);
-    weakPeople.value = next;
-    refresh();
-  };
-  if (!weak) { if (weakPeople.value.has(identity)) update(false); return; }
-  weakTimers.set(identity, setTimeout(() => { weakTimers.delete(identity); update(true); }, 3000));
-}
-function toggleFocus(key: string) { focusedKey.value = focusedKey.value === key ? null : key; }
-
-function attachAudio(track: RemoteTrack, participant: RemoteParticipant) {
-  if (disposed || voicesWaiting || track.kind !== Track.Kind.Audio) return;
-  // connect() attaches the voices that were already there, which LiveKit may have handed over
-  // through TrackSubscribed as well; a second element would play the same voice twice, distorted.
-  if (track.attachedElements.length) return;
-  const element = track.attach() as HTMLAudioElement;
-  element.autoplay = true;
-  element.addEventListener('pause', resumeSound);
-  document.body.appendChild(element);
-  detachedAudio.push(element);
-  applyVoice(track as RemoteAudioTrack, participant.identity);
-}
-
-function toggleHand() {
-  getSocket()?.emit('raise_hand', { channelId: props.channelId, raised: !myHandRaised.value });
-  sheet.value = null;
-}
-watch(() => props.hands, (next, previous) => {
-  const before = new Set(previous.map(hand => hand.userId));
-  const raised = next.find(hand => !before.has(hand.userId) && hand.userId !== props.userId);
-  if (raised) showToast(t('handRaised', { name: raised.displayName }));
-  refresh();
-});
-// Each voice plays at the call's volume times the volume chosen for that person, softened beside Ayman2's.
-function applyVoice(track: RemoteAudioTrack, identity: string) {
-  const name = (room?.remoteParticipants.get(identity)?.name ?? '').trim().toLowerCase();
-  const level = volume.value * levelOf(identity) * (LOUDER_VOICES.has(name) ? 1 : SOFTER_THAN_LOUDER);
-  // The mixer plays the voice while LiveKit keeps its element muted; unmuting it would play it twice.
-  if (webAudioVolume) { track.setVolume(soundOn.value ? level : 0); return; }
-  track.attachedElements.forEach(element => { element.muted = !soundOn.value; });
-  track.setVolume(level);
-}
-function applySound() {
-  for (const participant of room?.remoteParticipants.values() ?? []) {
-    for (const publication of participant.audioTrackPublications.values()) {
-      if (publication.audioTrack) applyVoice(publication.audioTrack as RemoteAudioTrack, participant.identity);
-    }
-  }
-}
-const clampVolume = (level: number) => Math.min(1, Math.max(MIN_VOLUME, level));
-// Remembered on this device only, so everyone keeps the level that suits their speaker.
-function savedVolume() {
-  try {
-    const saved = Number(localStorage.getItem(VOLUME_KEY) ?? NaN);
-    return Number.isFinite(saved) ? clampVolume(saved) : 1;
-  } catch { return 1; }
-}
-watch(volume, level => {
-  applySound();
-  try { localStorage.setItem(VOLUME_KEY, String(level)); } catch { /* Private browsing: the level lasts for this call. */ }
-});
-// Each person's level is remembered the same way, so a loud friend turned down stays down next time.
-function savedPersonVolumes() {
-  const levels: Record<string, number> = {};
-  try {
-    const saved: unknown = JSON.parse(localStorage.getItem(PERSON_VOLUMES_KEY) ?? '{}');
-    if (saved && typeof saved === 'object') {
-      for (const [identity, level] of Object.entries(saved)) if (Number.isFinite(level)) levels[identity] = clampVolume(level);
-    }
-  } catch { /* Nothing saved yet, or private browsing: everyone starts at full volume. */ }
-  return levels;
-}
-function levelOf(identity: string) { return personVolumes.value[identity] ?? 1; }
-function setPersonVolume(identity: string, level: number) {
-  personVolumes.value = { ...personVolumes.value, [identity]: clampVolume(level) };
-  applySound();
-  try { localStorage.setItem(PERSON_VOLUMES_KEY, JSON.stringify(personVolumes.value)); } catch { /* Lasts for this call. */ }
-}
-// On an iPhone the mixer is the sound, so the "tap to turn on sound" button follows whether it is running.
-function onMixerStateChange() {
-  if (!disposed && audioContext) audioBlocked.value = audioContext.state !== 'running';
-}
-// Made as the call opens, still within the tap on the voice channel, which is when an iPhone is
-// most likely to let it start without asking for another tap. It runs at 48 kHz, the only rate the
-// noise filter on the microphone understands, since that filter runs in the same mixer.
-function createMixer() {
-  if (!webAudioVolume) return;
-  try { audioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: 48_000 }); } catch { return; }
-  audioContext.addEventListener('statechange', onMixerStateChange);
-  resumeMixer();
-}
-function resumeMixer() {
-  if (audioContext && audioContext.state !== 'running' && audioContext.state !== 'closed') void audioContext.resume().catch(() => {});
-}
-// A phone pauses the call's sound when another app takes the speaker or the browser is put away,
-// and nothing starts it again by itself, so it is restarted whenever the page is back in view.
-function resumeSound() {
-  if (disposed || document.visibilityState !== 'visible') return;
-  resumeMixer();
-  for (const element of detachedAudio) {
-    if (!element.paused) continue;
-    element.play().catch((cause: unknown) => {
-      // Only a browser that wants a tap first is worth the "tap to turn on sound" button.
-      if (!disposed && cause instanceof DOMException && cause.name === 'NotAllowedError') audioBlocked.value = true;
-    });
-  }
-}
-async function toggleSound() {
-  if (audioBlocked.value) { await enableAudio(); return; }
-  soundOn.value = !soundOn.value;
-  applySound();
-  // Tapping the speaker always brings the sound back, even if the phone had paused it.
-  if (soundOn.value) resumeSound();
-}
-async function enableAudio() {
-  // An iPhone only lets the mixer start from within the tap itself.
-  resumeMixer();
-  try { await room?.startAudio(); audioBlocked.value = false; soundOn.value = true; applySound(); } catch { showToast(t('voicePlaybackBlocked')); return; }
-  // The page's audio is running again, so a microphone that was sent as recorded can be cleaned again.
-  await cleanMicrophone();
-}
-// Every voice sent from the website is cleaned of noise, warmed and made a little louder; if that is not
-// possible, it goes out as recorded.
-async function cleanMicrophone() {
-  const microphone = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack;
-  if (!microphone || microphone.getProcessor()) return;
-  const voice = cleanVoice();
-  try { await microphone.setProcessor(voice); } catch { /* Friends still hear the voice, just not cleaned. */ }
-  // The microphone was opened without the browser's own noise filter and leveling, because ours were
-  // going to replace them; if ours could not start after all, the browser's are brought back.
-  if ((voice.denoising && voice.leveling) || recorded(microphone).getSettings().noiseSuppression !== false) return;
-  try { await microphone.restartTrack({ noiseSuppression: true, voiceIsolation: true, autoGainControl: true }); } catch { /* It keeps the voice as it was. */ }
-}
-// With the voice cleaned, LiveKit's track is the cleaned one, which is silent while muted.
-function recorded(microphone: LocalAudioTrack) {
-  return (microphone.getProcessor() as CleanVoice | undefined)?.recordedTrack ?? microphone.mediaStreamTrack;
-}
-// Our noise filter replaces the browser's own: two filters in a row make voices sound watery. Our
-// leveling replaces the browser's too: while someone was silent, the browser's slowly turned them up
-// until the sounds of their house were as loud as a voice (see levelVoiceWorklet.js). The browser
-// still takes out the echo of the call's own sound. This only counts the first time, when the
-// microphone is opened; later, turning it on just unmutes it.
-async function microphoneOptions(): Promise<AudioCaptureOptions | undefined> {
-  return await prepareCleanVoice() ? { noiseSuppression: false, voiceIsolation: false, autoGainControl: false } : undefined;
-}
-// Opens the microphone without sending anything, only so the phone treats the call's sound as a
-// call's (see onAndroid). Turning the microphone on later just unmutes it.
-async function openMutedMicrophone() {
-  if (!room) return;
-  try {
-    const microphone = await createLocalAudioTrack({ ...room.options.audioCaptureDefaults, ...await microphoneOptions() });
-    await microphone.mute();
-    if (disposed || !room) { microphone.stop(); return; }
-    await room.localParticipant.publishTrack(microphone, { source: Track.Source.Microphone });
-    await cleanMicrophone();
-  } catch { /* Not allowed to use the microphone: the voices still play, just perhaps with an echo. */ }
-}
-async function setMicrophone(enabled: boolean) {
-  if (!room) return;
-  try {
-    if (enabled && audioBlocked.value) await enableAudio();
-    await room.localParticipant.setMicrophoneEnabled(enabled, enabled ? await microphoneOptions() : undefined);
-    if (enabled) await cleanMicrophone();
-    // The first time, the phone has only just been allowed to use the microphone.
-    if (enabled) keepPhoneCallGoing();
-    micBlocked.value = false;
-  } catch (cause) {
-    micBlocked.value = true;
-    // Instructions to follow take longer to read than a notice.
-    showToast(microphoneProblem(cause), 10_000);
-  } finally {
-    refresh();
-  }
-}
-// A friend whose microphone will not turn on needs to know what to fix: the browser, the computer
-// (Windows can block every browser at once), another app holding it, or no microphone at all.
-function microphoneProblem(cause: unknown) {
-  const failure = cause instanceof Error ? MediaDeviceFailure.getFailure(cause) : undefined;
-  if (failure === MediaDeviceFailure.NotFound) return t('micNotFound');
-  if (failure === MediaDeviceFailure.DeviceInUse) return t('micInUse');
-  // Chrome and Edge say "Permission denied by system" when the computer, not the page, refused.
-  if (failure === MediaDeviceFailure.PermissionDenied && /system/i.test((cause as Error).message)) {
-    return t(/Mac/.test(navigator.userAgent) ? 'micBlockedByMac' : 'micBlockedByWindows');
-  }
-  return t('micBlocked');
-}
-// Talking while muted gets a reminder, as in Zoom. A copy of the microphone is listened to on this
-// device only; it is never sent, and it is let go as soon as the microphone is turned back on.
-function listenWhileMuted() {
-  const microphone = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack;
-  if (!microphone || recorded(microphone).readyState !== 'live') return;
-  // On an iPhone, where a page gets few audio contexts, the call's mixer does the listening.
-  let context = audioContext;
-  try { context ??= listeningContext ??= new AudioContext(); } catch { return; }
-  const copy = recorded(microphone).clone();
-  copy.enabled = true;
-  const source = context.createMediaStreamSource(new MediaStream([copy]));
-  const lowCut = new BiquadFilterNode(context, { type: 'highpass', frequency: 150 });
-  const analyser = new AnalyserNode(context, { fftSize: 2048 });
-  // Some browsers only listen to what reaches the speakers, so the copy goes there, silenced.
-  const silent = new GainNode(context, { gain: 0 });
-  source.connect(lowCut).connect(analyser).connect(silent).connect(context.destination);
-  const samples = new Float32Array(analyser.fftSize);
-  const recent: boolean[] = [];
-  const timer = setInterval(() => {
-    if (document.visibilityState !== 'visible') return;
-    analyser.getFloatTimeDomainData(samples);
-    let power = 0;
-    for (const sample of samples) power += sample * sample;
-    recent.push(10 * Math.log10(power / samples.length || 1e-12) > MUTED_SPEECH_DB);
-    if (recent.length > 15) recent.shift();
-    // A cough or a door is shorter than this; talking fills most of the last second and a half.
-    if (recent.filter(Boolean).length < 7 || Date.now() - lastMutedHintAt < MUTED_HINT_EVERY_MS) return;
-    lastMutedHintAt = Date.now();
-    recent.length = 0;
-    showToast(t('youAreMuted'));
-  }, 100);
-  stopListeningWhileMuted = () => {
-    clearInterval(timer);
-    [source, lowCut, analyser, silent].forEach(node => node.disconnect());
-    copy.stop();
-    stopListeningWhileMuted = undefined;
-  };
-}
-// Only while the call is on screen: someone reading a text channel may well be talking to someone at home.
-watch(() => [micOn.value, status.value, props.visible, inMiniWindow.value] as const, ([on, state, visible, mini]) => {
-  const wanted = !on && state === 'connected' && visible && !mini;
-  if (!wanted) stopListeningWhileMuted?.();
-  else if (!stopListeningWhileMuted) listenWhileMuted();
-});
 async function toggleCamera() {
-  if (!room) return;
+  if (!session.room) return;
   try {
-    await room.localParticipant.setCameraEnabled(!cameraOn.value, { resolution: VideoPresets.h360.resolution, facingMode: 'user' });
+    await session.room.localParticipant.setCameraEnabled(!cameraOn.value, { resolution: VideoPresets.h360.resolution, facingMode: 'user' });
   } catch {
     showToast(t('cameraBlocked'));
   }
   refresh();
 }
-async function togglePhoneScreenShare() {
-  if (phoneShareStarting) return;
-  phoneShareStarting = true;
-  try {
-    if (sharingScreen.value) await stopPhoneScreenShare();
-    else await startPhoneScreenShare(await api.getScreenToken(props.channelId));
-  } catch (cause) {
-    if (!wasCancelled(cause)) showToast(cause instanceof ApiError ? translateError(cause.message) : t('screenShareFailed'));
-  } finally {
-    phoneShareStarting = false;
-  }
-  refresh();
-}
-// Downloading your own phone's screen would only use data to show it back to you.
-function onTrackPublished(publication: RemoteTrackPublication, participant: RemoteParticipant) {
-  if (participant.identity === myPhoneScreen()) publication.setSubscribed(false);
-  else if (publication.source === Track.Source.Camera) publication.setSubscribed(!savingData.value);
-}
-function saveData() {
-  if (savingData.value || !room) return;
-  savingData.value = true;
-  applySavingData();
-  showToast(t('camerasHiddenSlowInternet'), 6000);
-}
-function applySavingData() {
-  for (const participant of room?.remoteParticipants.values() ?? []) {
-    for (const publication of participant.trackPublications.values()) onTrackPublished(publication, participant);
-  }
-}
-// Two short pulses when someone else joins the call, so a phone in a pocket feels it; there is no
-// sound. A friend whose connection dropped for a moment is coming back rather than joining.
-const leftAt = new Map<string, number>();
-let quietUntil = 0;
-function onParticipantConnected(participant: RemoteParticipant) {
-  if (participant.identity.endsWith(SCREEN_SUFFIX) || participant.identity === props.userId || Date.now() < quietUntil) return;
-  if (Date.now() - (leftAt.get(participant.identity) ?? 0) < 30_000) return;
-  try { navigator.vibrate?.([70, 60, 70]); } catch { /* Not a phone, or vibration is turned off. */ }
-}
-async function toggleScreenShare() {
-  if (!room) return;
-  if (!canShareScreen) { showToast(t('screenShareUnsupported')); return; }
-  if (phoneScreenShareAvailable) { await togglePhoneScreenShare(); return; }
-  try {
-    // A shared browser tab can bring its sound along, for watching a video together. That sound
-    // keeps a fuller quality than a microphone's, since it is not always one clear voice.
-    await room.localParticipant.setScreenShareEnabled(!sharingScreen.value, {
-      audio: true, selfBrowserSurface: 'exclude', surfaceSwitching: 'include', systemAudio: 'include',
-    }, { audioPreset: AudioPresets.music });
-  } catch { /* The browser's screen picker was closed. */ }
-  refresh();
-}
-// Full screen shows one video alone on the whole screen, with a bar of buttons that comes back with
-// a tap. On a phone, a wide video also turns the screen sideways, as YouTube does.
-const onPhone = () => Math.min(window.screen.width, window.screen.height) < 600;
-function wantsLandscape() {
-  const size = fullTile.value?.dimensions;
-  return onPhone() && Boolean(size && size.width > size.height);
-}
-// Dark screen is each viewer's own choice, remembered on this device, for anyone who finds the
-// teacher's white pages too bright; it only changes how the screen is drawn here.
-const darkScreen = ref((() => { try { return localStorage.getItem(DARK_SCREEN_KEY) === '1'; } catch { return false; } })());
-function toggleDarkScreen() {
-  darkScreen.value = !darkScreen.value;
-  try { localStorage.setItem(DARK_SCREEN_KEY, darkScreen.value ? '1' : '0'); } catch { /* Private browsing: the choice lasts for this call. */ }
-}
-
-async function enterFullScreen(key: string) {
+function toggleHand() {
+  getSocket()?.emit('raise_hand', { channelId: props.channelId, raised: !tiles.myHandRaised.value });
   sheet.value = null;
-  focusedKey.value = key;
-  fullKey.value = key;
-  showZoomHint();
-  if (phoneFullScreenAvailable) { setPhoneFullScreen(true, wantsLandscape()); return; }
-  if (!browserFullscreen || document.fullscreenElement) return;
-  // Without a tap, as when the phone is turned sideways, the browser refuses; the call still fills the page.
-  try { await root.value?.requestFullscreen(); } catch { return; }
-  turnSideways();
 }
-function exitFullScreen() {
-  if (!fullKey.value) return;
-  // Otherwise the next full screen would open zoomed in where this one was left.
-  fullTileView.value?.resetZoom();
-  fullKey.value = null;
-  if (phoneFullScreenAvailable) setPhoneFullScreen(false, false);
-  if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
-  try { screen.orientation?.unlock(); } catch { /* Nothing was locked. */ }
+function openSheet(next: Sheet) { sheet.value = sheet.value === next ? null : next; }
+function closeSheet() { sheet.value = null; }
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return;
+  if (sheet.value) sheet.value = null;
+  else fullScreen.exitFullScreen();
 }
-// Only phone browsers in full screen can be turned sideways, and Chrome on Android is the one that does.
-function turnSideways() {
-  const orientation = screen.orientation as ScreenOrientation & { lock?: (to: string) => Promise<void> };
-  if (wantsLandscape()) orientation?.lock?.('landscape').catch(() => {});
-  else try { orientation?.unlock(); } catch { /* Nothing was locked. */ }
-}
-// The teacher may turn the tablet while it is shown full screen.
-watch(wantsLandscape, () => {
-  if (!fullKey.value) return;
-  if (phoneFullScreenAvailable) setPhoneFullScreen(true, wantsLandscape());
-  else if (document.fullscreenElement) turnSideways();
+
+provide(callKey, {
+  props, state, toasts, sound, microphone, screenShare, tablet, fullScreen, layout, tiles, chat, room, photo,
+  openSheet, closeSheet, toggleCamera, toggleHand, leave,
 });
-// Leaving the browser's full screen, for example with Escape or the Back gesture, leaves the call's too.
-function onFullscreenChange() { if (!document.fullscreenElement) exitFullScreen(); }
-watch(() => props.visible, visible => { if (!visible) exitFullScreen(); });
-// Once per device, the first time, so everyone learns that the teacher's writing can be made bigger.
-function showZoomHint() {
-  try {
-    if (localStorage.getItem(ZOOM_HINT_KEY)) return;
-    localStorage.setItem(ZOOM_HINT_KEY, '1');
-  } catch { return; }
-  showToast(t(window.matchMedia('(pointer: coarse)').matches ? 'pinchToZoom' : 'scrollToZoom'));
-}
 
-// Keeps a phone from dimming and locking during a call. Browsers release the lock whenever the
-// page is hidden, so it is requested again when the page returns.
-async function keepScreenOn() {
-  if (disposed || document.visibilityState !== 'visible' || !('wakeLock' in navigator)) return;
-  try { wakeLock = await navigator.wakeLock.request('screen'); } catch { /* Battery saver, or not supported. */ }
-}
-function onVisibilityChange() {
-  if (disposed || document.visibilityState !== 'visible') return;
-  void keepScreenOn();
-  if (rejoinWhenVisible) { rejoinWhenVisible = false; void rejoin(); } else resumeSound();
-}
+// Unpacked for the template, which only unwraps refs at the top level.
+const { audioBlocked, enableAudio } = sound;
+const { micBlocked } = microphone;
+const { tabletPrompt } = tablet;
+const { fullTile, darkScreen, toggleDarkScreen, enterFullScreen } = fullScreen;
+const { focusedTile, otherTiles, gridStyle, miniTile, miniSpeaker, spotOf, onTileClick, toggleFocus, setTileView, onVideoSize, savePicture } = layout;
+const { weakConnection, rejoin } = room;
 
-async function connect() {
-  let attempt: Room | undefined;
-  try {
-    const credentials = await api.getLiveKitToken(props.channelId);
-    if (disposed) return;
-    startedAt.value = credentials.startedAt;
-    // Adaptive streaming sends each tile only as much video as its size needs, and dynacast stops
-    // sending camera layers nobody is watching, which keeps calls light on mobile data.
-    const connectingRoom = new Room({
-      adaptiveStream: true, dynacast: true, ...(audioContext ? { webAudioMix: { audioContext } } : {}),
-      // Everything is sent as lightly as it can be while staying clear, because some of the class
-      // have slow internet. Each video also goes out in smaller copies, and the server gives every
-      // person the largest copy their internet can take, so one slow connection slows nobody else.
-      // A voice needs far less than music; a shared browser tab's sound keeps music quality (see
-      // toggleScreenShare).
-      publishDefaults: {
-        audioPreset: AudioPresets.speech,
-        videoSimulcastLayers: [VideoPresets.h90, VideoPresets.h180],
-        // A screen is mostly still text, so a few frames a second keep it readable at a fraction of the data.
-        screenShareEncoding: { maxBitrate: 1_200_000, maxFramerate: 15 },
-        screenShareSimulcastLayers: [new VideoPreset(640, 360, 120_000, 3), new VideoPreset(1280, 720, 400_000, 5)],
-      },
-    });
-    room = attempt = connectingRoom;
-    voicesWaiting = onAndroid;
-    // Events from a room that a rejoin has replaced are ignored.
-    const current = () => !disposed && room === connectingRoom;
-    connectingRoom.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
-      if (!current()) return;
-      attachAudio(track, participant);
-      refresh();
-    });
-    connectingRoom.on(RoomEvent.TrackUnsubscribed, (track) => {
-      if (track.kind === Track.Kind.Audio) {
-        for (const element of track.detach()) {
-          const index = detachedAudio.indexOf(element);
-          if (index !== -1) detachedAudio.splice(index, 1);
-          element.remove();
-        }
-      }
-      if (current()) refresh();
-    });
-    connectingRoom.on(RoomEvent.AudioPlaybackStatusChanged, () => { if (current()) audioBlocked.value = !connectingRoom.canPlaybackAudio; });
-    // LiveKit retries a dropped connection for a while before giving up with Disconnected.
-    connectingRoom.on(RoomEvent.Reconnecting, () => { if (current()) status.value = 'reconnecting'; });
-    connectingRoom.on(RoomEvent.Reconnected, () => { if (current()) { status.value = 'connected'; quietUntil = Date.now() + 3000; refresh(); } });
-    connectingRoom.on(RoomEvent.ParticipantConnected, participant => { if (current()) { onParticipantConnected(participant); noteArrival(participant); } });
-    connectingRoom.on(RoomEvent.ParticipantDisconnected, participant => { if (current()) { leftAt.set(participant.identity, Date.now()); noteLeaving(participant); } });
-    connectingRoom.on(RoomEvent.ActiveSpeakersChanged, () => { if (current()) noteTalking(); });
-    connectingRoom.on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
-      // A join that fails is tried again by connect() itself.
-      if (!current() || error.value || status.value === 'joining') return;
-      status.value = 'disconnected';
-      // A deleted channel, or the call opened on another device, stays closed. Anything else, such
-      // as the browser putting the page to sleep while its owner was in another app, is rejoined as
-      // soon as the page is looked at. A call that keeps dropping straight after a rejoin is left
-      // to be rejoined by hand.
-      if (reason === DisconnectReason.ROOM_DELETED || reason === DisconnectReason.PARTICIPANT_REMOVED || reason === DisconnectReason.DUPLICATE_IDENTITY) return;
-      if (Date.now() - lastAutoRejoinAt < 15_000) return;
-      lastAutoRejoinAt = Date.now();
-      if (document.visibilityState === 'visible') void rejoin();
-      else rejoinWhenVisible = true;
-    });
-    // A weak connection for more than a moment is worth knowing about: it explains a voice that cuts
-    // out, and that the problem is here rather than with the others.
-    connectingRoom.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
-      if (!current()) return;
-      if (participant !== connectingRoom.localParticipant) { noteWeak(participant.identity, quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost); return; }
-      clearTimeout(weakTimer);
-      if (quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost) weakTimer = setTimeout(() => { weakConnection.value = true; saveData(); }, 3000);
-      else weakConnection.value = false;
-    });
-    connectingRoom.on(RoomEvent.TrackPublished, (publication, participant) => { if (current()) onTrackPublished(publication, participant); });
-    // The server pauses a video when this device's internet cannot carry it.
-    connectingRoom.on(RoomEvent.TrackStreamStateChanged, (publication, state) => {
-      if (current() && state === Track.StreamState.Paused && publication.kind === Track.Kind.Video && publication.isSubscribed) saveData();
-    });
-    connectingRoom.on(RoomEvent.DataReceived, (payload, sender, _kind, topic) => {
-      if (!current() || topic !== 'board' || !sender) return;
-      let message: unknown;
-      try { message = JSON.parse(boardDecoder.decode(payload)); } catch { return; }
-      if (receiveBoard(message, sender.name || sender.identity) && answersHello(sender.identity)) tellBoards(sender.identity);
-    });
-    for (const event of [
-      RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected, RoomEvent.ParticipantNameChanged,
-      RoomEvent.TrackPublished, RoomEvent.TrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted,
-      RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished, RoomEvent.ActiveSpeakersChanged,
-    ] as const) connectingRoom.on(event, () => { if (current()) refresh(); });
-    // A slow connection gets twice LiveKit's usual time to join before it counts as failed.
-    await connectingRoom.connect(credentials.url, credentials.token, { websocketTimeout: 30_000, peerConnectionTimeout: 30_000, maxRetries: 2 });
-    if (!current()) { connectingRoom.disconnect(); return; }
-    // A phone set to save data (Android's Data Saver in Chrome) is slow or on a limited plan from the start.
-    if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) savingData.value = true;
-    status.value = 'connected';
-    joinRetries = 0;
-    // Drawings made before this person came are asked for (see board.ts). A message sent the moment
-    // the call connects can be lost, so the question waits a moment, and is asked once more.
-    for (const delay of [1500, 5000]) setTimeout(() => { if (current()) sayHello(); }, delay);
-    for (const participant of connectingRoom.remoteParticipants.values()) {
-      for (const publication of participant.trackPublications.values()) onTrackPublished(publication, participant);
-    }
-    refresh();
-    // Started before the microphone, so the call's sound keeps going even if the microphone is refused.
-    keepPhoneCallGoing();
-    // Told again once the call is running on the phone, so the small window never misses its shape.
-    tellMiniShape();
-    // The microphone and camera start as chosen on the screen before the call.
-    const microphone = props.startMic ? setMicrophone(true) : onAndroid ? openMutedMicrophone() : Promise.resolve();
-    if (voicesWaiting) await Promise.race([microphone, new Promise(resolve => setTimeout(resolve, MICROPHONE_WAIT_MS))]);
-    if (room !== connectingRoom) return;
-    voicesWaiting = false;
-    for (const participant of connectingRoom.remoteParticipants.values()) {
-      for (const publication of participant.audioTrackPublications.values()) {
-        if (publication.track) attachAudio(publication.track, participant);
-      }
-    }
-    await microphone;
-    if (props.startCamera && !disposed) await toggleCamera();
-  } catch (cause) {
-    if (disposed) return;
-    // On weak internet a join often fails once and works the next time, so it is tried twice more
-    // by itself, still showing "Joining the call…", before the Rejoin button is offered.
-    if (!(cause instanceof ApiError) && status.value === 'joining' && joinRetries < 2) {
-      joinRetries++;
-      if (room === attempt) room = null;
-      void attempt?.disconnect();
-      setTimeout(() => { if (!disposed && !room && status.value === 'joining') void connect(); }, 2000);
-      return;
-    }
-    joinRetries = 0;
-    error.value = cause instanceof ApiError ? translateError(cause.message) : t('callConnectFailed');
-  }
-}
-async function rejoin() {
-  rejoinWhenVisible = false;
-  const previous = room;
-  room = null;
-  stopListeningWhileMuted?.();
-  clearTimeout(weakTimer);
-  weakConnection.value = false;
-  weakTimers.forEach(timer => clearTimeout(timer));
-  weakTimers.clear();
-  weakPeople.value = new Set();
-  previous?.disconnect();
-  detachedAudio.splice(0).forEach(element => element.remove());
-  error.value = '';
-  status.value = 'joining';
-  participants.value = [];
-  tiles.value = [];
-  // The server forgets whoever lost their connection, so it is told again before the call is rejoined.
-  await new Promise(resolve => getSocket()?.emit('voice_join', { channelId: props.channelId }, resolve));
-  await connect();
-}
 function cleanup() {
-  if (disposed) return;
-  disposed = true;
-  exitFullScreen();
-  stopListeningWhileMuted?.();
-  void listeningContext?.close().catch(() => {});
-  clearTimeout(weakTimer);
-  weakTimers.forEach(timer => clearTimeout(timer));
-  clearTimeout(fullSpeakerTimer);
-  clearTimeout(toastTimer);
-  clearInterval(clockTimer);
-  document.removeEventListener('fullscreenchange', onFullscreenChange);
+  if (session.disposed) return;
+  session.disposed = true;
+  fullScreen.exitFullScreen();
+  microphone.dispose();
+  room.stopWeakTimer();
+  tiles.stopWeakTimers();
+  fullScreen.dispose();
+  toasts.dispose();
   document.removeEventListener('keydown', onKeydown);
-  document.removeEventListener('visibilitychange', onVisibilityChange);
-  window.removeEventListener('pageshow', onVisibilityChange);
-  window.removeEventListener('resize', onResize);
-  void wakeLock?.release().catch(() => {});
-  // The phone's screen is a separate connection, so it would keep going after the call closes.
-  if (sharingScreen.value && phoneScreenShareAvailable) void stopPhoneScreenShare().catch(() => {});
-  stopChatListener();
+  room.dispose();
+  layout.dispose();
+  screenShare.stopPhoneShare();
+  chat.dispose();
   clearBoards();
-  clearTimeout(tabletTimer);
-  clearTimeout(talkingTimer);
-  leftTimers.forEach(timer => clearTimeout(timer));
-  void hideOnTablet();
-  void drawPermissionListener?.remove();
-  void phoneShareListener?.remove();
+  tablet.dispose();
+  screenShare.dispose();
   void phoneLeaveListener?.remove();
-  void phoneFullScreenListener?.remove();
   endPhoneCall();
-  room?.disconnect(); room = null;
-  detachedAudio.splice(0).forEach(element => element.remove());
-  speakingDetector.stop();
-  void speakingContext?.close().catch(() => {});
-  speakingContext = undefined;
-  audioContext?.removeEventListener('statechange', onMixerStateChange);
-  void audioContext?.close().catch(() => {});
-  audioContext = undefined;
+  session.room?.disconnect(); session.room = null;
+  sound.removeVoices();
+  tiles.stopSpeaking();
+  sound.closeMixer();
 }
 function leave() { cleanup(); emit('leave'); }
-defineExpose({ toggleMicrophone: () => setMicrophone(!micOn.value), leave });
+defineExpose({ toggleMicrophone: () => microphone.setMicrophone(!micOn.value), leave });
 // Zooming is only locked in the call (see the viewport tag in index.html for why); the screens
 // before it can be zoomed.
 const viewport = document.querySelector<HTMLMetaElement>('meta[name=viewport]');
 const zoomableViewport = viewport?.content ?? '';
 onMounted(() => {
   if (viewport) viewport.content = `${zoomableViewport}, maximum-scale=1.0, user-scalable=no`;
-  document.addEventListener('fullscreenchange', onFullscreenChange);
+  fullScreen.start();
   // Escape closes an open panel wherever keyboard focus happens to be.
   document.addEventListener('keydown', onKeydown);
-  document.addEventListener('visibilitychange', onVisibilityChange);
-  // A page brought back from the browser's back-forward cache may not report a visibility change.
-  window.addEventListener('pageshow', onVisibilityChange);
-  window.addEventListener('resize', onResize);
-  clockTimer = setInterval(() => { now.value = Date.now(); }, 1000);
-  void keepScreenOn();
-  createMixer();
+  room.start();
+  layout.start();
+  sound.createMixer();
   // Fetched while the call connects, so the microphone does not wait for it.
   void prepareCleanVoice();
-  void connect();
+  void room.connect();
 });
 onBeforeUnmount(() => {
   if (viewport) viewport.content = zoomableViewport;
@@ -1136,28 +169,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div v-show="!inMiniWindow" class="call-main">
-      <header class="call-header">
-        <Volume2 :size="20" class="call-header-icon" aria-hidden="true" />
-        <h2><bdi>{{ channelName }}</bdi></h2>
-        <bdi v-if="elapsed" class="call-clock">{{ elapsed }}</bdi>
-        <span class="call-header-spacer" />
-        <button
-          class="call-icon-btn"
-          type="button"
-          :title="soundOn && !audioBlocked ? t('callSoundOn') : t('callSoundOff')"
-          :aria-label="soundOn && !audioBlocked ? t('callSoundOn') : t('callSoundOff')"
-          @click="toggleSound"
-        >
-          <Volume2 v-if="soundOn && !audioBlocked" :size="20" />
-          <VolumeX v-else :size="20" />
-        </button>
-        <button class="call-icon-btn" type="button" :title="t('participants')" :aria-label="t('participantsCount', { count: participants.length })" @click="openSheet('participants')">
-          <Users :size="20" /><span class="call-count">{{ participants.length }}</span>
-        </button>
-        <button class="call-icon-btn" type="button" :aria-pressed="sheet === 'chat'" :title="t('chat')" :aria-label="chatUnread ? t('chatWithCount', { count: chatUnread }) : t('chat')" @click="openSheet('chat')">
-          <MessageSquare :size="20" /><span v-if="chatUnread" class="call-chat-badge">{{ chatUnread > 99 ? '99+' : chatUnread }}</span>
-        </button>
-      </header>
+      <CallHeader />
 
       <main class="call-stage">
         <div v-if="error" class="call-state-card error" role="alert">
@@ -1172,37 +184,7 @@ onBeforeUnmount(() => {
         <div v-else-if="status === 'joining'" class="call-state-card" role="status">
           <strong>{{ t('joiningCall') }}</strong>
         </div>
-        <div v-else-if="fullTile" class="call-full">
-          <div id="call-spot-full" class="call-full-spot" />
-          <Transition name="call-full-speaker">
-            <span v-if="fullSpeaker" class="call-full-speaker" aria-hidden="true"><bdi>{{ fullSpeaker }}</bdi></span>
-          </Transition>
-          <div class="call-full-bar top">
-            <span class="call-full-name">
-              <ScreenShare v-if="fullTile.kind === 'screen'" :size="16" aria-hidden="true" />
-              <bdi>{{ fullTile.kind === 'screen' ? t('screenOf', { name: fullTile.name }) : fullTile.name }}</bdi>
-            </span>
-            <span class="call-full-actions">
-              <button v-if="fullTile.kind === 'screen'" class="call-full-btn" type="button" :aria-pressed="darkScreen" @click="toggleDarkScreen()">
-                <Sun v-if="darkScreen" :size="18" /><Moon v-else :size="18" />{{ darkScreen ? t('lightScreen') : t('darkScreen') }}
-              </button>
-              <button class="call-full-btn" type="button" @click="exitFullScreen"><Minimize :size="18" />{{ t('exitFullscreen') }}</button>
-            </span>
-          </div>
-          <div class="call-full-bar bottom">
-            <!-- A student can answer the teacher without leaving full screen. -->
-            <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="micOn ? t('mute') : t('unmute')" :aria-label="micOn ? t('mute') : t('unmute')" @click="setMicrophone(!micOn)">
-              <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
-            </button>
-            <button v-if="fullZoomed" class="call-full-btn" type="button" @click="fullTileView?.resetZoom()"><ZoomOut :size="18" />{{ t('zoomOut') }}</button>
-            <!-- The blackboard's pen, eraser and save, beside the microphone (see board.ts). -->
-            <template v-if="fullTile.kind === 'screen' && !fullTile.local">
-              <button v-if="penOn && fullDrawn" class="call-full-btn" type="button" :title="t('eraseBoard')" :aria-label="t('eraseBoard')" @click="erase(fullTile.key)"><Eraser :size="18" /></button>
-              <button class="call-full-btn" :class="{ on: penOn }" type="button" :aria-pressed="penOn" @click="penOn = !penOn"><Pencil :size="18" />{{ penOn ? t('stopDrawing') : t('draw') }}</button>
-              <button v-if="canSavePicture" class="call-full-btn" type="button" :title="t('savePicture')" :aria-label="t('savePicture')" @click="savePicture(fullTile)"><Download :size="18" /></button>
-            </template>
-          </div>
-        </div>
+        <CallFullScreen v-else-if="fullTile" />
         <template v-else-if="focusedTile">
           <div id="call-spot-focus" class="call-focus" />
           <div v-show="otherTiles.length" id="call-spot-strip" class="call-strip" />
@@ -1219,145 +201,20 @@ onBeforeUnmount(() => {
            changes to a live region that already exists. -->
       <div v-show="toast" class="call-pill call-toast" role="status"><bdi>{{ toast }}</bdi></div>
       <p v-if="micBlocked" id="call-mic-hint" class="call-pill call-mic-hint" role="status"><MicOff :size="16" aria-hidden="true" />{{ t('micBlockedShort') }}</p>
-      <div v-if="tabletPrompt" class="call-board-prompt" role="dialog" :aria-label="t('tabletBoardTitle')">
-        <strong>{{ t('tabletBoardTitle') }}</strong>
-        <p>{{ t('tabletBoardBody') }}</p>
-        <div class="call-board-prompt-actions">
-          <button class="call-board-prompt-later" type="button" @click="answerTabletPrompt(false)">{{ t('notNow') }}</button>
-          <button class="call-board-prompt-allow" type="button" @click="answerTabletPrompt(true)">{{ t('allow') }}</button>
-        </div>
-      </div>
+      <TabletPrompt v-if="tabletPrompt" />
 
-      <footer class="call-controls">
-        <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="whileConnecting(micOn ? t('mute') : t('unmute'))" :aria-label="whileConnecting(micOn ? t('mute') : t('unmute'))" :aria-describedby="micBlocked ? 'call-mic-hint' : undefined" :disabled="status !== 'connected'" @click="setMicrophone(!micOn)">
-          <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
-        </button>
-        <button class="call-control" :class="{ on: cameraOn }" type="button" :aria-pressed="cameraOn" :title="whileConnecting(cameraOn ? t('cameraOff') : t('cameraOn'))" :aria-label="whileConnecting(cameraOn ? t('cameraOff') : t('cameraOn'))" :disabled="status !== 'connected'" @click="toggleCamera">
-          <Video v-if="cameraOn" :size="22" /><VideoOff v-else :size="22" />
-        </button>
-        <button v-if="canShareScreen" class="call-control" :class="{ on: sharingScreen }" type="button" :aria-pressed="sharingScreen" :title="whileConnecting(sharingScreen ? t('stopSharing') : t('shareScreen'))" :aria-label="whileConnecting(sharingScreen ? t('stopSharing') : t('shareScreen'))" :disabled="status !== 'connected'" @click="toggleScreenShare">
-          <ScreenShareOff v-if="sharingScreen" :size="22" /><ScreenShare v-else :size="22" />
-        </button>
-        <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="myHandRaised ? t('lowerHand') : t('raiseHand')" :aria-label="myHandRaised ? t('lowerHand') : t('raiseHand')" @click="toggleHand">
-          <Hand :size="22" />
-        </button>
-        <button class="call-control" type="button" :aria-pressed="sheet === 'more'" :title="t('more')" :aria-label="t('more')" @click="openSheet('more')">
-          <Ellipsis :size="22" />
-        </button>
-        <button class="call-control leave" type="button" :title="t('disconnect')" :aria-label="t('disconnect')" @click="leave">
-          <PhoneOff :size="22" />
-        </button>
-      </footer>
+      <CallToolbar />
 
       <template v-if="sheet">
-        <div class="call-sheet-backdrop" @click="sheet = null" />
-
-        <section v-if="sheet === 'participants'" class="call-sheet side" :aria-label="t('participants')">
-          <div class="call-sheet-head">
-            <strong>{{ t('participantsCount', { count: participants.length }) }}</strong>
-            <button class="call-icon-btn" type="button" :aria-label="t('close')" @click="sheet = null"><X :size="18" /></button>
-          </div>
-          <ul class="call-people">
-            <li v-for="person in participants" :key="person.identity" >
-              <Avatar :name="person.name" :color="colorOf(person.identity)" :picture="pictureOf(person.identity)" size="small" />
-              <div class="call-person-main">
-                <span class="call-person-name">
-                  <bdi>{{ person.name }}</bdi>
-                  <small v-if="person.local">{{ t('youLabel') }}</small>
-                </span>
-                <!-- Only on this device: turning someone down here changes nothing for anyone else. -->
-                <label v-if="canAdjustVolume && !person.local" class="call-person-volume">
-                  <Volume1 :size="16" aria-hidden="true" />
-                  <input
-                    type="range"
-                    :min="MIN_VOLUME"
-                    max="1"
-                    step="0.05"
-                    :value="levelOf(person.identity)"
-                    :aria-label="t('personVolume', { name: person.name })"
-                    @input="setPersonVolume(person.identity, ($event.target as HTMLInputElement).valueAsNumber)"
-                  >
-                </label>
-              </div>
-              <span v-if="raisedHands.has(person.identity)" class="call-person-hand anime-wave">✋</span>
-              <button v-if="!person.local" class="call-icon-btn" type="button" :title="t('messagePrivately', { name: person.name })" :aria-label="t('messagePrivately', { name: person.name })" @click="messagePrivately(person.identity)">
-                <MessageSquare :size="18" />
-              </button>
-              <Mic v-if="person.micOn" :size="18" class="call-person-mic" :class="{ on: person.speaking }" />
-              <MicOff v-else :size="18" class="call-person-mic off" />
-            </li>
-          </ul>
-        </section>
-
-        <section v-else-if="sheet === 'chat'" class="call-sheet side call-chat" :aria-label="t('chat')">
-          <div class="call-sheet-head">
-            <strong>{{ t('chat') }}</strong>
-            <button class="call-icon-btn" type="button" :aria-label="t('close')" @click="sheet = null"><X :size="18" /></button>
-          </div>
-          <ol ref="chatList" class="call-chat-list" role="log" aria-live="polite" aria-relevant="additions">
-            <li v-if="!callChat.length" class="call-chat-empty">{{ t('chatEmpty') }}</li>
-            <li v-for="message in callChat" :key="message.id" class="call-chat-message" :class="{ private: message.to, mine: message.from.id === userId }">
-              <div class="call-chat-meta">
-                <bdi class="call-chat-name">{{ message.from.id === userId ? t('youLabel') : message.from.displayName }}</bdi>
-                <span>{{ chatTime(message.sentAt) }}</span>
-              </div>
-              <button
-                v-if="message.to"
-                class="call-chat-private"
-                type="button"
-                @click="chatTo = message.from.id === userId ? message.to.id : message.from.id"
-              >
-                <bdi>{{ message.from.id === userId ? t('chatPrivateTo', { name: message.to.displayName }) : t('chatPrivateFrom', { name: message.from.displayName }) }}</bdi>
-              </button>
-              <p dir="auto">{{ message.text }}</p>
-            </li>
-          </ol>
-          <form class="call-chat-form" @submit.prevent="sendChat">
-            <label class="call-chat-to">
-              <span>{{ t('chatTo') }}</span>
-              <select v-model="chatTo" :class="{ private: chatTo }">
-                <option :value="null">{{ t('chatEveryone') }}</option>
-                <option v-for="person in chatPeople" :key="person.identity" :value="person.identity">{{ person.name }}</option>
-              </select>
-            </label>
-            <div class="call-chat-compose">
-              <input v-model="chatDraft" type="text" dir="auto" maxlength="2000" :placeholder="t('chatPlaceholder')" :aria-label="t('chatPlaceholder')" enterkeyhint="send">
-              <button class="call-chat-send" type="submit" :disabled="!chatDraft.trim() || chatSending" :title="t('sendMessage')" :aria-label="t('sendMessage')">
-                <SendHorizontal :size="20" />
-              </button>
-            </div>
-          </form>
-        </section>
-
-        <section v-else-if="sheet === 'more'" class="call-sheet" :aria-label="t('more')">
-          <span class="call-sheet-handle" />
-          <label v-if="canAdjustVolume" class="call-volume">
-            <Volume1 :size="20" aria-hidden="true" />
-            <span>{{ t('callVolume') }}</span>
-            <input v-model.number="volume" type="range" :min="MIN_VOLUME" max="1" step="0.05">
-            <Volume2 :size="20" aria-hidden="true" />
-          </label>
-          <button v-if="fullScreenChoice" class="call-sheet-row" type="button" @click="enterFullScreen(fullScreenChoice.key)">
-            <Maximize :size="20" />{{ t('fullscreen') }}
-          </button>
-          <button v-if="offerTabletBoard" class="call-sheet-row" type="button" @click="askToDrawOverApps(); sheet = null">
-            <Pencil :size="20" />{{ t('showDrawingsOnMyScreen') }}
-          </button>
-          <button class="call-sheet-row" type="button" :disabled="photoBusy" @click="choosePhoto">
-            <Camera :size="20" />{{ photoBusy ? t('savingPhoto') : pictureOf(userId) ? t('changePhoto') : t('addPhoto') }}
-          </button>
-          <button v-if="pictureOf(userId)" class="call-sheet-row" type="button" :disabled="photoBusy" @click="removePhoto">
-            <UserRound :size="20" />{{ t('removePhoto') }}
-          </button>
-          <button class="call-sheet-row" type="button" @click="toggleTheme">
-            <Moon v-if="theme === 'light'" :size="20" /><Sun v-else :size="20" />{{ theme === 'light' ? t('darkMode') : t('lightMode') }}
-          </button>
-        </section>
+        <div class="call-sheet-backdrop" @click="closeSheet" />
+        <CallPeopleSheet v-if="sheet === 'participants'" />
+        <CallChatSheet v-else-if="sheet === 'chat'" />
+        <CallMoreSheet v-else-if="sheet === 'more'" />
       </template>
     </div>
     <!-- Last, so the spots above already exist when a tile moves into one. -->
     <div id="call-spot-parked" hidden />
-    <Teleport v-for="(tile, index) in tiles" :key="tile.key" :to="`#call-spot-${spotOf(tile)}`" defer>
+    <Teleport v-for="(tile, index) in tileList" :key="tile.key" :to="`#call-spot-${spotOf(tile)}`" defer>
       <CallTile
         :ref="view => setTileView(tile, view)"
         :tile="tile"
@@ -1443,45 +300,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.call-header {
-  min-height: 48px;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: max(6px, env(safe-area-inset-top)) 12px 6px;
-  background: var(--call-bar);
-}
-
-.call-header h2 {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 16px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.call-header-icon {
-  flex: none;
-  color: var(--text-secondary);
-}
-
-.call-header-spacer {
-  flex: 1;
-}
-
-.call-clock {
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.call-count {
-  font-size: 13px;
-  font-weight: 700;
-}
-
 .call-stage {
   position: relative;
   min-height: 0;
@@ -1558,218 +376,6 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.call-controls {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  padding: 10px 12px max(12px, env(safe-area-inset-bottom));
-  background: var(--call-bg);
-}
-
-/* On joining, the buttons spring up one after another. */
-.call-controls > * {
-  animation: anime-rise 480ms var(--spring) both;
-}
-
-.call-controls > :nth-child(1) { animation-delay: 250ms; }
-.call-controls > :nth-child(2) { animation-delay: 290ms; }
-.call-controls > :nth-child(3) { animation-delay: 330ms; }
-.call-controls > :nth-child(4) { animation-delay: 370ms; }
-.call-controls > :nth-child(5) { animation-delay: 410ms; }
-.call-controls > :nth-child(6) { animation-delay: 450ms; }
-
-/* Full screen: one video over the whole app, with bars that fade away and come back with a tap. */
-.call-full-spot {
-  min-width: 0;
-  min-height: 0;
-  display: grid;
-}
-
-.call-full {
-  position: fixed;
-  inset: 0;
-  z-index: 5;
-  display: grid;
-  background: #000000;
-}
-
-.call-full-bar {
-  position: absolute;
-  inset-inline: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px max(12px, env(safe-area-inset-right)) 12px max(12px, env(safe-area-inset-left));
-  pointer-events: none;
-}
-
-.call-full-bar > * {
-  pointer-events: auto;
-}
-
-.call-full-speaker {
-  max-width: 40%;
-  position: absolute;
-  bottom: max(10px, env(safe-area-inset-bottom));
-  inset-inline-start: max(10px, env(safe-area-inset-left));
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  overflow: hidden;
-  padding: 2px 8px;
-  border-radius: 999px;
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(0, 0, 0, 0.3);
-  font-size: 12px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  pointer-events: none;
-}
-
-/* Above the bottom bar. */
-.call-full .call-full-speaker {
-  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 64px);
-}
-
-.call-full-speaker::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--speaking);
-}
-
-.call-full-speaker-enter-active,
-.call-full-speaker-leave-active {
-  transition: opacity 300ms ease;
-}
-
-.call-full-speaker-enter-from,
-.call-full-speaker-leave-to {
-  opacity: 0;
-}
-
-.call-full-btn.on {
-  color: var(--text-on-accent);
-  background: var(--text-accent);
-}
-
-/* Asks the person sharing their tablet's screen to let the app draw over other apps. */
-.call-board-prompt {
-  width: min(420px, calc(100% - 32px));
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  z-index: 7;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 20px;
-  border-radius: 6px;
-  color: var(--call-text);
-  background: var(--call-sheet);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
-  translate: -50% -50%;
-  animation: anime-rise 420ms var(--soft-spring) both;
-}
-
-.call-board-prompt strong {
-  font-size: 17px;
-}
-
-.call-board-prompt p {
-  color: var(--call-text-muted);
-  font-size: 15px;
-  line-height: 1.6;
-}
-
-.call-board-prompt-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 6px;
-}
-
-.call-board-prompt-actions button {
-  min-height: 46px;
-  padding: 0 18px;
-  border-radius: 4px;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.call-board-prompt-later {
-  color: var(--call-text);
-  background: var(--call-surface);
-}
-
-.call-board-prompt-allow {
-  color: var(--text-on-accent);
-  background: var(--text-accent);
-}
-
-.call-full-bar.top {
-  top: 0;
-  justify-content: space-between;
-  padding-top: max(12px, env(safe-area-inset-top));
-  background: linear-gradient(rgba(0, 0, 0, 0.55), transparent);
-}
-
-.call-full-bar.bottom {
-  bottom: 0;
-  justify-content: center;
-  padding-bottom: max(14px, env(safe-area-inset-bottom));
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
-}
-
-.call-full-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.call-full-name {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  overflow: hidden;
-  padding: 6px 10px;
-  border-radius: 2px;
-  color: #ffffff;
-  background: rgba(0, 0, 0, 0.6);
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.call-full-name bdi {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.call-full-btn {
-  min-height: 42px;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 16px;
-  border-radius: 999px;
-  color: #ffffff;
-  background: rgba(0, 0, 0, 0.6);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.call-full-btn:hover {
-  background: rgba(0, 0, 0, 0.8);
-}
-
 /* Floating notices, shown over full screen too. */
 .call-pill {
   position: absolute;
@@ -1827,158 +433,6 @@ onBeforeUnmount(() => {
   color: var(--leave);
 }
 
-/* The call's chat: messages above, and who they go to and what they say below. */
-.call-chat-badge {
-  min-width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  padding: 0 5px;
-  border-radius: 999px;
-  color: #ffffff;
-  background: var(--leave);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.call-sheet.call-chat {
-  overflow: hidden;
-}
-
-.call-chat-list {
-  min-height: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  padding: 12px 0;
-  list-style: none;
-}
-
-.call-chat-empty {
-  margin: auto 0;
-  color: var(--call-text-muted);
-  font-size: 14px;
-  line-height: 1.55;
-  text-align: center;
-}
-
-.call-chat-message {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.call-chat-message.private {
-  padding: 8px 10px;
-  border-radius: 4px;
-  background: var(--accent-soft);
-}
-
-.call-chat-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.call-chat-name {
-  color: var(--call-text);
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.call-chat-message.mine .call-chat-name {
-  color: var(--text-secondary);
-}
-
-.call-chat-private {
-  align-self: flex-start;
-  color: var(--call-link);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.call-chat-message p {
-  color: var(--call-text-soft);
-  font-size: 15px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.call-chat-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--call-line);
-}
-
-.call-chat-to {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--call-text-muted);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.call-chat-to select {
-  min-width: 0;
-  flex: 1;
-  height: 34px;
-  padding: 0 8px;
-  border: 1px solid var(--call-line-strong);
-  border-radius: 2px;
-  color: var(--call-text);
-  background: var(--call-input);
-  font-size: 14px;
-}
-
-.call-chat-to select.private {
-  border-color: var(--text-accent);
-}
-
-.call-chat-compose {
-  display: flex;
-  gap: 8px;
-}
-
-.call-chat-compose input {
-  min-width: 0;
-  flex: 1;
-  height: 44px;
-  padding: 0 12px;
-  border: 1px solid var(--call-line-strong);
-  border-radius: 4px;
-  color: var(--call-text);
-  background: var(--call-input);
-  /* 16px keeps iPhones from zooming in on the box. */
-  font-size: 16px;
-}
-
-.call-chat-send {
-  width: 44px;
-  height: 44px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border-radius: 4px;
-  color: var(--text-on-accent);
-  background: var(--text-accent);
-}
-
-.call-chat-send:disabled {
-  opacity: 0.45;
-}
-
-[dir='rtl'] .call-chat-send svg {
-  transform: scaleX(-1);
-}
-
 /* Sheets: bottom sheets on phones; the participants list docks to the side on wide screens. */
 .call-sheet-backdrop {
   position: absolute;
@@ -1987,185 +441,13 @@ onBeforeUnmount(() => {
   background: rgba(0, 0, 0, 0.45);
 }
 
-.call-sheet {
-  width: min(480px, 100%);
-  max-height: 85%;
-  position: absolute;
-  bottom: 0;
-  inset-inline: 0;
-  z-index: 4;
-  display: flex;
-  flex-direction: column;
-  overflow: auto;
-  margin-inline: auto;
-  padding: 10px 16px max(18px, env(safe-area-inset-bottom));
-  border-radius: 6px 6px 0 0;
-  background: var(--call-sheet);
-  box-shadow: 0 -16px 50px rgba(0, 0, 0, 0.45);
-  animation: call-sheet-in 380ms var(--soft-spring);
-}
-
-.call-sheet.side {
-  height: 85%;
-  padding-top: 12px;
-}
-
-@keyframes call-sheet-in {
-  from { opacity: 0; translate: 0 60px; }
-}
-
-.call-sheet-handle {
-  width: 38px;
-  height: 4px;
-  flex: 0 0 auto;
-  margin: 0 auto 14px;
-  border-radius: 999px;
-  background: var(--call-handle);
-}
-
-.call-sheet-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--call-line);
-}
-
-.call-people {
-  margin: 0 -16px;
-  padding: 6px 0;
-  list-style: none;
-}
-
-.call-people li {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-}
-
-.call-person-main {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.call-person-name {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  overflow: hidden;
-  font-size: 15px;
-  white-space: nowrap;
-}
-
-.call-person-name bdi {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.call-person-name small {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.call-person-volume {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-secondary);
-}
-
-.call-person-volume input {
-  min-width: 0;
-  height: 30px;
-  flex: 1;
-  margin: 0;
-  accent-color: var(--text-accent);
-}
-
-.call-person-hand {
-  font-size: 18px;
-}
-
-.call-person-mic {
-  flex: none;
-  color: var(--text-secondary);
-}
-
-.call-person-mic.on {
-  color: var(--speaking);
-}
-
-.call-person-mic.off {
-  color: var(--danger);
-}
-
-.call-sheet-row:hover {
-  background: var(--call-hover);
-}
-
-.call-volume {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 4px;
-  border-bottom: 1px solid var(--call-line);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.call-volume svg {
-  flex: none;
-  color: var(--text-secondary);
-}
-
-.call-volume input {
-  min-width: 0;
-  height: 44px;
-  flex: 1;
-  accent-color: var(--text-accent);
-}
-
-.call-sheet-row:disabled {
-  opacity: 0.45;
-}
-
-.call-sheet-row {
-  min-height: 48px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 8px;
-  padding: 0 8px;
-  border-radius: 2px;
-  font-size: 14px;
-  font-weight: 600;
-}
-
 @media (min-width: 900px) {
-  .call-sheet.side {
-    width: 340px;
-    height: auto;
-    max-height: none;
-    top: 0;
-    inset-inline-start: auto;
-    margin: 0;
-    border-radius: 0;
-  }
-
   .call-sheet-backdrop:has(+ .call-sheet.side) {
     background: transparent;
   }
 }
 
 @media (max-width: 768px) {
-  .call-controls {
-    gap: 8px;
-  }
-
   .call-strip {
     flex-basis: 80px;
   }

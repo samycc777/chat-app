@@ -25,7 +25,7 @@ A Zoom-like call app with many rooms, one per customer; the first step to sellin
 ## Commands
 
 ```sh
-npm run check   # server typecheck, client vue-tsc, oxlint, tests (~8 s) — run before every commit
+npm run check   # server typecheck, client vue-tsc + build, oxlint, tests (~8 s) — run before every commit
 npm test        # tests only
 npm run dev     # server on :3001, client on https://localhost:5173/?invite=0000
 ```

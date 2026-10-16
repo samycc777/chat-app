@@ -230,7 +230,7 @@ function backToName() {
   justify-content: center;
   gap: 8px;
   padding: max(7px, env(safe-area-inset-top)) 14px 7px;
-  color: #ffffff;
+  color: var(--on-danger);
   background: var(--danger);
   font-size: 12px;
   font-weight: 700;

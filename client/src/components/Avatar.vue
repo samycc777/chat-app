@@ -31,7 +31,8 @@ const initials = computed(() => {
 });
 </script>
 <template>
-  <div class="avatar" :class="size" :style="{ '--avatar-color': color }">
+  <!-- Decorative: every avatar sits beside the person's name, which is what a screen reader reads. -->
+  <div class="avatar" :class="size" :style="{ '--avatar-color': color }" aria-hidden="true">
     <img v-if="picture && !broken" :src="serverUrl(picture)" alt="" draggable="false" @error="broken = true" />
     <template v-else>{{ initials }}</template>
     <div v-if="online" class="online-dot" />
@@ -68,7 +69,7 @@ const initials = computed(() => {
   width: 30px;
   height: 30px;
   flex-basis: 30px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* Beside a name in the channel list, under the voice channel they are in. */

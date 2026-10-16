@@ -347,14 +347,34 @@ onBeforeUnmount(() => {
 }
 
 .call-tile-muted {
-  color: #f07a72;
+  color: var(--call-tile-muted);
 }
 
 /* Small and faint on purpose: it explains a voice that cuts out without drawing attention. */
 .call-tile-weak {
   flex: none;
-  color: #f5c27a;
+  color: var(--call-tile-weak);
   opacity: 0.8;
+}
+
+/* The buttons are small to stay out of the picture, so on a touch screen an invisible ring around
+   each one makes it 44px to hit. */
+@media (pointer: coarse) {
+  .call-tile-button::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+  }
+
+  .call-tile-board-btn {
+    position: relative;
+  }
+
+  .call-tile-board-btn::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+  }
 }
 
 .call-tile-button {
@@ -453,6 +473,6 @@ onBeforeUnmount(() => {
   bottom: 4px;
   inset-inline-start: 4px;
   padding: 2px 6px;
-  font-size: 11px;
+  font-size: 12px;
 }
 </style>

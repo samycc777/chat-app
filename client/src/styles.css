@@ -74,8 +74,11 @@
   --accent-strong: #7ef2ff;
   --accent-soft: rgba(25, 230, 255, 0.13);
   --text-on-accent: #031018;
-  --border-color: #232a52;
+  /* Boundaries of boxes and buttons must stand out from their background (at least 3:1). */
+  --border-color: #4d5fa8;
   --danger: #ff3d6e;
+  /* Text on a red banner: dark, since white on this bright red is under 4:1. */
+  --on-danger: #1a0309;
   --danger-soft: rgba(255, 61, 110, 0.14);
   --warning-soft: rgba(245, 230, 40, 0.13);
   --shadow-color: rgba(0, 0, 0, 0.6);
@@ -94,7 +97,7 @@
   --call-link: #ff6fcf;
   --call-line: rgba(25, 230, 255, 0.12);
   --call-line-strong: rgba(25, 230, 255, 0.22);
-  --call-outline: #2c3670;
+  --call-outline: #5668b5;
   --call-hover: rgba(25, 230, 255, 0.08);
   --call-handle: rgba(25, 230, 255, 0.4);
   --call-video-bg: #03040a;
@@ -102,6 +105,9 @@
   --speaking: #3dff9a;
   --leave: #ff3d6e;
   --leave-strong: #d81f52;
+  /* Small signs on a tile's name label, which is dark over any video in both themes. */
+  --call-tile-muted: #f07a72;
+  --call-tile-weak: #f5c27a;
   /* Neon light falling into the corners of the screen. */
   --neon-glow: radial-gradient(110% 65% at 100% -10%, rgba(255, 46, 170, 0.22), transparent 60%),
     radial-gradient(100% 60% at -10% 110%, rgba(25, 230, 255, 0.18), transparent 60%);
@@ -130,8 +136,9 @@
   --accent-strong: #99005f;
   --accent-soft: rgba(196, 0, 122, 0.1);
   --text-on-accent: #ffffff;
-  --border-color: #c9cfe0;
+  --border-color: #6f7ba3;
   --danger: #d0103f;
+  --on-danger: #ffffff;
   --danger-soft: rgba(208, 16, 63, 0.1);
   --warning-soft: #f4f0b8;
   --shadow-color: rgba(16, 19, 40, 0.14);
@@ -149,7 +156,7 @@
   --call-link: #99005f;
   --call-line: rgba(16, 19, 40, 0.1);
   --call-line-strong: rgba(16, 19, 40, 0.17);
-  --call-outline: #b7bfd6;
+  --call-outline: #6b77a0;
   --call-hover: rgba(196, 0, 122, 0.06);
   --call-handle: rgba(16, 19, 40, 0.25);
   /* Around a shared screen that doesn't fill its tile, so it sits on the page instead of in a
@@ -229,6 +236,10 @@ textarea {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
+input[type='range']:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible,
 [role='button']:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--text-accent) 58%, transparent);
   outline-offset: 2px;

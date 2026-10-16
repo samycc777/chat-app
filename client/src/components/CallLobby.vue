@@ -161,6 +161,14 @@ async function copyInvite() {
   color: var(--call-text-muted);
 }
 
+/* Fingers need more room than a mouse pointer. */
+@media (pointer: coarse) {
+  .lobby-theme {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 .lobby-theme:hover {
   color: var(--call-text);
   background: var(--call-hover);

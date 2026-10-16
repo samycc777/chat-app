@@ -142,6 +142,14 @@ async function copy() {
   place-items: center;
 }
 
+/* Fingers need more room than a mouse pointer. */
+@media (pointer: coarse) {
+  .create-utility {
+    min-width: 44px;
+    height: 44px;
+  }
+}
+
 .create-card h1 {
   margin-bottom: 8px;
   color: var(--text-primary);

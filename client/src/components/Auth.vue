@@ -162,6 +162,15 @@ watch(() => props.openInvite, key => {
   place-items: center;
 }
 
+/* Fingers need more room than a mouse pointer. */
+@media (pointer: coarse) {
+  .auth-utility,
+  .auth-language-trigger {
+    min-width: 44px;
+    height: 44px;
+  }
+}
+
 .auth-utility:hover,
 .auth-language-trigger:hover {
   color: var(--text-primary);
@@ -171,7 +180,7 @@ watch(() => props.openInvite, key => {
 
 .auth-eyebrow {
   color: var(--text-accent);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -202,7 +211,7 @@ watch(() => props.openInvite, key => {
   display: block;
   margin-bottom: 7px;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 

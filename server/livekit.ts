@@ -26,3 +26,16 @@ export async function removeFromLiveKit(roomName: string, identity: string, why:
     console.error(`Could not remove ${identity} from ${roomName} (${why}):`, error);
   }
 }
+
+// Ends a call on LiveKit's side for everyone in it at once, sound, video and shared screens alike,
+// for a room whose people should no longer be there (its key changed, or it was deleted).
+export async function endLiveKitRoom(roomName: string, why: string) {
+  const service = roomService();
+  if (!service) return;
+  try {
+    await service.deleteRoom(roomName);
+  } catch (error) {
+    if ((error as { status?: number }).status === 404) return;
+    console.error(`Could not end ${roomName} (${why}):`, error);
+  }
+}

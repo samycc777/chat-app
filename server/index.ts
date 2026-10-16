@@ -9,6 +9,7 @@ import apiRouter from './routes';
 import { setupSocket } from './socket';
 import { inviteKey, openJoin, serverName, production } from './config';
 import { roomForKey, roomsRouter } from './rooms';
+import { roomAdminRouter } from './roomAdmin';
 import { rateLimit } from './rateLimit';
 import { serveAvatar } from './avatars';
 
@@ -50,7 +51,7 @@ app.get('/api/server', rateLimit(300, 15 * 60_000), (req, res) => {
 // signed-in requests are also limited per person in the API router.
 app.use('/api/auth', rateLimit(300, 15 * 60_000), authRouter);
 app.post('/api/auth/sign-out', authMiddleware, signOut);
-app.use('/api/rooms', rateLimit(60, 15 * 60_000), roomsRouter);
+app.use('/api/rooms', rateLimit(60, 15 * 60_000), roomsRouter, roomAdminRouter);
 // Pictures are shown by images, which cannot send the session header (see avatars.ts), so this
 // comes before the API's session check.
 app.get('/api/avatars/:id', rateLimit(1200, 60_000), serveAvatar);

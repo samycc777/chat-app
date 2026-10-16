@@ -5,7 +5,7 @@ import db from './database';
 import { inviteKey, inviteKeyMatches, normalizeCode, production, serverName } from './config';
 import { createVoiceChannel, HOME_ROOM } from './channels';
 import { cleanDisplayName } from './auth';
-import { createLimiter } from './rateLimit';
+import { createLimiter, Limiter } from './rateLimit';
 
 // Every customer gets a room of their own: its own name, its own invite link and its own call,
 // with nobody from another room able to see or hear them. The home room is the one the server
@@ -68,18 +68,28 @@ export function roomCreationAllowed(entered: unknown): boolean {
 const failedCreations = createLimiter(10, 60 * 60_000);
 const createdRooms = createLimiter(20, 60 * 60_000);
 
-export const roomsRouter = Router();
-roomsRouter.post('/', (req: Request, res: Response) => {
+/**
+ * Answers and returns true unless the request carries the creation key, which also lets the owner
+ * change a room's key or delete it (see roomAdmin.ts). Wrong keys are counted, so it cannot be guessed.
+ */
+export function operatorRefused(req: Request, res: Response, alsoLimitedBy: Limiter[] = []): boolean {
   const ip = req.ip || 'unknown';
-  const limited = [failedCreations, createdRooms].map(limit => limit.exhausted(ip)).find(result => result.exhausted);
+  const limited = [failedCreations, ...alsoLimitedBy].map(limit => limit.exhausted(ip)).find(result => result.exhausted);
   if (limited) {
     res.setHeader('Retry-After', limited.retryAfterSeconds);
-    res.status(429).json({ error: 'Too many attempts' }); return;
+    res.status(429).json({ error: 'Too many attempts' }); return true;
   }
   if (!roomCreationAllowed(req.body?.creationKey)) {
     failedCreations.hit(ip);
-    res.status(403).json({ error: 'Creating rooms is closed' }); return;
+    res.status(403).json({ error: 'Creating rooms is closed' }); return true;
   }
+  return false;
+}
+
+export const roomsRouter = Router();
+roomsRouter.post('/', (req: Request, res: Response) => {
+  if (operatorRefused(req, res, [createdRooms])) return;
+  const ip = req.ip || 'unknown';
   const name = cleanRoomName(req.body?.name);
   if (!name) { res.status(400).json({ error: 'Room name is required' }); return; }
   createdRooms.hit(ip);

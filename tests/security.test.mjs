@@ -695,6 +695,79 @@ test("a room's people see and hear only each other, and never the home room's ca
   bakerSocket.emit('voice_leave');
 });
 
+const manageRoom = (method, path, body) => fetch(`${baseUrl}/api/rooms/${path}`, {
+  method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+});
+async function withCreationKey(run) {
+  const previous = process.env.ROOM_CREATION_KEY;
+  process.env.ROOM_CREATION_KEY = 'owner-only-key';
+  try { return await run(); } finally {
+    previous === undefined ? delete process.env.ROOM_CREATION_KEY : process.env.ROOM_CREATION_KEY = previous;
+  }
+}
+
+test("a customer room's key changes only with the creation key, and everyone with the old link is out at once", async () => {
+  await withCreationKey(async () => {
+    const room = await (await createRoom({ name: 'Leaky', creationKey: 'owner-only-key' })).json();
+    const owner = await join('Leaky owner', room.invite);
+    const ownerSocket = await connect(owner.token);
+    const call = db.prepare('SELECT id FROM channels WHERE room_id = ?').get(room.id).id;
+    await emitWithAck(ownerSocket, 'voice_join', { channelId: call });
+
+    assert.equal((await manageRoom('POST', `${room.id}/new-key`, {})).status, 403);
+    assert.equal((await manageRoom('POST', `${room.id}/new-key`, { creationKey: 'guess' })).status, 403);
+    // The home room's key lives in the deployment settings, not here.
+    assert.equal((await manageRoom('POST', 'home/new-key', { creationKey: 'owner-only-key' })).status, 404);
+    assert.equal((await manageRoom('POST', 'no-such-room/new-key', { creationKey: 'owner-only-key' })).status, 404);
+
+    const dropped = nextEvent(ownerSocket, 'disconnect');
+    const changed = await manageRoom('POST', `${room.id}/new-key`, { creationKey: 'owner-only-key' });
+    assert.equal(changed.status, 200);
+    const { invite } = await changed.json();
+    assert.match(invite, /^[0-9a-f]{30}$/);
+    assert.notEqual(invite, room.invite);
+    await dropped;
+    assert.ok(await eventually(() => liveKitCalls('DeleteRoom').some(entry => entry.data.room === `voice-${call}`)));
+    assert.equal((await fetch(`${baseUrl}/api/me`, { headers: auth(owner.token) })).status, 401);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM room_members WHERE room_id = ?').get(room.id).n, 0);
+    assert.notEqual((await joinRequest({ inviteKey: room.invite, visitorId: nextVisitorId(), displayName: 'Old link' })).status, 200);
+    assert.equal((await join('New link', invite)).room.id, room.id);
+  });
+});
+
+test('deleting a customer room removes its call, sessions and the people who were in no other room', async () => {
+  await withCreationKey(async () => {
+    const room = await (await createRoom({ name: 'Closing', creationKey: 'owner-only-key' })).json();
+    const onlyHere = await join('Only here', room.invite);
+    const visitorId = nextVisitorId();
+    const alsoHome = await (await joinRequest({ inviteKey: '0000', visitorId, displayName: 'Also home' })).json();
+    const inRoom = await (await joinRequest({ inviteKey: room.invite, visitorId })).json();
+    db.prepare("INSERT INTO push_subscriptions (id, user_id, kind, endpoint, created_at) VALUES (?, ?, 'fcm', ?, ?)")
+      .run(crypto.randomUUID(), onlyHere.user.id, `closing-${onlyHere.user.id}`, Date.now());
+    const [onlySocket, homeSocket] = await Promise.all([connect(onlyHere.token), connect(alsoHome.token)]);
+    const call = db.prepare('SELECT id FROM channels WHERE room_id = ?').get(room.id).id;
+    await emitWithAck(onlySocket, 'voice_join', { channelId: call });
+
+    assert.equal((await manageRoom('DELETE', room.id, { creationKey: 'guess' })).status, 403);
+    assert.equal((await manageRoom('DELETE', 'home', { creationKey: 'owner-only-key' })).status, 404);
+    const dropped = nextEvent(onlySocket, 'disconnect');
+    assert.equal((await manageRoom('DELETE', room.id, { creationKey: 'owner-only-key' })).status, 200);
+    await dropped;
+    assert.ok(await eventually(() => liveKitCalls('DeleteRoom').some(entry => entry.data.room === `voice-${call}`)));
+
+    assert.equal(db.prepare('SELECT 1 FROM rooms WHERE id = ?').get(room.id), undefined);
+    assert.equal(db.prepare('SELECT 1 FROM channels WHERE id = ?').get(call), undefined);
+    assert.equal(db.prepare('SELECT 1 FROM users WHERE id = ?').get(onlyHere.user.id), undefined);
+    assert.equal(db.prepare('SELECT 1 FROM push_subscriptions WHERE user_id = ?').get(onlyHere.user.id), undefined);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE room_id = ?').get(room.id).n, 0);
+    // Someone who is also in another room stays, signed in there only.
+    assert.equal((await fetch(`${baseUrl}/api/me`, { headers: auth(inRoom.token) })).status, 401);
+    assert.equal((await fetch(`${baseUrl}/api/me`, { headers: auth(alsoHome.token) })).status, 200);
+    assert.equal(homeSocket.connected, true);
+    assert.equal((await manageRoom('DELETE', room.id, { creationKey: 'owner-only-key' })).status, 404);
+  });
+});
+
 test("one person in two rooms' calls at once cannot leave, chat in or raise a hand in one room's call from the other", async () => {
   const room = await (await createRoom({ name: 'Workshop' })).json();
   const visitorId = nextVisitorId();

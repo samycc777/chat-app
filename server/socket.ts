@@ -5,8 +5,8 @@ import db from './database';
 import { verifyToken } from './auth';
 import { getChannel, listChannels } from './channels';
 import { roomChannel } from './rooms';
-import { addToCall, allCalls, CallChatMessage, callOf, getCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
-import { removeFromLiveKit, roomService } from './livekit';
+import { addToCall, allCalls, CallChatMessage, callOf, endCall, getCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
+import { endLiveKitRoom, removeFromLiveKit, roomService } from './livekit';
 import { forgetSocket, notifyCallStarted, setAppActive } from './push';
 import { avatarUrl, onProfileChanged } from './avatars';
 
@@ -120,6 +120,22 @@ export function removeFromAllCalls(userId: string) {
     endPhoneScreen(userId, dropped.call, 'their data was deleted');
   }
   for (const call of allCalls()) void removeFromLiveKit(call.roomName, userId, 'their data was deleted');
+}
+
+// Sends everyone out of a room whose key has changed or which is deleted: their connections close,
+// and every call of the room ends on LiveKit's side too, including sound and shared screens whose
+// owner's connection had already dropped, so nobody with the old link is left listening.
+export function closeRoom(roomId: string, why: string) {
+  // Gathered first, because each closing connection leaves its call and the last one ends it here.
+  const roomNames = new Set(allCalls(roomId).map(call => call.roomName));
+  for (const [key, dropped] of droppedScreens) {
+    if (dropped.call.roomId !== roomId) continue;
+    droppedScreens.delete(key);
+    roomNames.add(dropped.call.roomName);
+  }
+  endConnections(session => session.roomId === roomId, why);
+  for (const call of allCalls(roomId)) endCall(call.channelId);
+  for (const roomName of roomNames) void endLiveKitRoom(roomName, why);
 }
 
 export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = []) {

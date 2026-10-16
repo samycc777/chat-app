@@ -111,6 +111,17 @@ Any other room is made at `/new`: type a name and the page gives the room's invi
 
 Each room has one call, and everything stays inside it: who is online, who is in the call, raised hands, the call chat and call notifications. A device is in one room at a time: opening another room's link moves it there. The same person keeps their name across rooms.
 
+The owner looks after customers' rooms with the same `ROOM_CREATION_KEY` (there is no page for it yet; the room's ID is in the answer that made it, and in the database):
+
+```sh
+# A new invite key, for a link that went where it should not. Everyone with the old link is out at once.
+curl -X POST https://<your site>/api/rooms/<room id>/new-key -H 'Content-Type: application/json' -d '{"creationKey":"<ROOM_CREATION_KEY>"}'
+# Delete the room: its call, its sessions, and the people who were in no other room.
+curl -X DELETE https://<your site>/api/rooms/<room id> -H 'Content-Type: application/json' -d '{"creationKey":"<ROOM_CREATION_KEY>"}'
+```
+
+The home room has neither: change `INVITE_KEY` instead, which signs out everyone without the new link.
+
 ## Development
 
 ```sh

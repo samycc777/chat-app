@@ -1477,31 +1477,6 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.call-icon-btn {
-  min-width: 36px;
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0 6px;
-  border-radius: 2px;
-  color: var(--call-text-muted);
-}
-
-/* Fingers need more room than a mouse pointer. */
-@media (pointer: coarse) {
-  .call-icon-btn {
-    min-width: 44px;
-    height: 44px;
-  }
-}
-
-.call-icon-btn:hover {
-  color: var(--call-text);
-  background: var(--call-hover);
-}
-
 .call-count {
   font-size: 13px;
   font-weight: 700;
@@ -1592,33 +1567,6 @@ onBeforeUnmount(() => {
   background: var(--call-bg);
 }
 
-.call-control {
-  width: 52px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  color: var(--call-text);
-  background: var(--call-surface);
-  /* Squashes when pressed and springs back when let go. */
-  transition: background 160ms ease, scale 380ms var(--spring);
-}
-
-.call-control:active:not(:disabled) {
-  scale: 0.88;
-  transition-duration: 160ms, 70ms;
-}
-
-/* The icon bounces in each time the button is turned on or off. */
-.call-control svg {
-  animation: anime-icon-on 420ms ease-out;
-}
-
-.call-control.on svg,
-.call-control.off svg {
-  animation-name: anime-icon-off;
-}
-
 /* On joining, the buttons spring up one after another. */
 .call-controls > * {
   animation: anime-rise 480ms var(--spring) both;
@@ -1630,33 +1578,6 @@ onBeforeUnmount(() => {
 .call-controls > :nth-child(4) { animation-delay: 370ms; }
 .call-controls > :nth-child(5) { animation-delay: 410ms; }
 .call-controls > :nth-child(6) { animation-delay: 450ms; }
-
-.call-control:hover:not(:disabled),
-.call-control[aria-pressed='true'] {
-  background: var(--call-surface-active);
-}
-
-.call-control:disabled {
-  opacity: 0.45;
-}
-
-.call-control.off {
-  color: var(--danger);
-}
-
-.call-control.on {
-  color: var(--call-bg);
-  background: var(--call-text);
-}
-
-.call-control.leave {
-  color: #ffffff;
-  background: var(--leave);
-}
-
-.call-control.leave:hover {
-  background: var(--leave-strong);
-}
 
 /* Full screen: one video over the whole app, with bars that fade away and come back with a tap. */
 .call-full-spot {
@@ -2243,11 +2164,6 @@ onBeforeUnmount(() => {
 @media (max-width: 768px) {
   .call-controls {
     gap: 8px;
-  }
-
-  .call-control {
-    width: 48px;
-    height: 48px;
   }
 
   .call-strip {

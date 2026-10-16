@@ -532,6 +532,93 @@ h1 {
   text-shadow: var(--neon-text);
 }
 
+/* The call screen's buttons, shared by its header, toolbar, full screen and panels. */
+.call-icon-btn {
+  min-width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: 2px;
+  color: var(--call-text-muted);
+}
+
+/* Fingers need more room than a mouse pointer. */
+@media (pointer: coarse) {
+  .call-icon-btn {
+    min-width: 44px;
+    height: 44px;
+  }
+}
+
+.call-icon-btn:hover {
+  color: var(--call-text);
+  background: var(--call-hover);
+}
+
+.call-control {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--call-text);
+  background: var(--call-surface);
+  /* Squashes when pressed and springs back when let go. */
+  transition: background 160ms ease, scale 380ms var(--spring);
+}
+
+.call-control:active:not(:disabled) {
+  scale: 0.88;
+  transition-duration: 160ms, 70ms;
+}
+
+/* The icon bounces in each time the button is turned on or off. */
+.call-control svg {
+  animation: anime-icon-on 420ms ease-out;
+}
+
+.call-control.on svg,
+.call-control.off svg {
+  animation-name: anime-icon-off;
+}
+
+.call-control:hover:not(:disabled),
+.call-control[aria-pressed='true'] {
+  background: var(--call-surface-active);
+}
+
+.call-control:disabled {
+  opacity: 0.45;
+}
+
+.call-control.off {
+  color: var(--danger);
+}
+
+.call-control.on {
+  color: var(--call-bg);
+  background: var(--call-text);
+}
+
+.call-control.leave {
+  color: #ffffff;
+  background: var(--leave);
+}
+
+.call-control.leave:hover {
+  background: var(--leave-strong);
+}
+
+@media (max-width: 768px) {
+  .call-control {
+    width: 48px;
+    height: 48px;
+  }
+}
+
 /* Anime-style motion: quick moves that overshoot a little and settle, as hand-drawn animation does.
    Only scale, translate, rotate and opacity change, so weak phones keep up. The separate scale,
    translate and rotate properties leave each element's own transform (a mirrored camera, a centred

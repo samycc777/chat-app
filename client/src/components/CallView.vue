@@ -1096,7 +1096,12 @@ function cleanup() {
 }
 function leave() { cleanup(); emit('leave'); }
 defineExpose({ toggleMicrophone: () => setMicrophone(!micOn.value), leave });
+// Zooming is only locked in the call (see the viewport tag in index.html for why); the screens
+// before it can be zoomed.
+const viewport = document.querySelector<HTMLMetaElement>('meta[name=viewport]');
+const zoomableViewport = viewport?.content ?? '';
 onMounted(() => {
+  if (viewport) viewport.content = `${zoomableViewport}, maximum-scale=1.0, user-scalable=no`;
   document.addEventListener('fullscreenchange', onFullscreenChange);
   // Escape closes an open panel wherever keyboard focus happens to be.
   document.addEventListener('keydown', onKeydown);
@@ -1111,7 +1116,10 @@ onMounted(() => {
   void prepareCleanVoice();
   void connect();
 });
-onBeforeUnmount(cleanup);
+onBeforeUnmount(() => {
+  if (viewport) viewport.content = zoomableViewport;
+  cleanup();
+});
 </script>
 
 <template>
@@ -1554,6 +1562,11 @@ onBeforeUnmount(cleanup);
 
 .call-state-card.error strong {
   color: var(--danger);
+}
+
+/* The rejoin arrow turns the way reading goes, so it turns around for Arabic. */
+[dir='rtl'] .call-state-action svg {
+  transform: scaleX(-1);
 }
 
 .call-state-action {

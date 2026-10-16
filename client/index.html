@@ -2,9 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- The page itself never zooms: a pinch on it once left a friend's whole call stuck zoomed in,
-         with no way back. Shared screens and cameras zoom on their own in full screen (pinchZoom.ts). -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- The name, lobby and create-room screens can be zoomed, for people who need bigger text. The
+         call itself never zooms (CallView.vue locks this tag while it is open): a pinch on it once
+         left a friend's whole call stuck zoomed in, with no way back. Shared screens and cameras zoom
+         on their own in full screen (pinchZoom.ts). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Majlis</title>
     <meta name="description" content="Group video calls. Open a link, type your name, talk." />
     <meta name="theme-color" content="#05060c" />

@@ -6,8 +6,7 @@ import webpush from 'web-push';
 import { v4 as uuid } from 'uuid';
 import db from './database';
 import { AuthRequest } from './auth';
-import { Channel, HOME_ROOM } from './channels';
-import { mentionedUserIds, mentionsEveryone, plainText } from './messages';
+import { Channel } from './channels';
 import { rateLimit } from './rateLimit';
 
 // Notifications reach friends who do not have the app in front of them: through Web Push in
@@ -25,28 +24,17 @@ interface Notice { title: string; body: string; channelId: string; ttlSeconds: n
 const testing = process.env.NODE_ENV === 'test';
 const MAX_DEVICES_PER_PERSON = 20;
 const CALL_NOTICE_GAP_MS = 5 * 60_000;
-const MESSAGE_TTL_SECONDS = 12 * 3600;
 // A call notice hours later would send people to a call that has long ended.
 const CALL_TTL_SECONDS = 10 * 60;
 
 // The phone shows the notification without opening the app, so its words are made here, in the
 // language the device was using when it asked for notifications.
-const WORDS: Record<Lang, Record<'message' | 'mention' | 'call' | 'photo' | 'voice' | 'video', string>> = {
+const WORDS: Record<Lang, Record<'call', string>> = {
   en: {
-    message: '{name} in #{channel}',
-    mention: '{name} mentioned you in #{channel}',
     call: '{name} started a call in 🔊 {channel}',
-    photo: '📷 Photo',
-    voice: '🎤 Voice message',
-    video: '🎥 Video',
   },
   ar: {
-    message: '{name} في #{channel}',
-    mention: '{name} ذكرك في #{channel}',
     call: '{name} بدأ مكالمة في 🔊 {channel}',
-    photo: '📷 صورة',
-    voice: '🎤 رسالة صوتية',
-    video: '🎥 فيديو',
   },
 };
 function words(lang: Lang, key: keyof typeof WORDS.en, vars: Record<string, string> = {}) {
@@ -311,8 +299,8 @@ function sendApns(subscription: Subscription, notice: Notice): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Sending. Nothing here may slow down or break sending a message, so every delivery runs on its
-// own, after the message is out, and a failure is only noted in the log.
+// Sending. Nothing here may slow down or break joining a call, so every delivery runs on its own,
+// after the call has started, and a failure is only noted in the log.
 
 const deleteSubscription = db.prepare('DELETE FROM push_subscriptions WHERE id = ?');
 const SENDERS: Record<Kind, (subscription: Subscription, notice: Notice) => Promise<string>> = { web: sendWeb, fcm: sendFcm, apns: sendApns };
@@ -332,46 +320,6 @@ const subscriptionsQuery = db.prepare(`
 const langOf = (subscription: Subscription): Lang => {
   try { return JSON.parse(subscription.keys || '{}').lang === 'ar' ? 'ar' : 'en'; } catch { return 'en'; }
 };
-
-function shorten(text: string, length = 180) {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > length ? `${flat.slice(0, length - 1)}…` : flat;
-}
-
-interface NewMessage {
-  id: string; conversationId: string; senderId: string; content: string | null; type: string;
-  fileName?: string | null; mimeType?: string | null; sender: { displayName: string };
-}
-
-function messageBody(message: NewMessage, lang: Lang) {
-  if (message.type === 'image') return words(lang, 'photo');
-  if (message.mimeType?.startsWith('audio/')) return words(lang, 'voice');
-  if (message.mimeType?.startsWith('video/')) return words(lang, 'video');
-  if (message.type === 'file') return shorten(message.fileName || '');
-  return shorten(plainText(message.content));
-}
-
-/** Tells everyone in the home room (where text channels are) who is away about a new message, or only those it mentions, as each person chose. */
-export function notifyNewMessage(message: NewMessage, channel: Channel) {
-  setImmediate(() => {
-    try {
-      const mentioned = new Set(mentionedUserIds(message.content));
-      const everyone = mentionsEveryone(message.content);
-      for (const subscription of subscriptionsQuery.all(message.senderId, HOME_ROOM) as Subscription[]) {
-        const mentionsThem = everyone || mentioned.has(subscription.user_id);
-        if (subscription.notify_level === 'off' || isAppActive(subscription.user_id)) continue;
-        if (subscription.notify_level === 'mentions' && !mentionsThem) continue;
-        const lang = langOf(subscription);
-        deliver(subscription, {
-          title: words(lang, mentionsThem ? 'mention' : 'message', { name: message.sender.displayName, channel: channel.name }),
-          body: messageBody(message, lang), channelId: channel.id, ttlSeconds: MESSAGE_TTL_SECONDS,
-        });
-      }
-    } catch (error) {
-      console.warn('Notifications for a message failed:', (error as Error)?.message);
-    }
-  });
-}
 
 // People hopping in and out of an empty channel would otherwise announce the same call again and again.
 const lastCallNotice = new Map<string, number>();

@@ -1,11 +1,7 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 /** The full address of something the server gives as a path, such as a profile picture. */
 export const serverUrl = (path: string) => `${API_URL}${path}`;
-export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
-type UploadResult = { attachmentId: string; name: string; type: 'image' | 'file'; mimeType: string; durationMs: number | null };
 export type LiveKitCredentials = { url: string; token: string; roomName: string; startedAt: number };
-let cachedUploadLimit: number | null = null;
-let pendingUploadLimit: Promise<number> | null = null;
 
 // Carries the HTTP status so callers can tell an ended session (401) from a network problem.
 export class ApiError extends Error {
@@ -31,8 +27,8 @@ export async function request(path: string, options: RequestInit = {}) {
     ...options.headers as Record<string, string>,
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  // Form data and pictures carry their own type.
-  if (!(options.body instanceof FormData) && !(options.body instanceof Blob)) {
+  // Pictures carry their own type.
+  if (!(options.body instanceof Blob)) {
     headers['Content-Type'] = 'application/json';
   }
 
@@ -54,112 +50,12 @@ export const api = {
     request('/api/livekit/token', { method: 'POST', body: JSON.stringify({ channelId }) }),
   getScreenToken: (channelId: string): Promise<{ url: string; token: string }> =>
     request('/api/livekit/screen-token', { method: 'POST', body: JSON.stringify({ channelId }) }),
-  getUploadLimit: (): Promise<number> => {
-    if (cachedUploadLimit !== null) return Promise.resolve(cachedUploadLimit);
-    if (pendingUploadLimit) return pendingUploadLimit;
-    const pending = request('/api/upload-config').then(data => {
-      const limit = Number.isSafeInteger(data.maxUploadBytes) && data.maxUploadBytes > 0
-        ? data.maxUploadBytes
-        : MAX_ATTACHMENT_BYTES;
-      cachedUploadLimit = limit;
-      return limit;
-    }).finally(() => { pendingUploadLimit = null; });
-    pendingUploadLimit = pending;
-    return pending;
-  },
   join: (inviteKey: string, visitorId: string, displayName: string) =>
     request('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteKey, visitorId, displayName }) }),
 
   getMe: () => request('/api/me'),
   setAvatar: (picture: Blob): Promise<{ avatarUrl: string }> => request('/api/me/avatar', { method: 'PUT', body: picture }),
   removeAvatar: (): Promise<{ avatarUrl: null }> => request('/api/me/avatar', { method: 'DELETE' }),
-
-  // Pages back from the given message, or forwards with `after`; a message's ID separates messages
-  // sent in the same millisecond. `around` opens the history at one message.
-  getMessages: (conversationId: string, before?: { createdAt: number; id: string }, options: { after?: { createdAt: number; id: string }; around?: string } = {}) => {
-    const query = before ? `?before=${before.createdAt}&beforeId=${encodeURIComponent(before.id)}`
-      : options.after ? `?after=${options.after.createdAt}&afterId=${encodeURIComponent(options.after.id)}`
-      : options.around ? `?around=${encodeURIComponent(options.around)}`
-      : '';
-    return request(`/api/conversations/${conversationId}/messages${query}`);
-  },
-  getPins: (conversationId: string) => request(`/api/conversations/${conversationId}/pins`),
-  search: (query: string) => request(`/api/search?q=${encodeURIComponent(query)}`),
-
-  uploadFile: async (file: File, conversationId: string, onProgress?: (progress: number) => void, durationMs?: number) => {
-    const maxUploadBytes = await api.getUploadLimit();
-    if (file.size > maxUploadBytes) throw new Error(`File exceeds the upload size limit (${(maxUploadBytes / 1024 / 1024).toFixed(1)} MB).`);
-    const formData = new FormData();
-    formData.append('conversationId', conversationId);
-    if (durationMs) formData.append('durationMs', String(Math.round(durationMs)));
-    formData.append('file', file);
-    const token = getToken();
-    return new Promise<UploadResult>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API_URL}/api/upload`);
-      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-      xhr.upload.addEventListener('progress', event => {
-        if (!onProgress || !event.lengthComputable || event.total <= 0) return;
-        onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
-      });
-      xhr.addEventListener('load', () => {
-        let data: Partial<UploadResult> & { error?: string } = {};
-        try { data = JSON.parse(xhr.responseText); } catch { /* Use the HTTP status below. */ }
-        if (xhr.status < 200 || xhr.status >= 300) {
-          reject(new Error(data.error || `Request failed: ${xhr.status}`));
-          return;
-        }
-        resolve(data as UploadResult);
-      });
-      xhr.addEventListener('error', () => reject(new Error('Network error while uploading file.')));
-      xhr.addEventListener('abort', () => reject(new Error('File upload was cancelled.')));
-      xhr.send(formData);
-    });
-  },
-  getAttachmentBlob: (attachmentId: string, onProgress?: (percent: number) => void) => new Promise<Blob>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', `${API_URL}/api/attachments/${encodeURIComponent(attachmentId)}`);
-    xhr.responseType = 'blob';
-    const token = getToken();
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-    xhr.addEventListener('progress', event => {
-      if (onProgress && event.lengthComputable && event.total > 0) onProgress(Math.round((event.loaded / event.total) * 100));
-    });
-    xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Blob);
-      else reject(new ApiError(`Attachment unavailable (${xhr.status})`, xhr.status));
-    });
-    xhr.addEventListener('error', () => reject(new Error('Attachment unavailable')));
-    xhr.send();
-  }),
-
-  // A link the video player opens by itself, carrying a pass for this one file, so a long
-  // recording plays and seeks without being downloaded first.
-  getStreamUrl: async (attachmentId: string): Promise<string> => {
-    const { url } = await request(`/api/attachments/${encodeURIComponent(attachmentId)}/stream-url`);
-    return `${API_URL}${url}`;
-  },
-
-  // Call recordings are uploaded piece by piece while they are made.
-  startRecording: (voiceChannelId: string): Promise<{ id: string; startedAt: number }> =>
-    request('/api/recordings', { method: 'POST', body: JSON.stringify({ voiceChannelId }) }),
-  uploadRecordingPiece: async (id: string, index: number, piece: Blob) => {
-    const token = getToken();
-    const res = await fetch(`${API_URL}/api/recordings/${encodeURIComponent(id)}/chunks/${index}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/octet-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: piece,
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new ApiError(data.error || `Request failed: ${res.status}`, res.status);
-    }
-  },
-  resumeRecording: (id: string) => request(`/api/recordings/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
-  stopRecording: (id: string) => request(`/api/recordings/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
-  finishRecording: (id: string, textChannelId: string, durationMs: number, name: string) =>
-    request(`/api/recordings/${encodeURIComponent(id)}/finish`, { method: 'POST', body: JSON.stringify({ textChannelId, durationMs: Math.round(durationMs), name }) }),
-  discardRecording: (id: string) => request(`/api/recordings/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
 
 export { API_URL };

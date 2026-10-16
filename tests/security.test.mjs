@@ -128,6 +128,12 @@ const screenToken = (token, channelId) => fetch(`${baseUrl}/api/livekit/screen-t
   method: 'POST', headers: jsonAuth(token), body: JSON.stringify({ channelId }),
 });
 const emitWithAck = (socket, event, data) => new Promise(resolve => socket.emit(event, data, resolve));
+// A second call in the home room, so no earlier test has already chatted in it or announced it.
+function newCall(name) {
+  const id = crypto.randomUUID();
+  db.prepare('INSERT INTO channels (id, name, kind, position, created_at) VALUES (?, ?, ?, 99, ?)').run(id, name, 'voice', Date.now());
+  return id;
+}
 const nextEvent = (socket, event) => new Promise(resolve => socket.once(event, resolve));
 // Resolves with the first event that passes the check, skipping updates that were already on their way.
 const eventWhere = (socket, event, check) => new Promise(resolve => {
@@ -194,191 +200,6 @@ test('the home screen app starts with the invite, identity and name only when th
   assert.equal(badVisitor.searchParams.get('visitor'), null);
 });
 
-test('everyone can read and post in text channels, see files, and nobody gets into unknown channels', async () => {
-  const general = firstChannel('text');
-  const alice = await join('Alice');
-  const bob = await join('Bob');
-  const form = new FormData();
-  form.append('conversationId', general);
-  form.append('file', new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/F+4AAAAASUVORK5CYII=', 'base64')], { type: 'image/png' }), 'tiny.png');
-  const uploaded = await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth(alice.token), body: form });
-  assert.equal(uploaded.status, 200);
-  const { attachmentId } = await uploaded.json();
-  const seen = await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth(bob.token) });
-  assert.equal(seen.status, 200);
-  // Kept by each device, so a slow connection downloads a photo once, but never by a shared cache.
-  assert.equal(seen.headers.get('cache-control'), 'private, max-age=31536000, immutable');
-  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth('invalid') })).status, 401);
-  assert.equal((await fetch(`${baseUrl}/uploads/${attachmentId}`, { headers: auth('invalid') })).status, 404);
-
-  const [aliceSocket, bobSocket] = await Promise.all([connect(alice.token), connect(bob.token)]);
-  const bobHears = nextEvent(bobSocket, 'new_message');
-  const ack = await emitWithAck(aliceSocket, 'send_message', { conversationId: general, content: 'hello', type: 'text' });
-  assert.ok(ack.id);
-  const heard = await bobHears;
-  assert.equal(heard.content, 'hello');
-  assert.equal(heard.conversationId, general);
-  assert.equal(heard.sender.role, undefined);
-  assert.deepEqual(await emitWithAck(aliceSocket, 'send_message', { conversationId: 'nowhere', content: 'x', type: 'text' }), { error: 'Unknown channel' });
-  assert.equal((await fetch(`${baseUrl}/api/conversations/nowhere/messages`, { headers: auth(alice.token) })).status, 404);
-  const voice = firstChannel('voice');
-  assert.equal((await fetch(`${baseUrl}/api/conversations/${voice}/messages`, { headers: auth(alice.token) })).status, 404);
-});
-
-test('sound and video can be shared, with their type and length, while other files are refused', async () => {
-  const general = firstChannel('text');
-  const dana = await join('Dana');
-  const upload = async (bytes, type, name, durationMs) => {
-    const form = new FormData();
-    form.append('conversationId', general);
-    if (durationMs !== undefined) form.append('durationMs', String(durationMs));
-    form.append('file', new Blob([bytes], { type }), name);
-    return fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth(dana.token), body: form });
-  };
-  const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(60)]);
-  const voice = await upload(webm, 'audio/webm;codecs=opus', 'voice.webm', 4200);
-  assert.equal(voice.status, 200);
-  const voiceResult = await voice.json();
-  assert.deepEqual([voiceResult.type, voiceResult.mimeType, voiceResult.durationMs], ['file', 'audio/webm', 4200]);
-  const video = await (await upload(webm, 'video/webm', 'lesson.webm', 'nonsense')).json();
-  assert.deepEqual([video.mimeType, video.durationMs], ['video/webm', null]);
-  const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(40)]);
-  assert.equal((await (await upload(mp4, 'audio/mp4', 'voice.m4a', 1000)).json()).mimeType, 'audio/mp4');
-  assert.equal((await upload(Buffer.from('#!/bin/sh\necho hi'), 'audio/webm', 'trick.webm')).status, 415);
-
-  const socket = await connect(dana.token);
-  const heard = nextEvent(socket, 'new_message');
-  await emitWithAck(socket, 'send_message', { conversationId: general, type: 'file', attachmentId: voiceResult.attachmentId });
-  const message = await heard;
-  assert.deepEqual([message.mimeType, message.durationMs], ['audio/webm', 4200]);
-  const history = await (await fetch(`${baseUrl}/api/conversations/${general}/messages`, { headers: auth(dana.token) })).json();
-  assert.equal(history.find(entry => entry.id === message.id).mimeType, 'audio/webm');
-});
-
-test('unread counts and mentions follow each person across devices, and newcomers start with nothing unread', async () => {
-  const general = firstChannel('text');
-  const writer = await join('Unread writer');
-  const reader = await join('Unread reader');
-  const writerSocket = await connect(writer.token);
-  const readerState = s => s.channels.find(channel => channel.channelId === general);
-  const phone = await connect(reader.token);
-  const laptopFirst = new Promise(resolve => {
-    const socket = io(baseUrl, { auth: { token: reader.token }, transports: ['websocket'] });
-    sockets.push(socket);
-    socket.once('read_state', state => resolve({ socket, state }));
-  });
-  const { socket: laptop, state: initial } = await laptopFirst;
-  assert.deepEqual([readerState(initial).unread, readerState(initial).mentions], [0, 0]);
-
-  await emitWithAck(writerSocket, 'send_message', { conversationId: general, content: 'first', type: 'text' });
-  await emitWithAck(writerSocket, 'send_message', { conversationId: general, content: `hi <@${reader.user.id}>`, type: 'text' });
-  const last = await emitWithAck(writerSocket, 'send_message', { conversationId: general, content: '@everyone class now', type: 'text' });
-  const fresh = new Promise(resolve => {
-    const socket = io(baseUrl, { auth: { token: reader.token }, transports: ['websocket'] });
-    sockets.push(socket);
-    socket.once('read_state', resolve);
-  });
-  const counted = readerState(await fresh);
-  assert.deepEqual([counted.unread, counted.mentions], [3, 2]);
-
-  // Reading on the phone clears the channel on the laptop too.
-  const seq = db.prepare('SELECT rowid AS seq FROM messages WHERE id = ?').get(last.id).seq;
-  const laptopHears = eventWhere(laptop, 'read_state', state => readerState(state)?.unread === 0);
-  phone.emit('mark_read', { channelId: general, seq });
-  const cleared = readerState(await laptopHears);
-  assert.deepEqual([cleared.unread, cleared.mentions, cleared.lastReadSeq], [0, 0, seq]);
-  // A read position can't go backwards or past the newest message.
-  phone.emit('mark_read', { channelId: general, seq: 1 });
-  phone.emit('mark_read', { channelId: general, seq: seq + 1000 });
-  await new Promise(resolve => setTimeout(resolve, 100));
-  assert.equal(db.prepare('SELECT last_read_seq FROM channel_reads WHERE user_id = ? AND channel_id = ?').get(reader.user.id, general).last_read_seq, seq);
-
-  // Someone who joins later doesn't see the history as unread.
-  const newcomer = await join('Unread newcomer');
-  const newcomerState = await new Promise(resolve => {
-    const socket = io(baseUrl, { auth: { token: newcomer.token }, transports: ['websocket'] });
-    sockets.push(socket);
-    socket.once('read_state', resolve);
-  });
-  assert.equal(readerState(newcomerState).unread, 0);
-});
-
-test('everyone can react with the few allowed emoji and pin messages, and search ignores vowel marks', async () => {
-  const general = firstChannel('text');
-  const erin = await join('Erin');
-  const frank = await join('Frank');
-  const [erinSocket, frankSocket] = await Promise.all([connect(erin.token), connect(frank.token)]);
-  const sent = await emitWithAck(erinSocket, 'send_message', { conversationId: general, content: 'قَالَ رَسُولُ اللَّهِ ﷺ: إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ', type: 'text' });
-
-  const reacted = eventWhere(erinSocket, 'reactions', data => data.messageId === sent.id && data.reactions.length > 0);
-  frankSocket.emit('react', { messageId: sent.id, emoji: '🤲', on: true });
-  assert.deepEqual((await reacted).reactions, [{ emoji: '🤲', userIds: [frank.user.id] }]);
-  frankSocket.emit('react', { messageId: sent.id, emoji: '😂', on: true });
-  const removed = eventWhere(erinSocket, 'reactions', data => data.messageId === sent.id && data.reactions.length === 0);
-  frankSocket.emit('react', { messageId: sent.id, emoji: '🤲', on: false });
-  await removed;
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM message_reactions WHERE message_id = ?').get(sent.id).n, 0);
-
-  const pinned = eventWhere(erinSocket, 'message_pinned', data => data.messageId === sent.id);
-  assert.deepEqual(await emitWithAck(frankSocket, 'pin_message', { messageId: sent.id, pinned: true }), { ok: true });
-  assert.ok((await pinned).pinnedAt);
-  const pins = await (await fetch(`${baseUrl}/api/conversations/${general}/pins`, { headers: auth(erin.token) })).json();
-  assert.equal(pins[0].id, sent.id);
-  assert.deepEqual(await emitWithAck(frankSocket, 'pin_message', { messageId: 'nope', pinned: true }), { error: 'Invalid message' });
-
-  const search = async q => (await fetch(`${baseUrl}/api/search?q=${encodeURIComponent(q)}`, { headers: auth(erin.token) })).json();
-  assert.ok((await search('الاعمال بالنيات')).some(message => message.id === sent.id));
-  assert.equal((await search('nothing-like-this-anywhere')).length, 0);
-  assert.equal((await fetch(`${baseUrl}/api/search?q=a`, { headers: auth(erin.token) })).status, 400);
-  assert.equal((await fetch(`${baseUrl}/api/search?q=hello`, { headers: auth('invalid') })).status, 401);
-
-  // Deleting the message takes its pin with it.
-  erinSocket.emit('delete_message', { messageId: sent.id });
-  await nextEvent(frankSocket, 'message_deleted');
-  const after = await (await fetch(`${baseUrl}/api/conversations/${general}/pins`, { headers: auth(erin.token) })).json();
-  assert.ok(!after.some(message => message.id === sent.id));
-});
-
-test('history can be opened around an old message and read forwards from there', async () => {
-  const general = firstChannel('text');
-  const reader = await join('Around reader');
-  const insert = db.prepare("INSERT INTO messages (id, conversation_id, sender_id, content, type, created_at) VALUES (?, ?, ?, ?, 'text', ?)");
-  const ids = Array.from({ length: 30 }, (_, index) => `aaaaaaaa-0000-4000-9000-${String(index).padStart(12, '0')}`);
-  // Dated in the past so they stay out of other tests' latest page.
-  ids.forEach((id, index) => insert.run(id, general, reader.user.id, `old ${index}`, 915_148_800_000 + index));
-  const get = async query => (await fetch(`${baseUrl}/api/conversations/${general}/messages?${query}`, { headers: auth(reader.token) })).json();
-  const around = await get(`around=${ids[15]}&limit=10`);
-  assert.deepEqual(around.map(message => message.content), ['old 10', 'old 11', 'old 12', 'old 13', 'old 14', 'old 15', 'old 16', 'old 17', 'old 18', 'old 19']);
-  const later = await get(`after=${915_148_800_019}&afterId=${ids[19]}&limit=3`);
-  assert.deepEqual(later.map(message => message.content), ['old 20', 'old 21', 'old 22']);
-  assert.equal((await fetch(`${baseUrl}/api/conversations/${general}/messages?around=00000000-0000-4000-9000-999999999999`, { headers: auth(reader.token) })).status, 404);
-  assert.equal((await fetch(`${baseUrl}/api/conversations/${general}/messages?after=soon`, { headers: auth(reader.token) })).status, 400);
-});
-
-test('a connecting client learns every member with when they were last seen', async () => {
-  const gone = await join('Gone for now');
-  const goneSocket = await connect(gone.token);
-  goneSocket.disconnect();
-  const viewer = await join('Member viewer');
-  const heard = new Promise(resolve => {
-    const socket = io(baseUrl, { auth: { token: viewer.token }, transports: ['websocket'] });
-    sockets.push(socket);
-    socket.once('members', resolve);
-  });
-  const { users } = await heard;
-  const entry = users.find(user => user.id === gone.user.id);
-  assert.equal(entry.displayName, 'Gone for now');
-  assert.ok(entry.lastSeen > Date.now() - 60_000);
-});
-
-const recordingApi = (token, path, method = 'POST', body) => fetch(`${baseUrl}/api/recordings${path}`, {
-  method, headers: jsonAuth(token), body: body === undefined ? undefined : JSON.stringify(body),
-});
-const sendPiece = (token, id, index, bytes) => fetch(`${baseUrl}/api/recordings/${id}/chunks/${index}`, {
-  method: 'PUT', headers: { ...auth(token), 'Content-Type': 'application/octet-stream' }, body: bytes,
-});
-const webmStart = () => Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.from('lesson start')]);
-const recordingIn = (state, channelId) => state.calls.find(call => call.channelId === channelId)?.recording ?? null;
 // Later tests expect the voice channel to start empty.
 async function leaveCall(channelId, ...leaving) {
   for (const socket of leaving) socket.emit('voice_leave');
@@ -432,239 +253,6 @@ test('anyone can set, replace and remove their photo, and everyone online sees i
   await quinnSeesRemoved;
   assert.equal((await fetch(`${baseUrl}${second.avatarUrl}`)).status, 404);
   assert.equal((await fetch(`${baseUrl}/api/avatars/not-an-id`)).status, 404);
-});
-
-test('anyone in a call can record it, everyone sees it, and it is posted as a video in the chosen channel', async () => {
-  const voice = firstChannel('voice');
-  const general = firstChannel('text');
-  const [teacher, student, outsider] = await Promise.all([join('Recording teacher'), join('Recording student'), join('Recording outsider')]);
-  const [teacherSocket, studentSocket] = await Promise.all([connect(teacher.token), connect(student.token)]);
-
-  // Only someone in the call can record it.
-  assert.equal((await recordingApi(outsider.token, '', 'POST', { voiceChannelId: voice })).status, 409);
-  assert.equal((await recordingApi(teacher.token, '', 'POST', { voiceChannelId: general })).status, 404);
-  await emitWithAck(teacherSocket, 'voice_join', { channelId: voice });
-  await emitWithAck(studentSocket, 'voice_join', { channelId: voice });
-
-  const badgeSeen = eventWhere(studentSocket, 'voice_state', state => recordingIn(state, voice));
-  const started = await recordingApi(teacher.token, '', 'POST', { voiceChannelId: voice });
-  assert.equal(started.status, 200);
-  const { id } = await started.json();
-  const badge = recordingIn(await badgeSeen, voice);
-  assert.equal(badge.displayName, 'Recording teacher');
-  assert.equal(badge.userId, teacher.user.id);
-  assert.equal(typeof badge.startedAt, 'number');
-  // Someone joining later is told as well.
-  const late = io(baseUrl, { auth: { token: (await join('Late student')).token }, transports: ['websocket'] });
-  sockets.push(late);
-  assert.equal(recordingIn(await nextEvent(late, 'voice_state'), voice).displayName, 'Recording teacher');
-
-  // One recording per call at a time.
-  const second = await recordingApi(student.token, '', 'POST', { voiceChannelId: voice });
-  assert.equal(second.status, 409);
-  assert.equal((await second.json()).error, 'Already recording');
-
-  // Pieces arrive in order and build one file; only the recorder may add to it.
-  const first = webmStart();
-  assert.equal((await sendPiece(teacher.token, id, 0, first)).status, 200);
-  assert.equal((await sendPiece(student.token, id, 1, Buffer.from('intruder'))).status, 403);
-  assert.equal((await sendPiece(teacher.token, id, 2, Buffer.from('skipped'))).status, 409);
-  assert.equal((await sendPiece(teacher.token, id, 0, first)).status, 200, 'a piece sent twice is accepted once');
-  assert.equal((await sendPiece(teacher.token, id, 1, Buffer.from(' and the rest'))).status, 200);
-  const row = db.prepare('SELECT disk_name, size, mime_type FROM recordings WHERE id = ?').get(id);
-  assert.equal(row.mime_type, 'video/webm');
-  const expected = Buffer.concat([first, Buffer.from(' and the rest')]);
-  assert.deepEqual(fs.readFileSync(path.join(tempDir, 'uploads', row.disk_name)), expected);
-
-  // Finishing belongs to the recorder, and only into a text channel.
-  assert.equal((await recordingApi(student.token, `/${id}/finish`, 'POST', { textChannelId: general, durationMs: 5000 })).status, 403);
-  assert.equal((await recordingApi(teacher.token, `/${id}/finish`, 'POST', { textChannelId: voice, durationMs: 5000 })).status, 404);
-  assert.equal((await recordingApi(teacher.token, `/${id}/finish`, 'POST', { textChannelId: 'nowhere', durationMs: 5000 })).status, 404);
-
-  const badgeGone = eventWhere(studentSocket, 'voice_state', state => !recordingIn(state, voice));
-  assert.equal((await recordingApi(teacher.token, `/${id}/stop`)).status, 200);
-  await badgeGone;
-  const posted = eventWhere(studentSocket, 'new_message', message => message.senderId === teacher.user.id && message.type === 'file');
-  const finished = await recordingApi(teacher.token, `/${id}/finish`, 'POST', { textChannelId: general, durationMs: 5000, name: 'Recording of General – 26 Sep 2026.webm' });
-  assert.equal(finished.status, 200);
-  const { attachmentId } = await finished.json();
-  const message = await posted;
-  assert.equal(message.conversationId, general);
-  assert.equal(message.attachmentId, attachmentId);
-  assert.deepEqual([message.mimeType, message.durationMs, message.fileName], ['video/webm', 5000, 'Recording of General – 26 Sep 2026.webm']);
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM recordings WHERE id = ?').get(id).n, 0);
-  const download = await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth(student.token) });
-  assert.deepEqual(Buffer.from(await download.arrayBuffer()), expected);
-  await leaveCall(voice, teacherSocket, studentSocket);
-});
-
-// A tiny WebM laid out as a browser records it: no length, no index, clusters of unknown size.
-const ebmlElement = (id, body) => {
-  const size = Buffer.alloc(8);
-  size.writeBigUInt64BE(BigInt(body.length));
-  size[0] = 0x01;
-  return Buffer.concat([Buffer.from(id), size, body]);
-};
-function liveWebm() {
-  const unknownSize = Buffer.from([0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
-  const cluster = (timecode, key) => Buffer.concat([
-    Buffer.from([0x1f, 0x43, 0xb6, 0x75]), unknownSize,
-    Buffer.from([0xe7, 0x82, timecode >> 8, timecode & 0xff]),
-    Buffer.from([0xa3, 0x88, 0x81, 0x00, 0x00, key ? 0x80 : 0x00, 1, 2, 3, 4]),
-  ]);
-  return Buffer.concat([
-    ebmlElement([0x1a, 0x45, 0xdf, 0xa3], Buffer.from([0x42, 0x82, 0x84, ...Buffer.from('webm')])),
-    Buffer.from([0x18, 0x53, 0x80, 0x67]), unknownSize,
-    ebmlElement([0x15, 0x49, 0xa9, 0x66], Buffer.from([0x2a, 0xd7, 0xb1, 0x83, 0x0f, 0x42, 0x40])),
-    ebmlElement([0x16, 0x54, 0xae, 0x6b], ebmlElement([0xae], Buffer.from([0xd7, 0x81, 0x01, 0x83, 0x81, 0x01]))),
-    cluster(0, true), cluster(4000, false), cluster(8000, true),
-  ]);
-}
-
-test('a posted recording is given its length and an index of its keyframes, so it can be skipped through', async () => {
-  const voice = firstChannel('voice');
-  const recorder = await join('Indexed recorder');
-  const socket = await connect(recorder.token);
-  await emitWithAck(socket, 'voice_join', { channelId: voice });
-  const { id } = await (await recordingApi(recorder.token, '', 'POST', { voiceChannelId: voice })).json();
-  const webm = liveWebm();
-  assert.equal((await sendPiece(recorder.token, id, 0, webm.subarray(0, 60))).status, 200);
-  assert.equal((await sendPiece(recorder.token, id, 1, webm.subarray(60))).status, 200);
-  const { attachmentId } = await (await recordingApi(recorder.token, `/${id}/finish`, 'POST', { textChannelId: firstChannel('text'), durationMs: 9000 })).json();
-  const file = Buffer.from(await (await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth(recorder.token) })).arrayBuffer());
-
-  // The segment now has a size, the length is 9 seconds, and the index points at the two
-  // clusters that start with a keyframe.
-  const segment = file.indexOf(Buffer.from([0x18, 0x53, 0x80, 0x67]));
-  const segmentData = segment + 12;
-  assert.equal(Number(file.readBigUInt64BE(segment + 4) & 0x00ffffffffffffffn), file.length - segmentData);
-  const duration = file.indexOf(Buffer.from([0x44, 0x89, 0x88]));
-  assert.equal(file.readDoubleBE(duration + 3), 9000);
-  const cues = [];
-  for (let at = file.indexOf(Buffer.from([0xbb, 0x99])); at !== -1; at = file.indexOf(Buffer.from([0xbb, 0x99]), at + 1)) {
-    cues.push({ time: Number(file.readBigUInt64BE(at + 4)), position: Number(file.readBigUInt64BE(at + 19)) });
-  }
-  assert.deepEqual(cues.map(cue => cue.time), [0, 8000]);
-  for (const cue of cues) assert.deepEqual([...file.subarray(segmentData + cue.position, segmentData + cue.position + 4)], [0x1f, 0x43, 0xb6, 0x75]);
-  // Every picture is still there.
-  assert.equal(file.subarray(segmentData).toString('latin1').split('\x01\x02\x03\x04').length - 1, 3);
-  await leaveCall(voice, socket);
-});
-
-test('a recording ends when its recorder leaves, and can be discarded or posted for them once it goes quiet', async () => {
-  const voice = firstChannel('voice');
-  const general = firstChannel('text');
-  const [recorder, watcher] = await Promise.all([join('Leaving recorder'), join('Recording watcher')]);
-  const [recorderSocket, watcherSocket] = await Promise.all([connect(recorder.token), connect(watcher.token)]);
-  await emitWithAck(recorderSocket, 'voice_join', { channelId: voice });
-  await emitWithAck(watcherSocket, 'voice_join', { channelId: voice });
-
-  const { id } = await (await recordingApi(recorder.token, '', 'POST', { voiceChannelId: voice })).json();
-  assert.equal((await sendPiece(recorder.token, id, 0, Buffer.from('not a video at all'))).status, 415);
-  assert.equal((await sendPiece(recorder.token, id, 0, webmStart())).status, 200);
-  const diskName = db.prepare('SELECT disk_name FROM recordings WHERE id = ?').get(id).disk_name;
-  const cleared = eventWhere(watcherSocket, 'voice_state', state => membersIn(state, voice).length === 1 && !recordingIn(state, voice));
-  recorderSocket.emit('voice_leave');
-  await cleared;
-  // Someone else may start a new one now; back in the call, the first recorder cannot bring back a
-  // badge that belongs to another recording.
-  const { id: other } = await (await recordingApi(watcher.token, '', 'POST', { voiceChannelId: voice })).json();
-  await emitWithAck(recorderSocket, 'voice_join', { channelId: voice });
-  assert.equal((await recordingApi(recorder.token, `/${id}/resume`)).status, 409);
-
-  // Discarding removes the file.
-  assert.equal((await recordingApi(watcher.token, `/${id}`, 'DELETE')).status, 403);
-  assert.equal((await recordingApi(recorder.token, `/${id}`, 'DELETE')).status, 200);
-  assert.equal(fs.existsSync(path.join(tempDir, 'uploads', diskName)), false);
-  assert.equal((await sendPiece(recorder.token, id, 1, Buffer.from('late'))).status, 404);
-
-  // A recording that goes quiet, because the recorder's browser died, is posted in the first text channel.
-  assert.equal((await sendPiece(watcher.token, other, 0, webmStart())).status, 200);
-  const { sweepIdleRecordings, IDLE_RECORDING_MS } = await import('../server/recordings.ts');
-  const posted = eventWhere(recorderSocket, 'new_message', message => message.senderId === watcher.user.id && message.type === 'file');
-  sweepIdleRecordings(Date.now() + IDLE_RECORDING_MS + 1000);
-  const message = await posted;
-  assert.equal(message.conversationId, general);
-  assert.equal(message.mimeType, 'video/webm');
-  assert.match(message.fileName, /^Recording of .+\.webm$/);
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM recordings WHERE id = ?').get(other).n, 0);
-  await leaveCall(voice, recorderSocket, watcherSocket);
-});
-
-test('a recording cannot grow past its size limit', async () => {
-  const voice = firstChannel('voice');
-  const recorder = await join('Big recorder');
-  const socket = await connect(recorder.token);
-  await emitWithAck(socket, 'voice_join', { channelId: voice });
-  const { id } = await (await recordingApi(recorder.token, '', 'POST', { voiceChannelId: voice })).json();
-  const previous = process.env.MAX_RECORDING_BYTES;
-  process.env.MAX_RECORDING_BYTES = '40';
-  try {
-    assert.equal((await sendPiece(recorder.token, id, 0, webmStart())).status, 200);
-    const refused = await sendPiece(recorder.token, id, 1, Buffer.alloc(30));
-    assert.equal(refused.status, 413);
-    assert.equal((await refused.json()).error, 'Recording too large');
-    // What was already recorded is kept.
-    assert.equal(db.prepare('SELECT size FROM recordings WHERE id = ?').get(id).size, webmStart().length);
-  } finally {
-    previous === undefined ? delete process.env.MAX_RECORDING_BYTES : process.env.MAX_RECORDING_BYTES = previous;
-  }
-  assert.equal((await sendPiece(recorder.token, id, 1, Buffer.alloc(17 * 1024 * 1024))).status, 413);
-  await recordingApi(recorder.token, `/${id}`, 'DELETE');
-  await leaveCall(voice, socket);
-});
-
-test('a video plays from a signed link that supports seeking, and a bad link is refused', async () => {
-  const general = firstChannel('text');
-  const viewer = await join('Video viewer');
-  const video = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.from('0123456789abcdefghij')]);
-  const form = new FormData();
-  form.append('conversationId', general);
-  form.append('file', new Blob([video], { type: 'video/webm' }), 'lesson.webm');
-  const { attachmentId } = await (await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth(viewer.token), body: form })).json();
-
-  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream-url`)).status, 401);
-  const { url } = await (await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream-url`, { headers: auth(viewer.token) })).json();
-  const whole = await fetch(`${baseUrl}${url}`);
-  assert.equal(whole.status, 200);
-  assert.equal(whole.headers.get('content-type'), 'video/webm');
-  assert.deepEqual(Buffer.from(await whole.arrayBuffer()), video);
-  const part = await fetch(`${baseUrl}${url}`, { headers: { Range: 'bytes=4-13' } });
-  assert.equal(part.status, 206);
-  assert.equal(part.headers.get('content-range'), `bytes 4-13/${video.length}`);
-  assert.equal(await part.text(), '0123456789');
-
-  const token = new URL(url, baseUrl).searchParams.get('token');
-  // A link opens only its own file, and is never a session.
-  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream?token=nonsense`)).status, 401);
-  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream`)).status, 401);
-  assert.equal((await fetch(`${baseUrl}/api/me`, { headers: auth(token) })).status, 401);
-  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream?token=${encodeURIComponent(viewer.token)}`)).status, 401);
-  const forged = jwt.sign({ purpose: 'stream', attachmentId, sub: viewer.user.id }, 'some-other-secret-that-is-long-enough', { expiresIn: '1h' });
-  assert.equal((await fetch(`${baseUrl}/api/attachments/${attachmentId}/stream?token=${forged}`)).status, 401);
-});
-
-test('anyone can create, rename and delete channels, and the last text channel stays', async () => {
-  const carol = await join('Carol');
-  const socket = await connect(carol.token);
-  // The list sent on connecting may still be on its way, so wait for one that has the new channel.
-  const updated = eventWhere(socket, 'channels', ({ channels }) => channels.some(listed => listed.name === 'Homework'));
-  const { channel } = await emitWithAck(socket, 'create_channel', { name: '  Homework‮ ', kind: 'text' });
-  assert.equal(channel.name, 'Homework');
-  assert.equal(channel.kind, 'text');
-  assert.ok((await updated).channels.some(listed => listed.id === channel.id));
-  assert.deepEqual(await emitWithAck(socket, 'create_channel', { name: '', kind: 'text' }), { error: 'Invalid channel' });
-  assert.deepEqual(await emitWithAck(socket, 'create_channel', { name: 'x', kind: 'video' }), { error: 'Invalid channel' });
-
-  await emitWithAck(socket, 'send_message', { conversationId: channel.id, content: 'in homework', type: 'text' });
-  assert.deepEqual(await emitWithAck(socket, 'rename_channel', { channelId: channel.id, name: 'Revision' }), { ok: true });
-  assert.equal(db.prepare('SELECT name FROM channels WHERE id = ?').get(channel.id).name, 'Revision');
-  assert.deepEqual(await emitWithAck(socket, 'delete_channel', { channelId: channel.id }), { ok: true });
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?').get(channel.id).n, 0);
-  assert.equal((await fetch(`${baseUrl}/api/conversations/${channel.id}/messages`, { headers: auth(carol.token) })).status, 404);
-
-  // Only one text channel is left now, and it cannot be deleted.
-  assert.deepEqual(await emitWithAck(socket, 'delete_channel', { channelId: firstChannel('text') }), { error: 'Last text channel' });
 });
 
 test('joining a voice channel shows everyone who is in it, and anyone in it can share screen and camera', async () => {
@@ -796,7 +384,8 @@ test("a phone's screen keeps going while its owner's connection drops for a mome
 test("a call's chat reaches everyone in it, private messages reach only their two people, and it is gone when the call empties", async () => {
   const [hana, ivan, jade, outsider] = await Promise.all(['Hana', 'Ivan', 'Jade', 'Outsider'].map(name => join(name)));
   const [hanaSocket, ivanSocket, jadeSocket, outsiderSocket] = await Promise.all([hana, ivan, jade, outsider].map(person => connect(person.token)));
-  const room = (await emitWithAck(hanaSocket, 'create_channel', { name: 'Chat room', kind: 'voice' })).channel.id;
+  // A call of its own, so the chat starts empty whatever earlier tests said.
+  const room = newCall('Chat room');
   const hanaHistory = nextEvent(hanaSocket, 'call_chat_history');
   await emitWithAck(hanaSocket, 'voice_join', { channelId: room });
   assert.deepEqual((await hanaHistory).messages, []);
@@ -840,49 +429,35 @@ test("a call's chat reaches everyone in it, private messages reach only their tw
   await leaveCall(room, hanaSocket);
 });
 
-test('a person is in one voice channel at a time, and deleting a voice channel closes its call', async () => {
+test('a person is in one call at a time, and nobody can make, rename or delete channels', async () => {
   const frank = await join('Frank');
   const socket = await connect(frank.token);
-  const lounge = (await emitWithAck(socket, 'create_channel', { name: 'Lounge', kind: 'voice' })).channel;
-  await emitWithAck(socket, 'voice_join', { channelId: firstChannel('voice') });
-  const moved = eventWhere(socket, 'voice_state', state => membersIn(state, lounge.id).length > 0);
-  await emitWithAck(socket, 'voice_join', { channelId: lounge.id });
-  const calls = (await moved).calls;
-  assert.deepEqual(calls.map(call => call.channelId), [lounge.id]);
-  assert.deepEqual(await emitWithAck(socket, 'voice_join', { channelId: firstChannel('text') }), { error: 'Unknown channel' });
-
-  const closed = eventWhere(socket, 'voice_state', state => state.calls.length === 0);
-  assert.deepEqual(await emitWithAck(socket, 'delete_channel', { channelId: lounge.id }), { ok: true });
-  assert.deepEqual((await closed).calls, []);
-  assert.ok(await eventually(() => liveKitCalls('DeleteRoom').some(call => call.data.room === `voice-${lounge.id}`)));
+  // The friends' server may still have a second call from when channels could be made.
+  const lounge = 'f0f0f0f0-0000-4000-8000-00000000a001';
+  db.prepare("INSERT INTO channels (id, name, kind, position, created_at) VALUES (?, 'Lounge', 'voice', 99, ?)").run(lounge, Date.now());
+  try {
+    await emitWithAck(socket, 'voice_join', { channelId: firstChannel('voice') });
+    const moved = eventWhere(socket, 'voice_state', state => membersIn(state, lounge).length > 0);
+    await emitWithAck(socket, 'voice_join', { channelId: lounge });
+    assert.deepEqual((await moved).calls.map(call => call.channelId), [lounge]);
+    assert.deepEqual(await emitWithAck(socket, 'voice_join', { channelId: 'not-a-channel' }), { error: 'Unknown channel' });
+    for (const event of ['create_channel', 'rename_channel', 'delete_channel']) {
+      await assert.rejects(socket.timeout(200).emitWithAck(event, { channelId: lounge, name: 'Mine', kind: 'voice' }));
+    }
+    await leaveCall(lounge, socket);
+  } finally {
+    db.prepare('DELETE FROM channels WHERE id = ?').run(lounge);
+  }
 });
 
-test('a connecting client learns the channels, who is online and who is in calls', async () => {
+test('a connecting client learns its call, who is online and who is in calls', async () => {
   const gina = await join('Gina');
   const socket = io(baseUrl, { auth: { token: gina.token }, transports: ['websocket'] });
   sockets.push(socket);
   const [presence, channels, voice] = await Promise.all([nextEvent(socket, 'presence_state'), nextEvent(socket, 'channels'), nextEvent(socket, 'voice_state')]);
   assert.ok(presence.users.some(user => user.displayName === 'Gina'));
-  assert.ok(channels.channels.some(channel => channel.kind === 'text'));
-  assert.ok(channels.channels.some(channel => channel.kind === 'voice'));
+  assert.ok(channels.channels.length > 0 && channels.channels.every(channel => channel.kind === 'voice'));
   assert.ok(Array.isArray(voice.calls));
-});
-
-test('everyone can delete only their own messages, and deleted text stays hidden', async () => {
-  const conversationId = firstChannel('text');
-  const [henry, iris] = await Promise.all([join('Henry'), join('Iris')]);
-  const [henrySocket, irisSocket] = await Promise.all([connect(henry.token), connect(iris.token)]);
-  const { id } = await emitWithAck(henrySocket, 'send_message', { conversationId, content: 'mine', type: 'text' });
-  const untouched = quietFor(henrySocket, 'message_deleted');
-  irisSocket.emit('delete_message', { messageId: id });
-  assert.equal(await untouched, true);
-  const deleted = nextEvent(irisSocket, 'message_deleted');
-  henrySocket.emit('delete_message', { messageId: id });
-  assert.equal((await deleted).messageId, id);
-  const history = await (await fetch(`${baseUrl}/api/conversations/${conversationId}/messages`, { headers: auth(iris.token) })).json();
-  const gone = history.find(message => message.id === id);
-  assert.equal(gone.deleted, true);
-  assert.equal(gone.content, null);
 });
 
 test('the invite key lets anyone in by name, with cleaned names and no roles', async () => {
@@ -954,10 +529,9 @@ test('a room is made only with the creation key once one is set, and gets its ow
   }
 });
 
-test("a room's people see and hear only each other, and never the home room's channels or messages", async () => {
+test("a room's people see and hear only each other, and never the home room's call", async () => {
   const room = await (await createRoom({ name: 'Bakery' })).json();
   const homeVoice = firstChannel('voice');
-  const general = firstChannel('text');
 
   // The welcome screen and the home-screen app are named after the room of the invite.
   assert.equal((await (await fetch(`${baseUrl}/api/server?invite=${room.invite}`)).json()).name, 'Bakery');
@@ -1002,18 +576,10 @@ test("a room's people see and hear only each other, and never the home room's ch
   assert.equal(credentials.roomName, `voice-${roomVoice}`);
   assert.equal(jwt.decode(credentials.token).video.room, `voice-${roomVoice}`);
 
-  // The home room's messages, files and member list are out of reach.
-  assert.equal((await fetch(`${baseUrl}/api/conversations/${general}/messages`, { headers: auth(baker.token) })).status, 404);
+  // The chat and channel features that were removed are gone in every room.
   assert.equal((await fetch(`${baseUrl}/api/search?q=hello`, { headers: auth(baker.token) })).status, 404);
-  await assert.rejects(bakerSocket.timeout(200).emitWithAck('send_message', { conversationId: general, content: 'Hi', type: 'text' }));
-  await assert.rejects(bakerSocket.timeout(200).emitWithAck('create_channel', { name: 'Sneaky', kind: 'text' }));
-  const homeMembers = await new Promise(resolve => {
-    const late = io(baseUrl, { auth: { token: friend.token }, transports: ['websocket'] });
-    sockets.push(late);
-    late.once('members', ({ users }) => resolve(users.map(user => user.displayName)));
-  });
-  assert.ok(homeMembers.includes('Home friend'));
-  assert.ok(!homeMembers.includes('Baker'));
+  assert.equal((await fetch(`${baseUrl}/api/search?q=hello`, { headers: auth(friend.token) })).status, 404);
+  await assert.rejects(friendSocket.timeout(200).emitWithAck('send_message', { conversationId: homeVoice, content: 'Hi', type: 'text' }));
   bakerSocket.emit('voice_leave');
 });
 
@@ -1051,11 +617,111 @@ test('sessions from before rooms existed stay in the home room', async () => {
   assert.equal((await fetch(`${baseUrl}/api/me`, { headers: auth(madeUp) })).status, 401);
 });
 
-test("the class app's chat becomes #general with its messages when Hangout first starts on its server", () => {
+test("an old database loses its text chat and the chat's files, but keeps people, photos, rooms and calls", () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hangout-old-'));
+  try {
+    // The parts of a database from before text chat was removed that matter: people (one with the
+    // class app's role column), a room, a picture, a text and a voice channel, messages, files, a
+    // recording, reactions and read markers.
+    const requireFromRoot = createRequire(path.join(root, 'package.json'));
+    const Database = requireFromRoot('better-sqlite3');
+    const old = new Database(path.join(dataDir, 'chat.db'));
+    old.exec(`
+      CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
+        avatar_color TEXT NOT NULL DEFAULT '#6366f1', status TEXT, last_seen INTEGER, created_at INTEGER, visitor_id TEXT,
+        role TEXT NOT NULL DEFAULT 'student', notify_level TEXT NOT NULL DEFAULT 'all');
+      CREATE TABLE conversations (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT, created_by TEXT, created_at INTEGER);
+      CREATE TABLE conversation_members (conversation_id TEXT NOT NULL REFERENCES conversations(id), user_id TEXT NOT NULL REFERENCES users(id));
+      CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        sender_id TEXT NOT NULL REFERENCES users(id), content TEXT, type TEXT NOT NULL DEFAULT 'text', file_url TEXT, file_name TEXT,
+        attachment_id TEXT, reply_to TEXT REFERENCES messages(id), edited_at INTEGER, deleted INTEGER DEFAULT 0, created_at INTEGER,
+        pinned_at INTEGER, pinned_by TEXT REFERENCES users(id));
+      CREATE TABLE message_reads (message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id));
+      CREATE TABLE attachments (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        uploader_id TEXT NOT NULL REFERENCES users(id), disk_name TEXT NOT NULL UNIQUE, original_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL, duration_ms INTEGER);
+      CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, invite_key TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+      CREATE TABLE channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('text', 'voice')),
+        position INTEGER NOT NULL, created_at INTEGER NOT NULL, room_id TEXT REFERENCES rooms(id) ON DELETE CASCADE);
+      CREATE TABLE channel_reads (user_id TEXT NOT NULL REFERENCES users(id), channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        last_read_seq INTEGER NOT NULL);
+      CREATE TABLE message_reactions (message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id),
+        emoji TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE recordings (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), voice_channel_id TEXT NOT NULL,
+        channel_name TEXT NOT NULL, disk_name TEXT NOT NULL UNIQUE, mime_type TEXT, size INTEGER NOT NULL DEFAULT 0,
+        next_chunk INTEGER NOT NULL DEFAULT 0, stopped INTEGER NOT NULL DEFAULT 0, started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE room_members (room_id TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id), joined_at INTEGER NOT NULL);
+      CREATE TABLE avatars (id TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE, data BLOB NOT NULL, created_at INTEGER NOT NULL);
+      INSERT INTO users (id, username, display_name, password_hash, visitor_id) VALUES ('u1', 'amina', 'Amina', 'disabled', '00000000-0000-4000-8000-000000000999');
+      INSERT INTO rooms VALUES ('r1', 'Bakery', 'bakerykey123456789', 1);
+      INSERT INTO conversations (id, type, name) VALUES ('classroom', 'group', 'general');
+      INSERT INTO channels VALUES ('classroom', 'general', 'text', 0, 1, NULL), ('v1', 'General', 'voice', 1, 1, NULL), ('v2', 'Bakery', 'voice', 0, 1, 'r1');
+      INSERT INTO messages (id, conversation_id, sender_id, content, created_at) VALUES ('m1', 'classroom', 'u1', 'السلام عليكم', 1);
+      INSERT INTO messages (id, conversation_id, sender_id, type, file_url, created_at) VALUES ('m2', 'classroom', 'u1', 'image', '/uploads/0a1b.png', 2);
+      INSERT INTO message_reads VALUES ('m1', 'u1');
+      INSERT INTO message_reactions VALUES ('m1', 'u1', '👍', 1);
+      INSERT INTO channel_reads VALUES ('u1', 'classroom', 1);
+      INSERT INTO attachments VALUES ('a1', 'classroom', 'u1', 'sheet-file', 'Lesson 1.pdf', 'application/pdf', 10, 1, NULL);
+      INSERT INTO recordings VALUES ('rec1', 'u1', 'v1', 'General', 'lesson-recording', 'video/webm', 5, 1, 1, 1, 1);
+      INSERT INTO app_settings VALUES ('reads_started', '1'), ('room_members_started', '1'), ('vapid', 'kept');
+      INSERT INTO room_members VALUES ('home', 'u1', 1), ('r1', 'u1', 1);
+      INSERT INTO avatars VALUES ('p1', 'u1', x'ffd8ff', 1);
+    `);
+    old.close();
+    const uploads = path.join(dataDir, 'uploads');
+    fs.mkdirSync(uploads);
+    for (const name of ['sheet-file', 'lesson-recording', '0a1b.png', 'not-from-the-chat.txt']) fs.writeFileSync(path.join(uploads, name), 'x');
+
+    const script = `const loaded = (await import('./server/database.ts')).default; const db = loaded.default ?? loaded;
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(row => row.name);
+      console.log(JSON.stringify({
+        tables,
+        channels: db.prepare('SELECT id, kind, room_id FROM channels ORDER BY id').all(),
+        users: db.prepare('SELECT id, visitor_id FROM users').all(),
+        rooms: db.prepare('SELECT id FROM rooms').all(),
+        members: db.prepare('SELECT room_id FROM room_members ORDER BY room_id').all().map(row => row.room_id),
+        avatars: db.prepare('SELECT id FROM avatars').all().map(row => row.id),
+        settings: db.prepare('SELECT key FROM app_settings ORDER BY key').all().map(row => row.key),
+        foreignKeyProblems: db.pragma('foreign_key_check').length,
+      }));`;
+    const run = () => spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'test', DATA_DIR: dataDir },
+    });
+    const first = run();
+    assert.equal(first.status, 0, first.stderr);
+    const result = JSON.parse(first.stdout.trim().split('\n').pop());
+    for (const gone of ['messages', 'message_reads', 'message_reactions', 'channel_reads', 'attachments', 'recordings', 'conversations', 'conversation_members']) {
+      assert.ok(!result.tables.includes(gone), gone);
+    }
+    assert.deepEqual(result.channels, [{ id: 'v1', kind: 'voice', room_id: null }, { id: 'v2', kind: 'voice', room_id: 'r1' }]);
+    assert.deepEqual(result.users, [{ id: 'u1', visitor_id: '00000000-0000-4000-8000-000000000999' }]);
+    assert.deepEqual(result.rooms, [{ id: 'r1' }]);
+    assert.deepEqual(result.members, ['home', 'r1']);
+    assert.deepEqual(result.avatars, ['p1']);
+    assert.deepEqual(result.settings, ['room_members_started', 'vapid']);
+    assert.equal(result.foreignKeyProblems, 0);
+    // The chat's files are deleted; anything else in the folder is left alone.
+    assert.deepEqual(fs.readdirSync(uploads), ['not-from-the-chat.txt']);
+    assert.match(first.stdout, /Deleted 3 old chat files/);
+    // The copy made before the change still has everything.
+    const [before] = fs.readdirSync(path.join(dataDir, 'backups')).filter(name => name.includes('-before-v'));
+    const copy = new Database(path.join(dataDir, 'backups', before), { readonly: true });
+    assert.equal(copy.prepare('SELECT content FROM messages WHERE id = ?').get('m1').content, 'السلام عليكم');
+    copy.close();
+
+    // Starting again changes nothing.
+    const second = run();
+    assert.equal(second.status, 0, second.stderr);
+    assert.deepEqual(JSON.parse(second.stdout.trim().split('\n').pop()), result);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("the class app's database gets the home room's call when Hangout first starts on its server", () => {
   const classDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hangout-class-'));
   try {
-    // The parts of the class app's database that matter: its one class conversation, a student
-    // with the role column Hangout no longer uses, and a message.
     const requireFromRoot = createRequire(path.join(root, 'package.json'));
     const Database = requireFromRoot('better-sqlite3');
     const classDb = new Database(path.join(classDir, 'chat.db'));
@@ -1064,44 +730,25 @@ test("the class app's chat becomes #general with its messages when Hangout first
         avatar_color TEXT NOT NULL DEFAULT '#6366f1', status TEXT, last_seen INTEGER, created_at INTEGER, visitor_id TEXT,
         role TEXT NOT NULL DEFAULT 'student', removed_at INTEGER);
       CREATE TABLE conversations (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT, created_by TEXT, created_at INTEGER);
-      CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        sender_id TEXT NOT NULL REFERENCES users(id), content TEXT, type TEXT NOT NULL DEFAULT 'text', file_url TEXT, file_name TEXT,
-        attachment_id TEXT, reply_to TEXT, edited_at INTEGER, deleted INTEGER DEFAULT 0, created_at INTEGER);
       INSERT INTO conversations (id, type, name) VALUES ('classroom', 'group', 'Classroom');
       INSERT INTO users (id, username, display_name, password_hash, visitor_id) VALUES ('u1', 'amina', 'Amina', 'disabled', '00000000-0000-4000-8000-000000000999');
-      INSERT INTO messages (id, conversation_id, sender_id, content, created_at) VALUES ('m1', 'classroom', 'u1', 'السلام عليكم', 1);
-      CREATE TABLE attachments (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        uploader_id TEXT NOT NULL REFERENCES users(id), disk_name TEXT NOT NULL UNIQUE, original_name TEXT NOT NULL,
-        mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg','image/png','image/gif','image/webp','application/pdf')),
-        size INTEGER NOT NULL, created_at INTEGER NOT NULL);
-      INSERT INTO attachments VALUES ('a1', 'classroom', 'u1', 'sheet.pdf', 'Lesson 1.pdf', 'application/pdf', 10, 1);
     `);
     classDb.close();
-
     const script = `const loaded = (await import('./server/database.ts')).default; const db = loaded.default ?? loaded;
       console.log(JSON.stringify({
-        channels: db.prepare('SELECT id, name, kind FROM channels ORDER BY position').all(),
-        messages: db.prepare('SELECT id, conversation_id, content FROM messages').all(),
-        attachments: db.prepare('SELECT id, original_name FROM attachments').all(),
-        acceptsSound: !db.prepare("SELECT sql FROM sqlite_master WHERE name = 'attachments'").get().sql.includes('CHECK'),
+        channels: db.prepare('SELECT name, kind, room_id FROM channels').all(),
+        members: db.prepare('SELECT room_id, user_id FROM room_members').all(),
+        notifyLevel: db.prepare('SELECT notify_level FROM users').get().notify_level,
       }));`;
-    const run = () => spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
       cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'test', DATA_DIR: classDir },
     });
-    const first = run();
-    assert.equal(first.status, 0, first.stderr);
-    const result = JSON.parse(first.stdout.trim().split('\n').pop());
-    assert.deepEqual(result.channels.map(channel => [channel.name, channel.kind]), [['general', 'text'], ['General', 'voice']]);
-    assert.equal(result.channels[0].id, 'classroom');
-    assert.deepEqual(result.messages, [{ id: 'm1', conversation_id: 'classroom', content: 'السلام عليكم' }]);
-    // The class's files are kept when the attachments table is rebuilt to take sound and video.
-    assert.deepEqual(result.attachments, [{ id: 'a1', original_name: 'Lesson 1.pdf' }]);
-    assert.equal(result.acceptsSound, true);
-
-    // Starting again changes nothing: the channels exist now.
-    const second = run();
-    assert.equal(second.status, 0, second.stderr);
-    assert.deepEqual(JSON.parse(second.stdout.trim().split('\n').pop()).channels, result.channels);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim().split('\n').pop()), {
+      channels: [{ name: 'General', kind: 'voice', room_id: null }],
+      members: [{ room_id: 'home', user_id: 'u1' }],
+      notifyLevel: 'all',
+    });
   } finally {
     fs.rmSync(classDir, { recursive: true, force: true });
   }
@@ -1153,81 +800,18 @@ test('production needs a long invite key', () => {
   assert.match(loadConfig({ INVITE_KEY: 'short' }).stderr, /INVITE_KEY must be at least 12 characters/);
 });
 
-test('paging through history never skips messages sent in the same millisecond', async () => {
-  const reader = await join('History reader');
-  const general = firstChannel('text');
-  const insert = db.prepare("INSERT INTO messages (id, conversation_id, sender_id, content, type, created_at) VALUES (?, ?, ?, ?, 'text', ?)");
-  // Dated in the past so they stay out of other tests' latest page.
-  const sameMoment = 946_684_800_000;
-  const ids = [];
-  for (let n = 0; n < 75; n++) {
-    const id = `00000000-0000-4000-9000-${String(n).padStart(12, '0')}`;
-    ids.push(id);
-    insert.run(id, general, reader.user.id, `Same moment ${n}`, sameMoment);
-  }
-  const page = async query => (await fetch(`${baseUrl}/api/conversations/${general}/messages${query}`, { headers: { Authorization: `Bearer ${reader.token}` } })).json();
-  const seen = [];
-  let batch = await page(`?before=${sameMoment + 1}`);
-  while (batch.length) {
-    seen.unshift(...batch.map(message => message.id));
-    batch = await page(`?before=${batch[0].createdAt}&beforeId=${batch[0].id}`);
-  }
-  // All of them, once each, in the order they were written.
-  assert.deepEqual(seen.filter(id => ids.includes(id)), ids);
-  assert.equal((await fetch(`${baseUrl}/api/conversations/${general}/messages?before=1&beforeId=nope`, { headers: { Authorization: `Bearer ${reader.token}` } })).status, 400);
-});
-
 test('a burst of events is refused with an error instead of disconnecting', async () => {
-  const conversationId = firstChannel('text');
-  const student = await join('Fast typist');
+  const student = await join('Fast clicker');
   const socket = await connect(student.token);
-  for (let key = 0; key < 130; key++) socket.emit('typing', { conversationId });
-  const refused = await emitWithAck(socket, 'send_message', { conversationId, content: 'still here?', type: 'text' });
-  assert.deepEqual(refused, { error: 'Too many requests' });
+  for (let event = 0; event < 130; event++) socket.emit('app_active', { active: false });
+  assert.deepEqual(await emitWithAck(socket, 'app_active', { active: false }), { error: 'Too many requests' });
   assert.equal(socket.connected, true);
 });
 
-test('large PDFs up to the 100 MB default upload limit are accepted', async () => {
-  const user = await join('Large PDF');
-  const auth = { Authorization: `Bearer ${user.token}` };
-  const pdf = Buffer.alloc(Math.floor(12.8 * 1024 * 1024));
-  pdf.write('%PDF-1.7');
-  const form = new FormData();
-  form.append('conversationId', firstChannel('text'));
-  form.append('file', new Blob([pdf], { type: 'application/pdf' }), 'large.pdf');
-  const uploaded = await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth, body: form });
-  assert.equal(uploaded.status, 200);
-  const { attachmentId } = await uploaded.json();
-  const fetched = await fetch(`${baseUrl}/api/attachments/${attachmentId}`, { headers: auth });
-  assert.equal(fetched.status, 200);
-  assert.equal(Number(fetched.headers.get('content-length')), pdf.length);
-});
-
-test('uploads larger than 100 MB are rejected with a clear size error', async () => {
-  const user = await join('Oversized PDF');
-  const pdf = Buffer.alloc(100 * 1024 * 1024 + 1);
-  pdf.write('%PDF-1.7');
-  const form = new FormData();
-  form.append('conversationId', firstChannel('text'));
-  form.append('file', new Blob([pdf], { type: 'application/pdf' }), 'too-large.pdf');
-  const rejected = await fetch(`${baseUrl}/api/upload`, {
-    method: 'POST', headers: { Authorization: `Bearer ${user.token}` }, body: form,
-  });
-  assert.equal(rejected.status, 413);
-  assert.match((await rejected.json()).error, /100 MB/i);
-});
-
-test('upload configuration requires authentication and reports the configured default limit', async () => {
-  assert.equal((await fetch(`${baseUrl}/api/upload-config`)).status, 401);
-  const user = await join('Upload Config');
-  const response = await fetch(`${baseUrl}/api/upload-config`, { headers: { Authorization: `Bearer ${user.token}` } });
-  assert.equal(response.status, 200);
-  assert.equal((await response.json()).maxUploadBytes, 100 * 1024 * 1024);
-});
-
-test('friends who are away are notified of messages, mentions and calls, as each of them chose', async () => {
-  const general = firstChannel('text');
-  const [salma, amal, hind, qasim, omar] = await Promise.all(['Salma', 'Away Amal', 'Here Hind', 'Quiet Qasim', 'Off Omar'].map(name => join(name)));
+test('friends who are away are notified of calls, as each of them chose', async () => {
+  // A room of their own, so no earlier test has already announced its call.
+  const room = await (await createRoom({ name: 'Lesson' })).json();
+  const [salma, amal, hind, qasim, omar] = await Promise.all(['Salma', 'Away Amal', 'Here Hind', 'Quiet Qasim', 'Off Omar'].map(name => join(name, room.invite)));
   const subs = Object.fromEntries(['salma', 'amal', 'hind', 'qasim', 'omar'].map(name => [name, browserSubscription(`levels-${name}`)]));
   for (const [person, name] of [[salma, 'salma'], [amal, 'amal'], [hind, 'hind'], [omar, 'omar']]) assert.equal((await subscribe(person.token, subs[name])).status, 200);
   assert.equal((await subscribe(qasim.token, subs.qasim, { lang: 'ar' })).status, 200);
@@ -1240,77 +824,41 @@ test('friends who are away are notified of messages, mentions and calls, as each
   assert.equal((await setLevel(omar.token, 'loud')).status, 400);
   assert.equal((await me(qasim.token)).notifyLevel, 'mentions');
 
-  // Hind has the app in front of her, so she sees messages there instead.
+  // Hind has the app in front of her, so she sees the call there instead.
   const hindSocket = await connect(hind.token);
   assert.deepEqual(await emitWithAck(hindSocket, 'app_active', { active: true }), { ok: true });
   const salmaSocket = await connect(salma.token);
 
-  await emitWithAck(salmaSocket, 'send_message', { conversationId: general, content: 'Hello   friends', type: 'text' });
-  assert.ok(await eventually(() => pushesTo(subs.amal).length === 1));
+  // Starting a call tells those who want calls, once, however often people hop in and out.
+  const lesson = db.prepare('SELECT id FROM channels WHERE room_id = ?').get(room.id).id;
+  await emitWithAck(salmaSocket, 'voice_join', { channelId: lesson });
+  assert.ok(await eventually(() => pushesTo(subs.qasim).length === 1 && pushesTo(subs.amal).length === 1));
   assert.deepEqual(pushesTo(subs.amal)[0], {
-    title: 'Salma in #general', body: 'Hello friends', tag: `channel-${general}`, channelId: general, url: `/?channel=${general}`,
+    title: 'Salma started a call in 🔊 Lesson', body: '', tag: `channel-${lesson}`, channelId: lesson, url: `/?channel=${lesson}`,
   });
-  // Notifications of one channel share a topic, so a phone that was offline gets only the latest.
+  // Someone who chose "mentions" still hears about calls, in the language their device uses.
+  assert.equal(pushesTo(subs.qasim)[0].title, 'Salma بدأ مكالمة في 🔊 Lesson');
+  // Notices of one call share a topic, so a phone that was offline gets only the latest.
   const amalRequest = pushService.received.find(entry => entry.name === 'levels-amal');
   assert.equal(amalRequest.headers.topic.length, 32);
   assert.equal(amalRequest.headers.urgency, 'high');
   const [, vapidPass] = /^vapid t=([^,]+), k=.+/.exec(amalRequest.headers.authorization);
   assert.equal(jwt.decode(vapidPass).sub, 'https://majlis.test');
-
-  // A mention reaches Qasim, who only wants mentions, in the language his device uses.
-  await emitWithAck(salmaSocket, 'send_message', { conversationId: general, content: `Lesson at five, <@${qasim.user.id}>`, type: 'text' });
-  assert.ok(await eventually(() => pushesTo(subs.qasim).length === 1 && pushesTo(subs.amal).length === 2));
-  assert.deepEqual([pushesTo(subs.qasim)[0].title, pushesTo(subs.qasim)[0].body], ['Salma ذكرك في #general', 'Lesson at five, @Quiet Qasim']);
-  assert.equal(pushesTo(subs.amal)[1].title, 'Salma in #general');
-
-  // Hind looks away from the app, and @everyone now reaches her too.
-  await emitWithAck(hindSocket, 'app_active', { active: false });
-  await emitWithAck(salmaSocket, 'send_message', { conversationId: general, content: '@everyone class is starting', type: 'text' });
-  assert.ok(await eventually(() => pushesTo(subs.hind).length === 1 && pushesTo(subs.qasim).length === 2));
-  assert.equal(pushesTo(subs.hind)[0].title, 'Salma mentioned you in #general');
-
-  // Starting a call tells those who want calls, once, however often people hop in and out.
-  const lesson = (await emitWithAck(salmaSocket, 'create_channel', { name: 'Lesson', kind: 'voice' })).channel;
-  await emitWithAck(salmaSocket, 'voice_join', { channelId: lesson.id });
-  assert.ok(await eventually(() => pushesTo(subs.qasim).length === 3 && pushesTo(subs.amal).length === 4));
-  assert.deepEqual(pushesTo(subs.amal)[3], {
-    title: 'Salma started a call in 🔊 Lesson', body: '', tag: `channel-${lesson.id}`, channelId: lesson.id, url: `/?channel=${lesson.id}`,
-  });
   salmaSocket.emit('voice_leave');
-  await emitWithAck(salmaSocket, 'voice_join', { channelId: lesson.id });
+  await emitWithAck(salmaSocket, 'voice_join', { channelId: lesson });
   await new Promise(resolve => setTimeout(resolve, 200));
-  assert.equal(pushesTo(subs.amal).length, 4);
+  assert.equal(pushesTo(subs.amal).length, 1);
 
-  // The sender and the person who turned notifications off were never notified.
+  // The starter, the person looking at the app and the person who turned notifications off were
+  // never notified.
   assert.equal(pushesTo(subs.salma).length, 0);
+  assert.equal(pushesTo(subs.hind).length, 0);
   assert.equal(pushesTo(subs.omar).length, 0);
   salmaSocket.emit('voice_leave');
 });
 
-test('photos, voice messages, videos and files are described in notifications', async () => {
-  const general = firstChannel('text');
-  const [yusuf, zaid] = await Promise.all([join('Yusuf'), join('Zaid')]);
-  const zaidSub = browserSubscription('attachments-zaid');
-  await subscribe(zaid.token, zaidSub);
-  const socket = await connect(yusuf.token);
-  const send = async (bytes, type, name) => {
-    const form = new FormData();
-    form.append('conversationId', general);
-    form.append('file', new Blob([bytes], { type }), name);
-    const uploaded = await (await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: auth(yusuf.token), body: form })).json();
-    return emitWithAck(socket, 'send_message', { conversationId: general, type: uploaded.type, attachmentId: uploaded.attachmentId });
-  };
-  const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(60)]);
-  await send(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/F+4AAAAASUVORK5CYII=', 'base64'), 'image/png', 'tiny.png');
-  await send(webm, 'audio/webm', 'voice.webm');
-  await send(webm, 'video/webm', 'lesson.webm');
-  await send(Buffer.from('%PDF-1.7 homework'), 'application/pdf', 'Homework 3.pdf');
-  assert.ok(await eventually(() => pushesTo(zaidSub).length === 4));
-  assert.deepEqual(pushesTo(zaidSub).map(push => push.body), ['📷 Photo', '🎤 Voice message', '🎥 Video', 'Homework 3.pdf']);
-});
-
 test('a device the push service no longer knows is forgotten, and bad subscriptions are refused', async () => {
-  const general = firstChannel('text');
+  const call = newCall('Forgotten');
   const [layla, musa] = await Promise.all([join('Layla'), join('Musa')]);
   const gone = browserSubscription('gone-layla');
   pushService.gone.add('gone-layla');
@@ -1318,8 +866,9 @@ test('a device the push service no longer knows is forgotten, and bad subscripti
   const stored = endpoint => db.prepare('SELECT COUNT(*) AS n FROM push_subscriptions WHERE endpoint = ?').get(endpoint).n;
   assert.equal(stored(gone.endpoint), 1);
   const socket = await connect(musa.token);
-  await emitWithAck(socket, 'send_message', { conversationId: general, content: 'anyone there?', type: 'text' });
+  await emitWithAck(socket, 'voice_join', { channelId: call });
   assert.ok(await eventually(() => stored(gone.endpoint) === 0));
+  await leaveCall(call, socket);
 
   const valid = browserSubscription('valid-layla');
   const refused = async body => (await fetch(`${baseUrl}/api/push/subscribe`, { method: 'POST', headers: jsonAuth(layla.token), body: JSON.stringify(body) })).status;
@@ -1343,7 +892,7 @@ test('a device the push service no longer knows is forgotten, and bad subscripti
 });
 
 test('the Android and iPhone apps are notified through Firebase and Apple once their keys are set', async () => {
-  const general = firstChannel('text');
+  const general = newCall('Corner');
   const [nour, rami] = await Promise.all([join('Nour'), join('Rami')]);
   const config = () => fetch(`${baseUrl}/api/push/config`, { headers: auth(nour.token) }).then(response => response.json());
   const initial = await config();
@@ -1407,7 +956,7 @@ test('the Android and iPhone apps are notified through Firebase and Apple once t
       assert.equal((await add(kind, endpoint)).status, 200);
     }
     const socket = await connect(nour.token);
-    await emitWithAck(socket, 'send_message', { conversationId: general, content: 'On my way', type: 'text' });
+    await emitWithAck(socket, 'voice_join', { channelId: general });
     const devices = () => db.prepare('SELECT endpoint FROM push_subscriptions WHERE user_id = ?').all(rami.user.id).map(row => row.endpoint).sort();
     assert.ok(await eventually(() => firebase.messages.length === 2 && appleRequests.length === 2 && devices().length === 2));
     // Uninstalled apps are forgotten.
@@ -1417,7 +966,7 @@ test('the Android and iPhone apps are notified through Firebase and Apple once t
     const toAndroid = firebase.messages.find(message => message.token === android);
     assert.equal(toAndroid.url, '/v1/projects/majlis-test/messages:send');
     assert.equal(toAndroid.authorization, 'Bearer firebase-access');
-    assert.deepEqual(toAndroid.notification, { title: 'Nour in #general', body: 'On my way' });
+    assert.deepEqual(toAndroid.notification, { title: 'Nour started a call in 🔊 Corner', body: '' });
     assert.deepEqual(toAndroid.data, { channelId: general });
     assert.deepEqual(toAndroid.android.notification, { tag: `channel-${general}`, channel_id: 'messages' });
 
@@ -1427,7 +976,7 @@ test('the Android and iPhone apps are notified through Firebase and Apple once t
     const pass = jwt.verify(toIphone.headers.authorization.replace('bearer ', ''), apple.publicKey, { algorithms: ['ES256'], complete: true });
     assert.deepEqual([pass.header.kid, pass.payload.iss], ['KEY1234567', 'TEAM123456']);
     assert.deepEqual(toIphone.body, {
-      aps: { alert: { title: 'Nour in #general', body: 'On my way' }, sound: 'default', 'thread-id': general }, channelId: general,
+      aps: { alert: { title: 'Nour started a call in 🔊 Corner', body: '' }, sound: 'default', 'thread-id': general }, channelId: general,
     });
   } finally {
     for (const [key, value] of Object.entries(saved)) value === undefined ? delete process.env[key] : process.env[key] = value;

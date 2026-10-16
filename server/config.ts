@@ -4,23 +4,8 @@ import { createHash, timingSafeEqual } from 'crypto';
 export const production = process.env.NODE_ENV === 'production';
 if (production && !process.env.DATA_DIR) throw new Error('DATA_DIR must point to persistent storage in production');
 export const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
+// The chat's files lived here before text chat was removed; database.ts deletes what is left.
 export const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
-
-export const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
-
-const configuredMaxUploadBytes = Number(process.env.MAX_UPLOAD_BYTES);
-export const MAX_UPLOAD_BYTES = Number.isSafeInteger(configuredMaxUploadBytes) && configuredMaxUploadBytes > 0
-  ? configuredMaxUploadBytes
-  : DEFAULT_MAX_UPLOAD_BYTES;
-
-// Call recordings are uploaded bit by bit while they are made, so they have their own limit rather
-// than the one for files chosen from a device. It is read on every use, like the invite key, so a
-// changed setting takes effect straight away.
-export const DEFAULT_MAX_RECORDING_BYTES = 2 * 1024 * 1024 * 1024;
-export function maxRecordingBytes(): number {
-  const configured = Number(process.env.MAX_RECORDING_BYTES);
-  return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_MAX_RECORDING_BYTES;
-}
 
 // Phones often capitalize the first letter or type Arabic-Indic digits, so a key pasted or typed by
 // hand is compared without case, spaces, or digit-script differences.

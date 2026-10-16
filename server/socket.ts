@@ -3,29 +3,23 @@ import { Server as HttpServer } from 'http';
 import { v4 as uuid } from 'uuid';
 import db from './database';
 import { verifyToken } from './auth';
-import { removeAttachmentIfUnused } from './attachments';
-import { ChannelKind, cleanChannelName, createChannel, deleteChannel, getChannel, HOME_ROOM, isTextChannel, listChannels, renameChannel } from './channels';
+import { getChannel, listChannels } from './channels';
 import { roomChannel } from './rooms';
-import { addToCall, allCalls, CallChatMessage, callOf, endCall, getCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
+import { addToCall, allCalls, CallChatMessage, callOf, getCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
 import { roomService } from './livekit';
-import { messageById } from './messages';
-import { forgetSocket, notifyCallStarted, notifyNewMessage, setAppActive } from './push';
-import { registerChatEvents } from './chat';
-import { connectRecordings } from './recordings';
+import { forgetSocket, notifyCallStarted, setAppActive } from './push';
 import { avatarUrl, onProfileChanged } from './avatars';
 
 // Who is online in each room, by room ID, then by user ID with their connections. Everyone in a
-// room is in every one of its channels, so each connection joins its room's Socket.IO room.
+// room can see its call, so each connection joins its room's Socket.IO room.
 const onlineByRoom = new Map<string, Map<string, Set<string>>>();
-const HOME = roomChannel(HOME_ROOM);
 
-// Typing is throttled by the client, so normal use stays far below the soft limit. Events over it
+// Normal use (joining, chatting in the call, raising a hand) stays far below the soft limit. Events over it
 // are dropped with an error reply instead of silently cutting someone off; only a client far
 // beyond it is disconnected.
 const EVENT_WINDOW_MS = 60_000;
 const SOFT_EVENT_LIMIT = 120;
 const HARD_EVENT_LIMIT = 600;
-const MAX_CHANNELS = 50;
 
 const profileQuery = db.prepare(`SELECT u.id, u.display_name AS displayName, u.avatar_color AS avatarColor, a.id AS avatarId
   FROM users u LEFT JOIN avatars a ON a.user_id = u.id WHERE u.id = ?`);
@@ -43,9 +37,6 @@ function callPayload(call: VoiceCall) {
     members: [...call.members.keys()].map(profile).filter(Boolean),
     hands: [...call.hands.entries()].sort((a, b) => a[1] - b[1])
       .map(([userId]) => ({ userId, displayName: profile(userId)?.displayName ?? '' })),
-    recording: call.recording
-      ? { userId: call.recording.userId, displayName: profile(call.recording.userId)?.displayName ?? '', startedAt: call.recording.startedAt }
-      : null,
   };
 }
 const voiceState = (roomId: string) => ({ calls: allCalls(roomId).map(callPayload) });
@@ -123,9 +114,6 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
   });
 
   const broadcastVoice = (roomId: string) => io.to(roomChannel(roomId)).emit('voice_state', voiceState(roomId));
-  const broadcastChannels = () => io.to(HOME).emit('channels', { channels: listChannels() });
-  // Recordings and text channels exist only in the home room.
-  connectRecordings({ voiceChanged: () => broadcastVoice(HOME_ROOM), messagePosted: message => io.to(HOME).emit('new_message', message) });
   // A new picture reaches everyone in the rooms its owner is in at once, in the list of people
   // and in the call, the way they would see it after reconnecting.
   onProfileChanged(userId => {
@@ -189,7 +177,6 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     socket.emit('voice_state', voiceState(roomId));
     socket.to(room).emit('presence', { userId, online: true, user: me });
 
-    // Calls, their chat and raised hands work in every room; what follows is for the rest.
     registerCallEvents();
     socket.on('disconnect', () => {
       forgetSocket(userId, socket.id);
@@ -205,113 +192,6 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       if (!onlineUsers.size) onlineByRoom.delete(roomId);
       db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
       io.to(room).emit('presence', { userId, online: false, lastSeen: Date.now() });
-    });
-
-    // Text channels, which the app no longer shows, and managing channels belong to the home room
-    // only, so nobody in a customer's room can read or change the friends' messages.
-    if (roomId !== HOME_ROOM) return;
-    registerChatEvents(io, socket, userId);
-
-    socket.on('send_message', (data, callback) => {
-      if (!data || !isTextChannel(data.conversationId)) return callback?.({ error: 'Unknown channel' });
-      const { conversationId, content, type, replyTo } = data;
-      const safeType = type || 'text';
-      if (!['text', 'image', 'file'].includes(safeType) || (safeType === 'text' && (typeof content !== 'string' || !content.trim() || content.length > 8000))) return callback?.({ error: 'Invalid message' });
-      if (safeType !== 'text' && (!data.attachmentId || typeof data.attachmentId !== 'string')) return callback?.({ error: 'Attachment required' });
-      if (replyTo) {
-        const replied = db.prepare('SELECT 1 FROM messages WHERE id = ? AND conversation_id = ?').get(replyTo, conversationId);
-        if (!replied) return callback?.({ error: 'Invalid reply target' });
-      }
-      let attachment: any = null;
-      if (safeType !== 'text') {
-        attachment = db.prepare('SELECT id, original_name, mime_type FROM attachments WHERE id = ? AND conversation_id = ?').get(data.attachmentId, conversationId);
-        if (!attachment || (safeType === 'image') !== String(attachment.mime_type).startsWith('image/')) return callback?.({ error: 'Invalid attachment' });
-      }
-
-      const id = uuid();
-      const createdAt = Date.now();
-
-      db.prepare(`
-        INSERT INTO messages (id, conversation_id, sender_id, content, type, file_url, file_name, reply_to, created_at, attachment_id)
-        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
-      `).run(id, conversationId, userId, safeType === 'text' ? content : (safeType === 'file' ? attachment.original_name : null), safeType, attachment?.original_name || null, replyTo || null, createdAt, attachment?.id || null);
-
-      const message = messageById(id)!;
-      io.to(HOME).emit('new_message', message);
-      callback?.({ id });
-      notifyNewMessage(message, getChannel(conversationId)!);
-    });
-
-    socket.on('edit_message', (data) => {
-      if (!data || typeof data.messageId !== 'string' || typeof data.content !== 'string' || !data.content.trim() || data.content.length > 8000) return;
-      const { messageId, content } = data;
-      const msg = db.prepare("SELECT sender_id, conversation_id FROM messages WHERE id = ? AND type = 'text' AND deleted = 0").get(messageId) as any;
-      if (!msg || msg.sender_id !== userId) return;
-
-      const editedAt = Date.now();
-      db.prepare('UPDATE messages SET content = ?, edited_at = ? WHERE id = ?').run(content, editedAt, messageId);
-      io.to(HOME).emit('message_edited', { messageId, content, editedAt });
-    });
-
-    // Nobody moderates the server, so everyone can delete only their own messages.
-    socket.on('delete_message', (data) => {
-      if (!data || typeof data.messageId !== 'string') return;
-      const { messageId } = data;
-      const msg = db.prepare('SELECT sender_id, attachment_id FROM messages WHERE id = ? AND deleted = 0').get(messageId) as any;
-      if (!msg || msg.sender_id !== userId) return;
-
-      db.prepare('UPDATE messages SET deleted = 1, content = NULL, file_name = NULL, attachment_id = NULL WHERE id = ?').run(messageId);
-      if (msg.attachment_id) removeAttachmentIfUnused(msg.attachment_id);
-      io.to(HOME).emit('message_deleted', { messageId });
-    });
-
-    socket.on('typing', (data) => {
-      if (!data || !isTextChannel(data.conversationId)) return;
-      socket.to(HOME).emit('user_typing', { conversationId: data.conversationId, userId, displayName: me?.displayName });
-    });
-
-    socket.on('stop_typing', (data) => {
-      if (!data || !isTextChannel(data.conversationId)) return;
-      socket.to(HOME).emit('user_stop_typing', { conversationId: data.conversationId, userId });
-    });
-
-    // Anyone can make, rename and delete channels, as friends would on a server they share.
-    socket.on('create_channel', (data: { name: unknown; kind: unknown }, callback?: unknown) => {
-      const reply = (payload: object) => { if (typeof callback === 'function') callback(payload); };
-      const name = cleanChannelName(data?.name);
-      const kind = data?.kind as ChannelKind;
-      if (!name || (kind !== 'text' && kind !== 'voice')) return reply({ error: 'Invalid channel' });
-      if (listChannels().length >= MAX_CHANNELS) return reply({ error: 'Too many channels' });
-      const channel = createChannel(name, kind);
-      broadcastChannels();
-      reply({ channel });
-    });
-
-    socket.on('rename_channel', (data: { channelId: unknown; name: unknown }, callback?: unknown) => {
-      const reply = (payload: object) => { if (typeof callback === 'function') callback(payload); };
-      const channel = getChannel(data?.channelId);
-      const name = cleanChannelName(data?.name);
-      if (!channel || !name) return reply({ error: 'Invalid channel' });
-      renameChannel(channel.id, name);
-      broadcastChannels();
-      reply({ ok: true });
-    });
-
-    socket.on('delete_channel', (data: { channelId: unknown }, callback?: unknown) => {
-      const reply = (payload: object) => { if (typeof callback === 'function') callback(payload); };
-      const channel = getChannel(data?.channelId);
-      if (!channel) return reply({ error: 'Invalid channel' });
-      // There is always somewhere to write.
-      if (channel.kind === 'text' && listChannels().filter(other => other.kind === 'text').length <= 1) return reply({ error: 'Last text channel' });
-      deleteChannel(channel);
-      if (channel.kind === 'voice') {
-        const call = endCall(channel.id);
-        // Closing the room disconnects anyone still in the call of a channel that no longer exists.
-        if (call) roomService()?.deleteRoom(call.roomName).catch(() => { /* The room may never have been opened. */ });
-        broadcastVoice(HOME_ROOM);
-      }
-      broadcastChannels();
-      reply({ ok: true });
     });
 
     function registerCallEvents() {

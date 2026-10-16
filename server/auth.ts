@@ -49,24 +49,6 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   next();
 }
 
-// A video element cannot send the session header, so a long recording is played from a link that
-// carries its own pass instead. The pass opens one file for one person for a few hours, and it has
-// no userId claim, so it can never be mistaken for a session.
-const STREAM_PASS_HOURS = 6;
-export function signStreamToken(attachmentId: string, userId: string): string {
-  return jwt.sign({ purpose: 'stream', attachmentId, sub: userId, code: keyFingerprint() }, JWT_SECRET, { expiresIn: `${STREAM_PASS_HOURS}h` });
-}
-
-export function verifyStreamToken(token: unknown, attachmentId: string): Session | null {
-  if (typeof token !== 'string' || !token) return null;
-  let claims: { purpose?: unknown; attachmentId?: unknown; sub?: unknown; code?: unknown };
-  try { claims = jwt.verify(token, JWT_SECRET) as typeof claims; } catch { return null; }
-  if (claims.purpose !== 'stream' || claims.attachmentId !== attachmentId || typeof claims.sub !== 'string' || claims.code !== keyFingerprint()) return null;
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(claims.sub) as { id: string } | undefined;
-  // Files belong to the home room's text channels, so a pass is only ever made there.
-  return user ? { userId: user.id, roomId: HOME_ROOM } : null;
-}
-
 // Control and bidirectional-override characters could make a name render as someone else's.
 export function cleanDisplayName(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -106,9 +88,6 @@ router.post('/join', (req: Request, res: Response) => {
     const avatarColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
     db.prepare('INSERT INTO users (id, username, display_name, password_hash, avatar_color, visitor_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(id, username, displayName, 'disabled', avatarColor, visitorId, '');
-    // A newcomer starts with the history already read, so nothing old is marked new for them.
-    db.prepare(`INSERT OR IGNORE INTO channel_reads (user_id, channel_id, last_read_seq)
-      SELECT ?, c.id, (SELECT COALESCE(MAX(m.rowid), 0) FROM messages m WHERE m.conversation_id = c.id) FROM channels c WHERE c.kind = 'text'`).run(id);
     user = { id, username, display_name: displayName, avatar_color: avatarColor, status: '' };
   }
   addRoomMember(room.id, user.id);

@@ -3,17 +3,13 @@ import http from 'http';
 import compression from 'compression';
 import cors from 'cors';
 import path from 'path';
-import fs from 'fs';
 import authRouter, { cleanDisplayName } from './auth';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
-import { inviteKey, openJoin, serverName, DEFAULT_MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES, production, UPLOADS_DIR } from './config';
+import { inviteKey, openJoin, serverName, production } from './config';
 import { roomForKey, roomsRouter } from './rooms';
 import { rateLimit } from './rateLimit';
-import { streamAttachment } from './stream';
 import { serveAvatar } from './avatars';
-
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || (production ? '' : 'http://localhost:5173,https://localhost:5173'))
   .split(',').map(origin => origin.trim()).filter(Boolean);
@@ -53,19 +49,12 @@ app.get('/api/server', rateLimit(300, 15 * 60_000), (req, res) => {
 // signed-in requests are also limited per person in the API router.
 app.use('/api/auth', rateLimit(300, 15 * 60_000), authRouter);
 app.use('/api/rooms', rateLimit(60, 15 * 60_000), roomsRouter);
-// A player opens sound and video with the pass in its link rather than a session header, so this
-// comes before the API's session check. Seeking asks for many small parts, hence the generous limit.
-app.get('/api/attachments/:id/stream', rateLimit(1200, 60_000), streamAttachment);
-// Pictures are shown by images, which cannot send the session header either (see avatars.ts).
+// Pictures are shown by images, which cannot send the session header (see avatars.ts), so this
+// comes before the API's session check.
 app.get('/api/avatars/:id', rateLimit(1200, 60_000), serveAvatar);
 app.use('/api', rateLimit(1200, 60_000), apiRouter);
-app.use('/uploads', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (res.headersSent) return next(err);
-  if (err?.code === 'LIMIT_FILE_SIZE') {
-    const limitMb = MAX_UPLOAD_BYTES === DEFAULT_MAX_UPLOAD_BYTES ? '100 MB by default' : `${(MAX_UPLOAD_BYTES / 1024 / 1024).toFixed(1)} MB`;
-    return res.status(413).json({ error: `File exceeds the upload size limit (${limitMb}).` });
-  }
   if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Too large' });
   if (err?.message === 'Origin not allowed') return res.status(403).json({ error: 'Origin not allowed' });
   if (err instanceof SyntaxError && 'body' in err) return res.status(400).json({ error: 'Invalid JSON' });

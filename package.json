@@ -1,7 +1,7 @@
 {
   "name": "hangout",
   "version": "1.0.0",
-  "description": "A Discord-style room for friends: text channels, and voice channels that work like a Zoom call.",
+  "description": "A Zoom-like call app with one room per customer.",
   "main": "dist/index.js",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
@@ -25,7 +25,6 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "livekit-server-sdk": "^2.19.0",
-    "multer": "^2.4.0",
     "socket.io": "^4.8.3",
     "uuid": "^14.0.2",
     "web-push": "^3.6.7"
@@ -36,7 +35,6 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/multer": "^2.2.0",
     "@types/node": "^26.6.1",
     "@types/uuid": "^10.0.0",
     "@types/web-push": "^3.6.4",

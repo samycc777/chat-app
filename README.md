@@ -6,7 +6,7 @@ It runs as one Node.js process (Express, Socket.IO, SQLite) serving a Vue 3 web 
 
 Since September 2026 one server can hold many rooms, one per customer, as the first step to Majlis being a call app anyone can pay for. Each room has its own name, invite link and call, and nobody in one room can see or hear anyone in another. The friends' and the class's room is the **home room**: its link and everything in it is unchanged, and it is never billed. See [Rooms](#rooms).
 
-Until September 2026 Majlis was a Discord-style server with text channels, voice messages, search, pins, notifications of messages and call recording. The app no longer shows any of that; the server still has the code and keeps the old messages, but nothing in the app reaches them.
+Until September 2026 Majlis was a Discord-style server with text channels, voice messages, search, pins, notifications of messages and call recording. The app no longer shows any of that; since October 2026 the server no longer has them either: the first start after that update deleted the old messages, files and recordings (the database copy it made just before, ending in `-before-v2.db`, still has them).
 
 ## What everyone can do
 
@@ -49,15 +49,13 @@ Until September 2026 Majlis was a Discord-style server with text channels, voice
 | --- | --- | --- |
 | `NODE_ENV` | production | Set to `production` on the deployed server. |
 | `JWT_SECRET` | production | Random secret of at least 32 characters that signs sessions. |
-| `DATA_DIR` | production | Persistent directory for the SQLite database and uploads (a Railway Volume). |
+| `DATA_DIR` | production | Persistent directory for the SQLite database and its backups (a Railway Volume). |
 | `ALLOWED_ORIGINS` | production | Comma-separated exact origins allowed to use the site, such as `https://your-app.up.railway.app`. |
 | `INVITE_KEY` | production | The secret inside the invite link, at least 12 characters. Nobody types it, so make it long and random. The invite link is `https://<your site>/?invite=<INVITE_KEY>`. |
 | `OPEN_JOIN` | no | Set to `1` to let the site's plain address work like the invite link, so anyone who opens it can join. Leave it unset to keep the invite link needed. To close the server again afterwards, unset it and change `INVITE_KEY`. |
 | `SERVER_NAME` | no | The home room's name, shown on the join screen, in the browser tab and under the home-screen icon. |
 | `ROOM_CREATION_KEY` | to make rooms | The secret that lets you make new rooms on the live site at `https://<your site>/new?key=<ROOM_CREATION_KEY>`. Without it, making rooms is closed on the live site. |
-| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | for calls | Credentials of a LiveKit server (ours runs on Hetzner, see docs/notes/call-server.md; LiveKit Cloud works too). Without them the text channels work but calls cannot start. |
-| `MAX_UPLOAD_BYTES` | no | Largest upload in bytes; 100 MB by default. |
-| `MAX_RECORDING_BYTES` | no | Largest call recording in bytes; 2 GB by default (about eight hours). A recording that reaches it stops, and what was recorded is kept. |
+| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | for calls | Credentials of a LiveKit server (ours runs on Hetzner, see docs/notes/call-server.md; LiveKit Cloud works too). Without them the app opens but calls cannot start. |
 | `FCM_SERVICE_ACCOUNT` | for Android app notifications | The Firebase service account JSON file, pasted whole or in base64 (see below). |
 | `APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID` | for iPhone app notifications | Apple's push key: the `.p8` file's contents (or base64), its Key ID, and your Team ID (see below). |
 | `APNS_BUNDLE_ID` | no | The iPhone app's bundle ID; `com.samycc777.majlis` by default. |
@@ -74,13 +72,11 @@ In production the server refuses to start if a required variable is missing or t
 1. Create a Railway service from this repository. `railway.json` already sets the build (`npm run build`), the start command, and the `/api/health` health check. It also redeploys only when the website or server changes (`watchPatterns`), because a redeploy disconnects every call; changes in `mobile/` alone leave the site running.
 2. Add a Volume and set `DATA_DIR` to its mount path.
 3. Set the variables above as service variables, including a public domain in `ALLOWED_ORIGINS`.
-4. For calls, create a LiveKit Cloud project and copy its URL, API key and API secret into the `LIVEKIT_*` variables. Leave LiveKit's own recording (egress) off: calls are recorded in the browser of whoever presses Record.
+4. For calls, create a LiveKit Cloud project and copy its URL, API key and API secret into the `LIVEKIT_*` variables.
 
-The app keeps its database and uploads on the one volume, so it must run as a single instance. Who is online and who is in each call are held in memory, so a restart disconnects every call; everyone rejoins by tapping the voice channel again.
+The app keeps its database on the one volume, so it must run as a single instance. Who is online and who is in each call are held in memory, so a restart disconnects every call; everyone rejoins by tapping Join call again.
 
 The server copies its database into `backups/` inside `DATA_DIR` every time it starts and once a day, keeping the newest seven. Before it changes the database's layout (after an update), it makes one more copy ending in `-before-v<number>.db`, which it never deletes. To go back, stop the server and put a copy in place of `chat.db`.
-
-Recordings are kept on the same volume as the other files, and they are the largest: an hour of lesson is roughly 150 to 250 MB, so a 5 GB volume holds about 20 hours. Give the volume room for the recordings you want to keep, and delete old recording messages when it fills up; deleting the message frees its space.
 
 ### Setting up notifications for the phone apps
 
@@ -105,11 +101,11 @@ The server turns each route on by itself once its variables are set; redeploy (o
 
 ### Privacy
 
-Uploaded files are only served to signed-in members, and their contents are checked to be real images, PDFs, sound or video. Call audio and video pass through LiveKit Cloud, encrypted in transit; LiveKit's end-to-end encryption is turned off. A call is recorded only when someone in it presses Record, and everyone in the call then sees a red "Recording" sign with that person's name. The recording is made in that person's browser, not by LiveKit, and is posted in a text channel for all members like any other file. Otherwise nothing from a call is stored. A video is played from a link with a pass for that one file that lasts six hours. Deleting a message removes its text and file from the server. For notifications, the server keeps each device's notification address (from the browser, Google or Apple) until the person signs out or the service says it is no longer valid; a notification's text passes through the browser's push service (encrypted), or through Google's or Apple's service for the phone apps.
+Call audio and video pass through our LiveKit server, encrypted in transit; LiveKit's end-to-end encryption is turned off. Nothing from a call is stored: there is no recording, and the call chat is held in memory only until the last person leaves. The server keeps each person's name, profile picture and the rooms they joined. For notifications, the server keeps each device's notification address (from the browser, Google or Apple) until the person signs out or the service says it is no longer valid; a notification's text passes through the browser's push service (encrypted), or through Google's or Apple's service for the phone apps.
 
 ## Rooms
 
-The home room is the one the server started with. Its invite key is `INVITE_KEY` and its name is `SERVER_NAME`; it alone keeps the old text channels, files and recordings. Sessions from before rooms existed belong to it, so nobody was signed out when rooms arrived.
+The home room is the one the server started with. Its invite key is `INVITE_KEY` and its name is `SERVER_NAME`. Sessions from before rooms existed belong to it, so nobody was signed out when rooms arrived.
 
 Any other room is made at `/new`: type a name and the page gives the room's invite link, `https://<your site>/?invite=<key>`, with a key of 30 random letters and digits. Until paying for a room exists, the live site makes rooms only with `ROOM_CREATION_KEY` (open `/new?key=<ROOM_CREATION_KEY>` once; the device remembers it). On a developer's computer anyone can make one.
 
@@ -124,7 +120,7 @@ npm run dev        # server on port 3001, web app on https://localhost:5173/?inv
 npm test           # server tests
 ```
 
-Development uses built-in defaults: invite key `0000` and a development-only signing key, with the database and uploads stored in the repository directory. For calls on your own computer, install LiveKit (`brew install livekit`), run `livekit-server --dev`, and start the app with `LIVEKIT_URL=ws://127.0.0.1:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret npm run dev`. The tests start a real server on a temporary database and stand in for LiveKit with a small local fake, so they need no LiveKit at all.
+Development uses built-in defaults: invite key `0000` and a development-only signing key, with the database stored in the repository directory. For calls on your own computer, install LiveKit (`brew install livekit`), run `livekit-server --dev`, and start the app with `LIVEKIT_URL=ws://127.0.0.1:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret npm run dev`. The tests start a real server on a temporary database and stand in for LiveKit with a small local fake, so they need no LiveKit at all.
 
 **Trying it on an Android phone.** Connect the phone with wireless debugging (Developer options → Wireless debugging; pair it once with `adb pair`, then `adb connect <address shown on the phone>`), and keep it on the same Wi-Fi as this computer. `npm run dev:phone` then starts LiveKit, the server and the web app over plain http, and points the phone's `localhost` at this computer. Build the test app with `cd mobile && HANGOUT_URL="http://localhost:5173/?invite=0000" npm run build:android`, install it with `adb install -r android/app/build/outputs/apk/debug/app-debug.apk`, and open `http://localhost:5173/?invite=0000` in this computer's browser to call the phone.
 

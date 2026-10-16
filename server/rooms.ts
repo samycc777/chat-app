@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { v4 as uuid } from 'uuid';
 import db from './database';
 import { inviteKey, inviteKeyMatches, normalizeCode, production, serverName } from './config';
-import { createChannel, HOME_ROOM } from './channels';
+import { createVoiceChannel, HOME_ROOM } from './channels';
 import { cleanDisplayName } from './auth';
 import { createLimiter } from './rateLimit';
 
@@ -50,7 +50,7 @@ export function createRoom(name: string): Room {
   db.transaction(() => {
     db.prepare('INSERT INTO rooms (id, name, invite_key, created_at) VALUES (?, ?, ?, ?)').run(room.id, room.name, room.key, Date.now());
     // Named after the room, so a notification of its call says whose call it is.
-    createChannel(name.slice(0, 40), 'voice', room.id);
+    createVoiceChannel(name.slice(0, 40), room.id);
   })();
   return room;
 }

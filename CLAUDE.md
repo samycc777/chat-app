@@ -1,7 +1,7 @@
 # Majlis (Hangout)
 
 A Zoom-like call app with many rooms, one per customer; the first step to selling it as a call app for anyone (plan: rooms, then neutral name and English-first look, then Stripe payment, then a website). The friends' room is the **home room**, free forever; other customers will pay. In each room anyone can talk, show their camera, share their screen and chat. Three screens: your name (remembered), the lobby (who is in the call, microphone and camera switches), the call.
-- The app shows only the call: no channels, text chat, search, pins, settings or recording. The server still holds that old code and messages, unused.
+- The app shows only the call: no channels, text chat, search, pins, settings or recording. The server code for them is gone too, and the database migration (v2) deletes the old messages and their files.
 - It replaced the Arabic class app at the class's own address (the teacher shares his Android tablet's screen in lessons).
 - People see it as **Majlis** (Android package `com.samycc777.majlis`); code and docs still say Hangout.
 - The README describes every feature from the friends' point of view; read it before changing behaviour.

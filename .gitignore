@@ -3,6 +3,7 @@ dist/
 chat.db
 chat.db-shm
 chat.db-wal
+backups/
 uploads/*
 !uploads/.gitkeep
 .env

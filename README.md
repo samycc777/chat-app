@@ -76,7 +76,9 @@ In production the server refuses to start if a required variable is missing or t
 3. Set the variables above as service variables, including a public domain in `ALLOWED_ORIGINS`.
 4. For calls, create a LiveKit Cloud project and copy its URL, API key and API secret into the `LIVEKIT_*` variables. Leave LiveKit's own recording (egress) off: calls are recorded in the browser of whoever presses Record.
 
-The app keeps its database and uploads on the one volume, so it must run as a single instance. Who is online and who is in each call are held in memory, so a restart disconnects every call; everyone rejoins by tapping the voice channel again. Back up the volume if the chat history matters to you.
+The app keeps its database and uploads on the one volume, so it must run as a single instance. Who is online and who is in each call are held in memory, so a restart disconnects every call; everyone rejoins by tapping the voice channel again.
+
+The server copies its database into `backups/` inside `DATA_DIR` every time it starts and once a day, keeping the newest seven. Before it changes the database's layout (after an update), it makes one more copy ending in `-before-v<number>.db`, which it never deletes. To go back, stop the server and put a copy in place of `chat.db`.
 
 Recordings are kept on the same volume as the other files, and they are the largest: an hour of lesson is roughly 150 to 250 MB, so a 5 GB volume holds about 20 hours. Give the volume room for the recordings you want to keep, and delete old recording messages when it fills up; deleting the message frees its space.
 

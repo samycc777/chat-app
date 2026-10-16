@@ -1107,6 +1107,43 @@ test("the class app's chat becomes #general with its messages when Hangout first
   }
 });
 
+test('the database is copied before its schema changes and at every start, keeping a week of routine copies', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hangout-backups-'));
+  try {
+    const requireFromRoot = createRequire(path.join(root, 'package.json'));
+    const Database = requireFromRoot('better-sqlite3');
+    // A database from before the schema steps were numbered.
+    const old = new Database(path.join(dataDir, 'chat.db'));
+    old.exec("CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO app_settings VALUES ('kept', 'yes');");
+    old.close();
+    const script = `const loaded = (await import('./server/database.ts')).default; const db = loaded.default ?? loaded;
+      console.log(JSON.stringify({ version: db.pragma('user_version', { simple: true }) }));`;
+    const run = () => {
+      const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+        cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'test', DATA_DIR: dataDir },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout.trim().split('\n').pop());
+    };
+    const backups = () => fs.readdirSync(path.join(dataDir, 'backups')).sort();
+    const { version } = run();
+    assert.ok(version >= 1);
+    const [beforeChange] = backups();
+    assert.match(beforeChange, new RegExp(`-before-v${version}\\.db$`));
+    // The copy is a working database holding what was there before.
+    const copy = new Database(path.join(dataDir, 'backups', beforeChange), { readonly: true });
+    assert.equal(copy.prepare("SELECT value FROM app_settings WHERE key = 'kept'").get().value, 'yes');
+    assert.equal(copy.pragma('user_version', { simple: true }), 0);
+    copy.close();
+    for (let start = 0; start < 9; start++) assert.equal(run().version, version);
+    const after = backups();
+    assert.equal(after.filter(name => name.endsWith('-startup.db')).length, 7);
+    assert.ok(after.includes(beforeChange));
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('production needs a long invite key', () => {
   const loadConfig = env => spawnSync(process.execPath, ['--import', 'tsx', '--eval', "require('./server/config.ts')"], {
     cwd: root, encoding: 'utf8', env: { ...process.env, NODE_ENV: 'production', DATA_DIR: tempDir, ...env },

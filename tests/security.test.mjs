@@ -620,6 +620,23 @@ test('the plain address joins like the invite link only when joining is open', a
   assert.equal((await info()).invite, undefined);
 });
 
+test('pages may run only their own code and talk only to this server and the call server', async () => {
+  const response = await fetch(`${baseUrl}/`);
+  assert.equal(response.headers.get('x-powered-by'), null);
+  const policy = Object.fromEntries(response.headers.get('content-security-policy').split('; ').map(rule => {
+    const [name, ...sources] = rule.split(' ');
+    return [name, sources];
+  }));
+  assert.deepEqual(policy['frame-ancestors'], ["'none'"]);
+  assert.deepEqual(policy['object-src'], ["'none'"]);
+  assert.ok(!policy['script-src'].includes("'unsafe-inline'") && !policy['script-src'].includes("'unsafe-eval'"));
+  assert.ok(policy['script-src'].every(source => ["'self'", "'wasm-unsafe-eval'"].includes(source) || /^'sha256-[\w+/]+=*'$/.test(source)));
+  const callServer = new URL(process.env.LIVEKIT_URL);
+  assert.ok(policy['connect-src'].includes(`ws://${callServer.host}`));
+  assert.ok(policy['connect-src'].includes(`ws://${new URL(baseUrl).host}`));
+  assert.ok(policy['media-src'].includes('mediastream:'));
+});
+
 const createRoom = body => fetch(`${baseUrl}/api/rooms`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
@@ -1211,15 +1228,20 @@ test('the Android and iPhone apps are notified through Firebase and Apple once t
 });
 
 // Runs last because it deliberately locks this test client's address out of joining.
-test('repeated wrong invite keys lock the address out briefly, even for the right code', async () => {
+test("wrong invite keys on the join screen's name or the home-screen manifest count with joining's, and lock the address out of all three", async () => {
   // Earlier tests already spent some of this minute's wrong attempts.
   const statuses = [];
-  for (let attempt = 0; attempt < 10 && statuses.at(-1) !== 429; attempt++) {
-    statuses.push((await joinRequest({ inviteKey: `wrong-${attempt}`, visitorId: nextVisitorId(), displayName: 'Guesser' })).status);
+  for (let attempt = 0; attempt < 12 && statuses.at(-1) !== 429; attempt++) {
+    const where = attempt % 2 ? `/api/server?invite=wrong-${attempt}` : `/manifest.webmanifest?invite=wrong-${attempt}`;
+    statuses.push((await fetch(`${baseUrl}${where}`)).status);
   }
   assert.equal(statuses.at(-1), 429);
-  assert.ok(statuses.slice(0, -1).every(status => status === 401));
+  assert.ok(statuses.slice(0, -1).every(status => status === 200));
   const lockedOut = await joinRequest({ inviteKey: '0000', visitorId: nextVisitorId(), displayName: 'Guesser' });
   assert.equal(lockedOut.status, 429);
   assert.ok(Number(lockedOut.headers.get('retry-after')) > 0);
+  assert.equal((await fetch(`${baseUrl}/api/server?invite=0000`)).status, 429);
+  assert.equal((await fetch(`${baseUrl}/manifest.webmanifest?invite=0000`)).status, 429);
+  // Without a key there is nothing to guess, so the join screen still opens.
+  assert.equal((await fetch(`${baseUrl}/api/server`)).status, 200);
 });

@@ -372,7 +372,11 @@ pushRouter.post('/subscribe', rateLimit<AuthRequest>(30, 60_000, req => req.user
   }
   const userId = req.userId!;
   db.transaction(() => {
-    // A device that someone else used before moves to whoever is signed in on it now.
+    // A device that someone else used before moves to whoever is signed in on it now (a shared
+    // tablet, or a phone handed on). Only that device knows its address: browsers make a long secret
+    // one, and Google and Apple give the app a secret token. Someone who did get hold of another
+    // device's address could only stop it getting call notices, since a browser drops a notice
+    // encrypted with keys other than its own, so taking the device over is kept simple.
     db.prepare(`
       INSERT INTO push_subscriptions (id, user_id, kind, endpoint, keys, created_at) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, kind = excluded.kind, keys = excluded.keys, created_at = excluded.created_at

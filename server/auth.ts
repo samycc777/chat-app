@@ -5,7 +5,7 @@ import { v4 as uuid } from 'uuid';
 import db from './database';
 import { production } from './config';
 import { HOME_ROOM } from './channels';
-import { addRoomMember, getRoom, roomForKey } from './rooms';
+import { addRoomMember, getRoom, Room, roomForKey } from './rooms';
 import { createLimiter } from './rateLimit';
 import { avatarUrl } from './avatars';
 
@@ -17,6 +17,20 @@ const AVATAR_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#
 // Wrong keys lock an address out only briefly, so friends sharing one network recover quickly from
 // a mangled link, while the hourly cap keeps guessing a key impractically slow.
 const failedJoinLimits = [createLimiter(10, 60_000), createLimiter(100, 60 * 60_000)];
+
+/**
+ * The room an invite key opens. Every place that tells a right key from a wrong one (joining, the
+ * join screen's room name, the home-screen manifest) counts wrong keys against the address together,
+ * so none of them can be used to guess a key faster than joining can. While the address is locked
+ * out, no key is checked and the answer says when to try again.
+ */
+export function checkInvite(ip: string, entered: string): { room?: Room; retryAfterSeconds?: number } {
+  const lockout = failedJoinLimits.map(limit => limit.exhausted(ip)).find(result => result.exhausted);
+  if (lockout) return { retryAfterSeconds: lockout.retryAfterSeconds };
+  const room = roomForKey(entered);
+  if (!room) for (const limit of failedJoinLimits) limit.hit(ip);
+  return { room };
+}
 
 export interface Session { userId: string; roomId: string; sessionId?: string; }
 export interface AuthRequest extends Request { userId?: string; roomId?: string; sessionId?: string; }
@@ -104,16 +118,12 @@ const router = Router();
 router.post('/join', (req: Request, res: Response) => {
   const body = req.body ?? {};
   const ip = req.ip || 'unknown';
-  const lockout = failedJoinLimits.map(limit => limit.exhausted(ip)).find(result => result.exhausted);
-  if (lockout) {
-    res.setHeader('Retry-After', lockout.retryAfterSeconds);
+  const { room, retryAfterSeconds } = checkInvite(ip, typeof body.inviteKey === 'string' ? body.inviteKey : '');
+  if (retryAfterSeconds) {
+    res.setHeader('Retry-After', retryAfterSeconds);
     res.status(429).json({ error: 'Too many attempts' }); return;
   }
-  const room = roomForKey(typeof body.inviteKey === 'string' ? body.inviteKey : '');
-  if (!room) {
-    for (const limit of failedJoinLimits) limit.hit(ip);
-    res.status(401).json({ error: 'Invalid invite link' }); return;
-  }
+  if (!room) { res.status(401).json({ error: 'Invalid invite link' }); return; }
   const visitorId = typeof body.visitorId === 'string' ? body.visitorId : '';
   const displayName = cleanDisplayName(body.displayName);
   if (!/^[0-9a-f-]{36}$/i.test(visitorId)) { res.status(400).json({ error: 'Invalid visitor identity' }); return; }

@@ -3,7 +3,9 @@ import { loadRnnoise, RnnoiseWorkletNode } from '@sapphi-red/web-noise-suppresso
 import rnnoiseWorkletUrl from '@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url';
 import rnnoiseWasmUrl from '@sapphi-red/web-noise-suppressor/rnnoise.wasm?url';
 import rnnoiseSimdWasmUrl from '@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url';
-import levelVoiceWorkletUrl from './levelVoiceWorklet.js?url';
+// Kept as a file of its own even though it is small: the server's Content-Security-Policy (see
+// server/index.ts) lets scripts come only from the site, not from data: addresses.
+import levelVoiceWorkletUrl from './levelVoiceWorklet.js?url&no-inline';
 
 // Every voice is cleaned before it is sent, so everyone in the call hears it the same way, whatever
 // they listen on. Zoom does much the same, and the old teacher app did it for the teacher alone.

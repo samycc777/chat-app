@@ -15,6 +15,7 @@ import { roomsRouter } from './rooms';
 import { roomAdminRouter } from './roomAdmin';
 import { rateLimit } from './rateLimit';
 import { serveAvatar } from './avatars';
+import db, { closeDatabase } from './database';
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || (production ? '' : 'http://localhost:5173,https://localhost:5173'))
   .split(',').map(origin => origin.trim()).filter(Boolean);
@@ -86,7 +87,16 @@ app.use((req, res, next) => {
 // Friends often join on mobile data; compressing the app's code and data cuts what they download.
 app.use(compression());
 app.use(express.json({ limit: '64kb' }));
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
+// Railway checks this before sending people to a new version; it is healthy only if the database answers.
+app.get('/api/health', (_req, res) => {
+  try {
+    db.prepare('SELECT 1').get();
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Health check: the database did not answer:', error);
+    res.status(503).json({ ok: false });
+  }
+});
 // The room's name is shown on the join screen, before anyone has joined: the room of the invite
 // the page has, or else the home room. When joining is open, the home room's key comes along, so
 // the plain address joins exactly as the invite link does. It checks invites, so it is limited
@@ -171,11 +181,40 @@ app.get('/{*path}', (_req, res) => {
   res.sendFile(path.join(clientDist, 'index.html'));
 });
 
-setupSocket(server, allowedOrigins);
+const io = setupSocket(server, allowedOrigins);
 
 if (require.main === module) {
   const PORT = process.env.PORT || 3001;
   server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+  // A deploy stops the old server with SIGTERM. Closing in order tells every app it was
+  // disconnected (so it reconnects to the new server at once), lets requests under way finish, and
+  // leaves the database file complete. If something hangs, the server stops anyway after 10 s, as
+  // the platform would soon force it to.
+  let stopping = false;
+  const stop = (signal: string) => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`${signal}: shutting down`);
+    setTimeout(() => { console.error('Shutting down took too long; stopping now'); process.exit(1); }, 10_000).unref();
+    // Closing Socket.IO also stops the HTTP server from taking new connections.
+    io.close(() => {
+      try { closeDatabase(); } catch (error) { console.error('Closing the database failed:', error); process.exit(1); }
+      console.log('Shut down cleanly');
+      process.exit(0);
+    });
+    server.closeIdleConnections();
+  };
+  process.on('SIGTERM', () => stop('SIGTERM'));
+  process.on('SIGINT', () => stop('SIGINT'));
+  // A promise nobody waited for (a notification, a LiveKit request) must not end everyone's calls,
+  // so it is only logged. A thrown error nobody caught leaves the server in an unknown state, so it
+  // stops and the platform starts it again.
+  process.on('unhandledRejection', reason => console.error('Unhandled promise rejection:', reason));
+  process.on('uncaughtException', error => {
+    console.error('Uncaught exception, stopping:', error);
+    process.exit(1);
+  });
 }
 
 export { app, server };

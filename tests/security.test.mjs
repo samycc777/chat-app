@@ -1,6 +1,6 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -1224,6 +1224,30 @@ test('the Android and iPhone apps are notified through Firebase and Apple once t
   } finally {
     for (const [key, value] of Object.entries(saved)) value === undefined ? delete process.env[key] : process.env[key] = value;
     await Promise.all([googleServer, appleServer].map(server => new Promise(resolve => server.close(resolve))));
+  }
+});
+
+test('the health check asks the database, and a stopped server closes cleanly with a complete database file', async () => {
+  assert.deepEqual(await (await fetch(`${baseUrl}/api/health`)).json(), { ok: true });
+
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hangout-stop-'));
+  try {
+    const child = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
+      cwd: root, env: { ...process.env, NODE_ENV: 'test', DATA_DIR: dataDir, PORT: '0' }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout.on('data', chunk => { output += chunk; });
+    child.stderr.on('data', chunk => { output += chunk; });
+    const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
+    assert.ok(await eventually(() => output.includes('Server running'), 20_000), output);
+    child.kill('SIGTERM');
+    assert.equal(await exited, 0, output);
+    assert.match(output, /Shut down cleanly/);
+    // Everything was written into the database file itself.
+    const wal = path.join(dataDir, 'chat.db-wal');
+    assert.ok(!fs.existsSync(wal) || fs.statSync(wal).size === 0);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
 

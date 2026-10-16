@@ -221,4 +221,12 @@ const dailyBackups = setInterval(() => {
 // The timer alone must not keep the process (or a test run) alive.
 dailyBackups.unref();
 
+// On shutdown, everything still in the write-ahead log goes into the database file itself, so the
+// file is complete on its own (for a copy, or a new server version opening it).
+export function closeDatabase() {
+  clearInterval(dailyBackups);
+  db.pragma('wal_checkpoint(TRUNCATE)');
+  db.close();
+}
+
 export default db;

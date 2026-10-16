@@ -158,7 +158,7 @@ app.get('/manifest.webmanifest', rateLimit(300, 15 * 60_000), (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({
     name, short_name: name, start_url: startUrl, scope: '/', display: 'standalone',
-    background_color: '#313338', theme_color: '#1e1f22',
+    background_color: '#05060c', theme_color: '#05060c',
     icons: [
       { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
       { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },

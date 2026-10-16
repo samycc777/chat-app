@@ -156,6 +156,20 @@ function leftCall() {
 function backToName() {
   // The session ends on the server too; offline, it simply runs out later.
   if (session.token) api.signOut().catch(() => {});
+  forgetSession();
+}
+// Deleting one's data also forgets this device's identity and name, so the next join starts as a
+// new person. The invite key stays, so coming back needs nothing but typing a name.
+async function deleteMyData() {
+  callError.value = '';
+  try { await api.deleteMyData(); } catch (error) {
+    callError.value = translateError(error instanceof Error ? error.message : String(error));
+    return;
+  }
+  try { for (const key of ['visitorId', 'displayName', 'handoff']) localStorage.removeItem(key); } catch { /* Private browsing keeps nothing anyway. */ }
+  forgetSession();
+}
+function forgetSession() {
   disconnectSocket(); session.token = null;
   currentUser.value = null; inCall.value = null; joining.value = false; channels.value = []; calls.value = [];
   onlineUsers.value = new Map(); connection.value = 'connecting'; callError.value = '';
@@ -192,6 +206,7 @@ function backToName() {
         :can-join="connection === 'connected' && Boolean(voiceChannel)"
         @join="joinCall"
         @change-name="backToName"
+        @delete-data="deleteMyData"
         @picture="url => { if (currentUser) currentUser.avatarUrl = url; }"
       />
     </main>

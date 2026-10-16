@@ -159,6 +159,23 @@ const migrations: (() => void)[] = [
     db.exec("DELETE FROM channels WHERE kind = 'text'");
     db.exec("DELETE FROM app_settings WHERE key = 'reads_started'");
   },
+
+  // Every session is a row, so signing out ends it on the server too, rather than only forgetting
+  // it on the device (see auth.ts). Sessions opened before this step have no row and stay valid
+  // until their month is up.
+  function addSessions() {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        room_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_sessions_room ON sessions(room_id);
+    `);
+  },
 ];
 
 const version = db.pragma('user_version', { simple: true }) as number;

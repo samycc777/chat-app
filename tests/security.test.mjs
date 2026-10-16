@@ -502,6 +502,65 @@ test('changing the invite key signs out everyone who does not have the new link'
   }
 });
 
+test('signing out ends that session on the server, on every connection it has, and only that one', async () => {
+  const visitorId = nextVisitorId();
+  const phone = await (await joinRequest({ inviteKey: '0000', visitorId, displayName: 'Signs out' })).json();
+  const tablet = await (await joinRequest({ inviteKey: '0000', visitorId })).json();
+  assert.equal(tablet.user.id, phone.user.id);
+  const me = token => fetch(`${baseUrl}/api/me`, { headers: auth(token) });
+  const signOut = token => fetch(`${baseUrl}/api/auth/sign-out`, { method: 'POST', headers: auth(token) });
+  const [phoneSocket, tabletSocket] = await Promise.all([connect(phone.token), connect(tablet.token)]);
+  const call = newCall('Sign-out call');
+  await emitWithAck(phoneSocket, 'voice_join', { channelId: call });
+
+  assert.equal((await signOut('')).status, 401);
+  const dropped = nextEvent(phoneSocket, 'disconnect');
+  assert.equal((await signOut(phone.token)).status, 200);
+  await dropped;
+  // The call it was in lets it go on LiveKit's side too.
+  assert.ok(await eventually(() => liveKitCalls('RemoveParticipant').some(entry => entry.data.identity === phone.user.id && entry.data.room === `voice-${call}`)));
+  assert.equal((await me(phone.token)).status, 401);
+  await assert.rejects(connect(phone.token));
+  assert.equal((await signOut(phone.token)).status, 401);
+  // The same person's other device stays signed in.
+  assert.equal((await me(tablet.token)).status, 200);
+  assert.equal(tabletSocket.connected, true);
+});
+
+test("deleting one's data removes the person, their picture, devices, rooms and sessions everywhere, and takes them out of calls", async () => {
+  const room = await (await createRoom({ name: 'Forgetful' })).json();
+  const visitorId = nextVisitorId();
+  const atHome = await (await joinRequest({ inviteKey: '0000', visitorId, displayName: 'Leaving for good' })).json();
+  const inRoom = await (await joinRequest({ inviteKey: room.invite, visitorId })).json();
+  const userId = atHome.user.id;
+  const friend = await join('Watches them go');
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(2000, 7)]);
+  const photo = await fetch(`${baseUrl}/api/me/avatar`, { method: 'PUT', headers: { ...auth(atHome.token), 'Content-Type': 'image/jpeg' }, body: jpeg });
+  const { avatarUrl } = await photo.json();
+  assert.equal((await subscribe(atHome.token, browserSubscription('deleted-person'))).status, 200);
+  const [homeSocket, roomSocket, friendSocket] = await Promise.all([atHome, inRoom, friend].map(person => connect(person.token)));
+  const call = newCall('Goodbye call');
+  await emitWithAck(homeSocket, 'voice_join', { channelId: call });
+  await emitWithAck(friendSocket, 'voice_join', { channelId: call });
+
+  assert.equal((await fetch(`${baseUrl}/api/me`, { method: 'DELETE' })).status, 401);
+  const friendSeesThemLeave = eventWhere(friendSocket, 'voice_state', state => !membersIn(state, call).includes('Leaving for good'));
+  const friendSeesThemOffline = eventWhere(friendSocket, 'presence', data => data.userId === userId && !data.online);
+  const bothDropped = Promise.all([nextEvent(homeSocket, 'disconnect'), nextEvent(roomSocket, 'disconnect')]);
+  assert.equal((await fetch(`${baseUrl}/api/me`, { method: 'DELETE', headers: auth(atHome.token) })).status, 200);
+  await Promise.all([friendSeesThemLeave, friendSeesThemOffline, bothDropped]);
+  assert.ok(await eventually(() => liveKitCalls('RemoveParticipant').some(entry => entry.data.identity === userId && entry.data.room === `voice-${call}`)));
+
+  const count = (table, column = 'user_id') => db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`).get(userId).n;
+  assert.deepEqual(['users', 'avatars', 'push_subscriptions', 'room_members', 'sessions'].map(table => count(table, table === 'users' ? 'id' : 'user_id')), [0, 0, 0, 0, 0]);
+  assert.equal((await fetch(`${baseUrl}${avatarUrl}`)).status, 404);
+  for (const token of [atHome.token, inRoom.token]) assert.equal((await fetch(`${baseUrl}/api/me`, { headers: auth(token) })).status, 401);
+  // The same device joining again starts as a new person.
+  const again = await (await joinRequest({ inviteKey: '0000', visitorId, displayName: 'Back again' })).json();
+  assert.notEqual(again.user.id, userId);
+  await leaveCall(call, friendSocket);
+});
+
 test('the plain address joins like the invite link only when joining is open', async () => {
   const info = async () => (await fetch(`${baseUrl}/api/server`)).json();
   assert.equal((await info()).invite, undefined);

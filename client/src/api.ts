@@ -54,6 +54,11 @@ export const api = {
     request('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteKey, visitorId, displayName }) }),
 
   getMe: () => request('/api/me'),
+  // Ends this session on the server, so a copy of its token stops working too.
+  signOut: (): Promise<{ ok: true }> => request('/api/auth/sign-out', { method: 'POST' }),
+  // Deletes everything the server keeps about this person, on every device. Nothing in the app
+  // offers it yet; it is here for the day a "Delete my data" button is added.
+  deleteMyData: (): Promise<{ ok: true }> => request('/api/me', { method: 'DELETE' }),
   setAvatar: (picture: Blob): Promise<{ avatarUrl: string }> => request('/api/me/avatar', { method: 'PUT', body: picture }),
   removeAvatar: (): Promise<{ avatarUrl: null }> => request('/api/me/avatar', { method: 'DELETE' }),
 };

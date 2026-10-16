@@ -3,7 +3,8 @@ import http from 'http';
 import compression from 'compression';
 import cors from 'cors';
 import path from 'path';
-import authRouter, { cleanDisplayName } from './auth';
+import authRouter, { authMiddleware, cleanDisplayName } from './auth';
+import { signOut } from './account';
 import apiRouter from './routes';
 import { setupSocket } from './socket';
 import { inviteKey, openJoin, serverName, production } from './config';
@@ -48,6 +49,7 @@ app.get('/api/server', rateLimit(300, 15 * 60_000), (req, res) => {
 // Several friends may share one network address, so these per-address limits are generous;
 // signed-in requests are also limited per person in the API router.
 app.use('/api/auth', rateLimit(300, 15 * 60_000), authRouter);
+app.post('/api/auth/sign-out', authMiddleware, signOut);
 app.use('/api/rooms', rateLimit(60, 15 * 60_000), roomsRouter);
 // Pictures are shown by images, which cannot send the session header (see avatars.ts), so this
 // comes before the API's session check.

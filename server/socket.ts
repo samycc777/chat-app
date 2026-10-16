@@ -95,6 +95,33 @@ export async function sweepDroppedScreens(now = Date.now()) {
 }
 setInterval(() => void sweepDroppedScreens(), 15_000).unref();
 
+interface ConnectionSession { userId: string; roomId: string; sessionId?: string }
+let liveIo: Server | null = null;
+
+// Closes the connections of sessions that have just ended (signing out, deleting one's data, a
+// room's key changing or the room being deleted). A connection is checked only when it opens, so
+// without this an ended session would stay connected. Its calls end for it on LiveKit's side too:
+// the app of a session that has ended may never hang up by itself.
+export function endConnections(match: (session: ConnectionSession) => boolean, why: string) {
+  if (!liveIo) return;
+  for (const socket of liveIo.sockets.sockets.values()) {
+    if (!match(socket.data as ConnectionSession)) continue;
+    socket.data.endedBecause = why;
+    socket.disconnect(true);
+  }
+}
+
+// Someone whose data is deleted leaves every call at once, including a call their app still has
+// sound and a shared screen in after its connection to this server dropped.
+export function removeFromAllCalls(userId: string) {
+  for (const [key, dropped] of droppedScreens) {
+    if (dropped.userId !== userId) continue;
+    droppedScreens.delete(key);
+    endPhoneScreen(userId, dropped.call, 'their data was deleted');
+  }
+  for (const call of allCalls()) void removeFromLiveKit(call.roomName, userId, 'their data was deleted');
+}
+
 export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = []) {
   const io = new Server(httpServer, {
     cors: {
@@ -114,6 +141,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     if (!session) return next(new Error('Invalid session'));
     socket.data.userId = session.userId;
     socket.data.roomId = session.roomId;
+    socket.data.sessionId = session.sessionId;
     next();
   });
 
@@ -188,7 +216,11 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
       // The connection that joined a call carries it; if it drops, the app joins again when it
       // reconnects, so nobody is shown sitting in a call they have left.
       const call = callOf(userId, roomId);
-      if (call?.members.get(userId) === socket.id) leaveCall(userId, roomId, true);
+      if (call?.members.get(userId) === socket.id) {
+        const endedBecause = socket.data.endedBecause as string | undefined;
+        leaveCall(userId, roomId, !endedBecause);
+        if (endedBecause) void removeFromLiveKit(call.roomName, userId, endedBecause);
+      }
       const sockets = onlineUsers.get(userId);
       if (!sockets) return;
       sockets.delete(socket.id);
@@ -273,5 +305,6 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
     }
   });
 
+  liveIo = io;
   return io;
 }

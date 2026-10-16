@@ -8,6 +8,7 @@ import { liveKitConfig } from './livekit';
 import { rateLimit } from './rateLimit';
 import { pushRouter } from './push';
 import { avatarRouter, avatarUrl } from './avatars';
+import { deleteMyData } from './account';
 
 const router = Router();
 router.use(authMiddleware);
@@ -80,6 +81,8 @@ router.post('/livekit/screen-token', async (req: AuthRequest, res: Response) => 
   res.setHeader('Cache-Control', 'no-store');
   res.json({ url: config.url, token: await token.toJwt() });
 });
+
+router.delete('/me', deleteMyData);
 
 router.get('/me', (req: AuthRequest, res: Response) => {
   const user = db.prepare(

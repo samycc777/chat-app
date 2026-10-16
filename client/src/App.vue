@@ -154,6 +154,8 @@ function leftCall() {
   clearCallChat();
 }
 function backToName() {
+  // The session ends on the server too; offline, it simply runs out later.
+  if (session.token) api.signOut().catch(() => {});
   disconnectSocket(); session.token = null;
   currentUser.value = null; inCall.value = null; joining.value = false; channels.value = []; calls.value = [];
   onlineUsers.value = new Map(); connection.value = 'connecting'; callError.value = '';

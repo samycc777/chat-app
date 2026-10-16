@@ -101,7 +101,7 @@ The server turns each route on by itself once its variables are set; redeploy (o
 
 ### Privacy
 
-Call audio and video pass through our LiveKit server, encrypted in transit; LiveKit's end-to-end encryption is turned off. Nothing from a call is stored: there is no recording, and the call chat is held in memory only until the last person leaves. The server keeps each person's name, profile picture and the rooms they joined. For notifications, the server keeps each device's notification address (from the browser, Google or Apple) until the person signs out or the service says it is no longer valid; a notification's text passes through the browser's push service (encrypted), or through Google's or Apple's service for the phone apps.
+Call audio and video pass through our LiveKit server, encrypted in transit; LiveKit's end-to-end encryption is turned off. Nothing from a call is stored: there is no recording, and the call chat is held in memory only until the last person leaves. The server keeps each person's name, profile picture, the rooms they joined and their sessions (one per device, for a month). Going back to the name screen ends that device's session on the server too. `DELETE /api/me` deletes everything the server keeps about the person asking, on every device; the app has no button for it yet. For notifications, the server keeps each device's notification address (from the browser, Google or Apple) until the person signs out or the service says it is no longer valid; a notification's text passes through the browser's push service (encrypted), or through Google's or Apple's service for the phone apps.
 
 ## Rooms
 

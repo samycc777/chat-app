@@ -49,3 +49,13 @@ local.properties
 
 # Preview videos made for checking a change; not part of the app.
 previews/
+
+# Videos and recordings dropped into the folder (for example from WhatsApp) are
+# personal and large; they never belong in the repository.
+*.mp4
+*.mov
+*.webm
+
+# Helper tools' scratch folders on this computer.
+.opencode/
+.show-your-work/

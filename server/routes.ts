@@ -28,7 +28,10 @@ router.post('/livekit/token', async (req: AuthRequest, res: Response) => {
   const token = new AccessToken(config.apiKey, config.apiSecret, {
     identity: req.userId!,
     name: user?.display_name || 'Friend',
-    ttl: '6h',
+    // A pass is only needed to get into the call. Once in, LiveKit hands the app a fresh one every
+    // few minutes (livekit-client handles it), and the call screen asks for a new one whenever it
+    // rejoins, so a short life costs nothing and a pass that leaks is soon useless.
+    ttl: '15m',
   });
   // Everyone is equal in a call: anyone can talk, show their camera and share their screen.
   token.addGrant({
@@ -60,6 +63,9 @@ router.post('/livekit/screen-token', async (req: AuthRequest, res: Response) => 
   const token = new AccessToken(config.apiKey, config.apiSecret, {
     identity: screenIdentity(req.userId!),
     name: user?.display_name || 'Friend',
+    // The Android app's screen sharing cannot ask this server for a new pass by itself, so after the
+    // tablet's internet drops, sometimes for a long while in a lesson, it reconnects with the pass it
+    // already holds.
     ttl: '6h',
   });
   token.addGrant({

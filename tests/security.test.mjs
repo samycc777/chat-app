@@ -279,8 +279,11 @@ test('joining a voice channel shows everyone who is in it, and anyone in it can 
   const credentials = await media.json();
   assert.equal(credentials.url, process.env.LIVEKIT_URL);
   assert.equal(credentials.roomName, `voice-${voice}`);
-  const grant = jwt.decode(credentials.token).video;
+  const claims = jwt.decode(credentials.token);
+  const grant = claims.video;
   assert.equal(grant.room, credentials.roomName);
+  // The pass only lets them in; LiveKit renews it during the call.
+  assert.equal(claims.exp - claims.nbf, 15 * 60);
   assert.deepEqual(grant.canPublishSources.sort(), ['camera', 'microphone', 'screen_share', 'screen_share_audio']);
 
   // A second person meets the first in the same room, with the same powers.
@@ -294,14 +297,20 @@ test('joining a voice channel shows everyone who is in it, and anyone in it can 
   erinSocket.emit('raise_hand', { channelId: voice, raised: true });
   assert.deepEqual((await handSeen).calls.find(listed => listed.channelId === voice).hands.map(hand => hand.displayName), ['Erin']);
 
-  // Leaving, or losing the connection, takes a person out of the channel.
+  // Leaving, or losing the connection, takes a person out of the channel. Leaving also takes them
+  // out of LiveKit, so nobody stays in the call's sound after it stops showing them; losing the
+  // connection does not, because a tablet teaching from the background loses it for minutes.
+  const removedFromCall = id => liveKitCalls('RemoveParticipant').filter(call => call.data.identity === id && call.data.room === `voice-${voice}`).length;
   const afterLeave = eventWhere(erinSocket, 'voice_state', state => !membersIn(state, voice).includes('Dan'));
   danSocket.emit('voice_leave');
   assert.deepEqual(membersIn(await afterLeave, voice), ['Erin']);
+  assert.ok(await eventually(() => removedFromCall(dan.user.id) === 1));
   assert.equal((await callToken(dan.token, voice)).status, 409);
   const afterDrop = eventWhere(danSocket, 'voice_state', state => !membersIn(state, voice).includes('Erin'));
   erinSocket.disconnect();
   assert.equal((await afterDrop).calls.some(listed => listed.channelId === voice), false);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(removedFromCall(erin.user.id), 0);
 });
 
 test('a phone shares its screen through a screen-only pass that ends when its owner leaves', async () => {

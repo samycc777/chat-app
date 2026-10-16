@@ -6,7 +6,7 @@ import { verifyToken } from './auth';
 import { getChannel, listChannels } from './channels';
 import { roomChannel } from './rooms';
 import { addToCall, allCalls, CallChatMessage, callOf, getCall, removeFromCall, screenIdentity, VoiceCall } from './voice';
-import { roomService } from './livekit';
+import { removeFromLiveKit, roomService } from './livekit';
 import { forgetSocket, notifyCallStarted, setAppActive } from './push';
 import { avatarUrl, onProfileChanged } from './avatars';
 
@@ -66,15 +66,16 @@ const droppedScreens = new Map<string, { userId: string; call: VoiceCall; since:
 const droppedKey = (roomId: string, userId: string) => `${roomId}\n${userId}`;
 function endPhoneScreen(userId: string, call: VoiceCall, why: string) {
   console.log(`Stopping the shared screen of ${userId} in ${call.roomName}: ${why}`);
-  roomService()?.removeParticipant(call.roomName, screenIdentity(userId)).catch(() => { /* It had already stopped sharing. */ });
+  void removeFromLiveKit(call.roomName, screenIdentity(userId), why);
 }
 async function stillInCall(userId: string, call: VoiceCall) {
   const service = roomService();
   if (!service) return false;
   try {
     return (await service.listParticipants(call.roomName)).some(participant => participant.identity === userId);
-  } catch {
+  } catch (error) {
     // LiveKit could not be asked; stopping a lesson's screen on a guess is worse than waiting.
+    console.error(`Could not ask LiveKit whether ${userId} is still in ${call.roomName}:`, error);
     return true;
   }
 }
@@ -144,6 +145,7 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
   function leaveCall(userId: string, roomId: string, dropped = false) {
     const call = takeOutOfCall(userId, roomId, dropped);
     if (call) broadcastVoice(call.roomId);
+    return call;
   }
 
   io.on('connection', (socket) => {
@@ -223,7 +225,14 @@ export function setupSocket(httpServer: HttpServer, allowedOrigins: string[] = [
         if (startsCall && (data as { rejoin?: unknown })?.rejoin !== true) notifyCallStarted(channel, roomId, userId);
       });
 
-      socket.on('voice_leave', () => leaveCall(userId, roomId));
+      // Leaving on purpose also ends their sound and video in LiveKit, so an app that keeps its
+      // connection open (or a copied pass) cannot go on listening once the call no longer shows them.
+      // A dropped connection does not: a tablet teaching from the background loses its connection
+      // to this server for minutes at a time while its sound and screen carry on (see droppedScreens).
+      socket.on('voice_leave', () => {
+        const call = leaveCall(userId, roomId);
+        if (call && !getCall(call.channelId)?.members.has(userId)) void removeFromLiveKit(call.roomName, userId, 'they left the call');
+      });
 
       // The call's chat, to everyone in the call or privately to one of them. Only people in the call
       // can write in it, and only to people who are in it too.

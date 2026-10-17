@@ -9,7 +9,10 @@ A Zoom-like call app with many rooms, one per customer; the first step to sellin
 ## Rules
 
 - What customers see (name, wording, look, website) must stay neutral: nothing tied to Islam or Arabic learning. Arabic stays one language among others.
-- Keep every flow simple (friends are not tech-savvy): people join by opening an invite link and typing their name, nothing else; no admin roles, no unneeded settings, plain wording.
+- Keep every flow simple (friends and the class's teacher are not tech-savvy): people join by opening an invite link and typing their name, nothing else; no unneeded settings, plain wording. Prefer short codes, fewest steps, defaults over settings. Security fixes must not add work for them; if a safeguard makes joining harder, keep it simple or ask first.
+- Everyone is equal: no teacher/admin powers (muting or removing others, deleting others' messages); don't add roles back.
+- One app, one address: Majlis replaces the class app on the class's existing Railway service and address; never propose a second service or address, even for trying. The teacher shares his screen from an Android tablet; students use Android, iPhone (website until TestFlight) or web, so screen sharing must work for everyone.
+- Only the user's own markaz (study centre) uses it free forever besides the home room; no public "free for Islamic teachers" plan; don't pitch it for religious or Arabic classes.
 - Never touch `chat.db*` or `uploads/` (local development data).
 
 ## Layout
@@ -41,4 +44,11 @@ npm run dev     # server on :3001, client on https://localhost:5173/?invite=0000
 - Comments explain why, not what, in full sentences.
 - Commit messages: short plain-English title from the friends' point of view ("Let anyone share their screen in a call"), then prose paragraphs on why and how.
 - Pushing main redeploys the live site on Railway immediately (`railway.json` watchPatterns): check nobody is in a call first. A server restart disconnects every call.
+- Android updates go through Google Play internal testing, never APK files. A change touching `mobile/` needs `versionCode` and `versionName` raised in `mobile/android/app/build.gradle` and a release (`npm run release:android`); website-only changes need no app update. Always say which of the two it was. Release notes go in both Arabic (`<ar>`) and English (`<en-US>`) blocks in Play Console format, ready to paste.
 - Railway stops reading `railway.json` on 2026-12-01. Don't apply `railway config migrate` as generated: it names the service `app-majlis` (the real one is `nurturing-dedication`), leaves out the `/data` volume (undeclared resources get deleted), and its format has no watchPatterns or restart policy.
+
+## Mistakes to avoid
+
+- Lessons are live on the production site: before publishing, check nobody is in a call. A restart cuts the teacher's voice and screen mid-lesson.
+- After each change, tell the user plainly whether the Android app needs an update or only the website changed.
+- Test call behaviour for background, minimised and rotated phones (sound stops, half-cut or landscape shared screens, black play button on return) and not only the desktop browser.

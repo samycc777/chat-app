@@ -50,8 +50,8 @@ Until September 2026 Majlis was a Discord-style server with text channels, voice
 | --- | --- | --- |
 | `NODE_ENV` | production | Set to `production` on the deployed server. |
 | `JWT_SECRET` | production | Random secret of at least 32 characters that signs sessions. |
-| `DATA_DIR` | production | Persistent directory for the SQLite database and its backups (a Railway Volume). |
-| `ALLOWED_ORIGINS` | production | Comma-separated exact origins allowed to use the site, such as `https://your-app.up.railway.app`. |
+| `DATA_DIR` | production | Persistent directory for the SQLite database and its backups (`/var/lib/majlis/data` on our server). |
+| `ALLOWED_ORIGINS` | production | Comma-separated exact origins allowed to use the site, such as `https://majlis.167-233-162-224.sslip.io`. |
 | `INVITE_KEY` | production | The secret inside the invite link, at least 12 characters. Nobody types it, so make it long and random. The invite link is `https://<your site>/?invite=<INVITE_KEY>`. |
 | `OPEN_JOIN` | no | Set to `1` to let the site's plain address work like the invite link, so anyone who opens it can join. Leave it unset to keep the invite link needed. To close the server again afterwards, unset it and change `INVITE_KEY`. |
 | `SERVER_NAME` | no | The home room's name, shown on the join screen, in the browser tab and under the home-screen icon. |
@@ -68,16 +68,13 @@ In production the server refuses to start if a required variable is missing or t
 
 **Changing the invite key** signs out everyone, and only people with the new link can come back. Do this if the link reaches someone it shouldn't: there are no admins who could remove a person.
 
-### Deploying on Railway
+### Deploying
 
-1. Create a Railway service from this repository. `railway.json` already sets the build (`npm run build`), the start command, and the `/api/health` health check. It also redeploys only when the website or server changes (`watchPatterns`), because a redeploy disconnects every call; changes in `mobile/` alone leave the site running.
-2. Add a Volume and set `DATA_DIR` to its mount path.
-3. Set the variables above as service variables, including a public domain in `ALLOWED_ORIGINS`.
-4. For calls, copy the call server's address, API key and API secret into the `LIVEKIT_*` variables. Calls run on our own LiveKit server on Hetzner; how it is set up and updated is in [docs/notes/call-server.md](docs/notes/call-server.md).
+The site runs on our own Hetzner machine, next to the call server; how it is set up is in [docs/notes/hosting.md](docs/notes/hosting.md), and the call server in [docs/notes/call-server.md](docs/notes/call-server.md).
 
-**Pushing `main` to GitHub redeploys the live site on Railway right away** whenever `server/`, `client/` or the build files change (`watchPatterns` in `railway.json`), and the restart **disconnects every call**. Deploy outside call times; changes only to `mobile/` or the docs leave the site running. Changing a Railway variable redeploys it too.
+**Pushing `main` to GitHub redeploys the live site within about two minutes** whenever `server/`, `client/` or the build files change, and the restart **disconnects every call**. Deploy outside call times; changes only to `mobile/` or the docs leave the site running. Changing a setting in `/etc/majlis/env` needs a restart too.
 
-The app keeps its database on the one volume, so it must run as a single instance. Who is online and who is in each call are held in memory, so a restart disconnects every call; everyone rejoins by tapping Join call again.
+The app keeps its database in one folder, so it must run as a single instance. Who is online and who is in each call are held in memory, so a restart disconnects every call; everyone rejoins by tapping Join call again.
 
 The server copies its database into `backups/` inside `DATA_DIR` every time it starts and once a day, keeping the newest seven. Before it changes the database's layout (after an update), it makes one more copy ending in `-before-v<number>.db`, which it never deletes. To go back: stop the service, copy the backup you want over `chat.db` in `DATA_DIR` (and delete `chat.db-wal` and `chat.db-shm` next to it if they exist), then start the service again. Anything people did after that backup is lost, so do this outside call times.
 
@@ -90,14 +87,14 @@ Browsers get notifications straight away. The phone apps need two one-time setup
 1. Go to <https://console.firebase.google.com>, **Create a project** (any name, e.g. "Majlis"; Google Analytics can be off).
 2. In the project, click the Android icon to **add an Android app** with the package name `com.samycc777.majlis`. Download `google-services.json` and put it in `mobile/android/app/`. Skip the other steps Firebase suggests; they are already done.
 3. **Project settings → Service accounts → Generate new private key**. This downloads a JSON file. Keep it secret: it lets anyone send notifications as your app.
-4. On Railway, add the variable `FCM_SERVICE_ACCOUNT` and paste the whole content of that file (or its base64, from `base64 -i file.json`).
+4. On the server, add `FCM_SERVICE_ACCOUNT` to `/etc/majlis/env` and paste the whole content of that file (or its base64, from `base64 -i file.json`).
 5. Build a new Android app (`google-services.json` is read at build time) and send it out through Google Play as usual.
 
 **iPhone (needs the paid Apple developer account):**
 
 1. At <https://developer.apple.com/account/resources/authkeys/list>, click **+**, name the key "Majlis push", tick **Apple Push Notifications service (APNs)**, continue and **Download** the `.p8` file. Apple lets you download it only once, so keep it safe.
 2. Note the **Key ID** shown for the key, and your **Team ID** (top right of the developer site, or under Membership).
-3. On Railway, set `APNS_KEY` to the content of the `.p8` file (or its base64), `APNS_KEY_ID` to the Key ID and `APNS_TEAM_ID` to the Team ID.
+3. On the server, set `APNS_KEY` to the content of the `.p8` file (or its base64), `APNS_KEY_ID` to the Key ID and `APNS_TEAM_ID` to the Team ID.
 4. In Xcode, the App target's **Signing & Capabilities** already lists Push Notifications; archive and upload a new TestFlight build as usual.
 
 The server turns each route on by itself once its variables are set; redeploy (outside call times) after adding them.

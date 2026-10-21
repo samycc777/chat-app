@@ -18,8 +18,14 @@ if (!process.env.HANGOUT_URL?.trim()) {
 }
 
 let host: string;
+// The app starts at this link marked "start", so the site knows it only gives the room to a phone
+// that has none yet; a room joined from a tapped link stays the one the app reopens.
+let startUrl: string;
 try {
-  host = new URL(serverUrl).hostname;
+  const url = new URL(serverUrl);
+  host = url.hostname;
+  url.searchParams.set('start', '1');
+  startUrl = url.toString();
 } catch {
   throw new Error(`HANGOUT_URL is not a valid address: ${serverUrl}`);
 }
@@ -29,7 +35,7 @@ try {
 // address here keeps the page in step with every sync.
 writeFileSync(
   join(__dirname, 'www', 'server-url.js'),
-  `window.HANGOUT_URL = ${JSON.stringify(serverUrl)};\n`,
+  `window.HANGOUT_URL = ${JSON.stringify(startUrl)};\n`,
 );
 
 const config: CapacitorConfig = {
@@ -39,7 +45,7 @@ const config: CapacitorConfig = {
   webDir: 'www',
   backgroundColor: '#313338',
   server: {
-    url: serverUrl,
+    url: startUrl,
     // Only the Hangout server opens inside the app; any other link opens in
     // the phone's normal browser.
     allowNavigation: [host],

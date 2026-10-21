@@ -13,7 +13,11 @@ the next time they open it. You only need to build and send out a new app when s
 `mobile/` folder changes (the app icon, the permissions, the server address).
 
 The app opens the full invite link (`https://<server>/?invite=<KEY>`), so friends who install it only
-type their name. Links to other websites open in the phone's normal browser. If the server can't be
+type their name. Tapping a link to the same site anywhere on the phone (any room's invite link) opens it
+in the app, which then stays in that room on later starts: the built-in link only gives a phone its first
+room (it carries `start=1`, see capacitor.config.ts). For Android to open those links without asking, the
+site serves `/.well-known/assetlinks.json` with the app's signing fingerprints (server/index.ts); a new
+signing key needs its fingerprint added there. Links to other websites open in the phone's normal browser. If the server can't be
 reached, the app shows "Can't reach the server. Check your internet connection." with a Retry button.
 
 What's where:

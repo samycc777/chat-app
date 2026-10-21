@@ -175,6 +175,21 @@ app.get('/manifest.webmanifest', rateLimit(300, 15 * 60_000), (req, res) => {
     ],
   });
 });
+// Lets Android open this site's links in the Majlis app instead of the browser: before it does,
+// Android reads this file to be sure the app belongs to the site. The first fingerprint is Google
+// Play's signing key, which signs the app testers install; the second is our upload key, which
+// signs builds installed by hand.
+const androidAppLinks = [{
+  relation: ['delegate_permission/common.handle_all_urls'],
+  target: {
+    namespace: 'android_app', package_name: 'com.samycc777.majlis',
+    sha256_cert_fingerprints: [
+      '86:F3:B4:7E:64:A8:31:A8:84:61:12:90:C3:87:ED:0D:36:82:F8:30:93:F8:65:63:2B:2E:9A:B4:D9:63:CF:F8',
+      '30:7E:C5:D6:E4:49:80:FC:E1:B4:AD:25:0A:C5:15:1C:8B:91:23:03:95:EF:7E:58:A2:2D:EF:D4:F4:15:60:84',
+    ],
+  },
+}];
+app.get('/.well-known/assetlinks.json', (_req, res) => { res.json(androidAppLinks); });
 // Built files carry a hash of their content in their names, so browsers may keep them for a year;
 // the page itself is revalidated on every visit, so a new deploy reaches everyone straight away.
 app.use('/assets', express.static(path.join(clientDist, 'assets'), { immutable: true, maxAge: '1y', fallthrough: false }));

@@ -34,17 +34,19 @@ function keyFrom(text: string) {
 // has never been anyone, so a link cannot switch someone into another person. The pass is kept
 // until joining works, in case the app is closed before that. Links from before the pass existed
 // carried the device's identity itself ("visitor"); that is ignored now.
+// The Android app always starts at the link it was built with, marked "start". That link only gives
+// a device its first room, so the app reopens the room joined last, such as one whose link was tapped.
 const params = new URLSearchParams(window.location.search);
 const linkKey = params.get('invite');
 if (linkKey) {
-  store('inviteKey', linkKey);
+  if (!params.has('start') || !stored('inviteKey')) store('inviteKey', linkKey);
   const linkHandoff = params.get('handoff'), linkName = params.get('name');
   if (!stored('visitorId')) {
     if (linkHandoff && linkHandoff.length <= 1000 && /^[\w-]+\.[\w-]+\.[\w-]+$/.test(linkHandoff)) store('handoff', linkHandoff);
     if (linkName && !stored('displayName')) store('displayName', linkName.slice(0, 60));
   }
   const url = new URL(window.location.href);
-  for (const key of ['invite', 'visitor', 'name', 'handoff']) url.searchParams.delete(key);
+  for (const key of ['invite', 'visitor', 'name', 'handoff', 'start']) url.searchParams.delete(key);
   window.history.replaceState(null, '', url);
 }
 

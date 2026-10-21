@@ -1251,6 +1251,15 @@ test('the health check asks the database, and a stopped server closes cleanly wi
   }
 });
 
+test("the site vouches for the Android app, so tapped links open in it", async () => {
+  const response = await fetch(`${baseUrl}/.well-known/assetlinks.json`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /application\/json/);
+  const [link] = await response.json();
+  assert.equal(link.target.package_name, 'com.samycc777.majlis');
+  assert.equal(link.target.sha256_cert_fingerprints.length, 2);
+});
+
 test('a moved site sends every address to the new one, invite key included, but still answers its health check', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hangout-moved-'));
   const port = String(40000 + Math.floor(Math.random() * 20000));

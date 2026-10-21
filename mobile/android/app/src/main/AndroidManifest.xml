@@ -21,6 +21,15 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- A room's invite link opens in the app, which moves to that room (MainActivity).
+                 autoVerify makes Android check the site's /.well-known/assetlinks.json, so the link
+                 opens here straight away instead of asking which app to use. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${siteHost}" />
+            </intent-filter>
         </activity>
 
         <!-- Keeps a voice call going, microphone and sound, while another app is shown. -->

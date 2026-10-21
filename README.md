@@ -110,7 +110,7 @@ The home room is the one the server started with. Its invite key is `INVITE_KEY`
 
 Any other room is made at `/new`: type a name and the page gives the room's invite link, `https://<your site>/?invite=<key>`, with a key of 30 random letters and digits. Until paying for a room exists, the live site makes rooms only with `ROOM_CREATION_KEY` (open `/new?key=<ROOM_CREATION_KEY>` once; the device remembers it). On a developer's computer anyone can make one.
 
-Each room has one call, and everything stays inside it: who is online, who is in the call, raised hands, the call chat and call notifications. A device is in one room at a time: opening another room's link moves it there. The same person keeps their name across rooms.
+Each room has one call, and everything stays inside it: who is online, who is in the call, raised hands, the call chat and call notifications. A device is in one room at a time: opening another room's link moves it there. In the Android app (1.10 and later), tapping a room's link opens it in the app, and the app reopens the room you were in last; tap the friends' link to go back to their room. The same person keeps their name across rooms.
 
 The owner looks after customers' rooms with the same `ROOM_CREATION_KEY` (there is no page for it yet; the room's ID is in the answer that made it, and in the database). Both are rate-limited and refuse a wrong key:
 

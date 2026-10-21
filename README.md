@@ -55,6 +55,7 @@ Until September 2026 Majlis was a Discord-style server with text channels, voice
 | `INVITE_KEY` | production | The secret inside the invite link, at least 12 characters. Nobody types it, so make it long and random. The invite link is `https://<your site>/?invite=<INVITE_KEY>`. |
 | `OPEN_JOIN` | no | Set to `1` to let the site's plain address work like the invite link, so anyone who opens it can join. Leave it unset to keep the invite link needed. To close the server again afterwards, unset it and change `INVITE_KEY`. |
 | `SERVER_NAME` | no | The home room's name, shown on the join screen, in the browser tab and under the home-screen icon. |
+| `MOVED_TO` | no | Only on an old host after the site moves: its new address, such as `https://majlis.167-233-162-224.sslip.io`. Every page and link, invite key included, is sent there. |
 | `ROOM_CREATION_KEY` | to make rooms | The secret that lets you make new rooms on the live site at `https://<your site>/new?key=<ROOM_CREATION_KEY>`. Without it, making rooms is closed on the live site. |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | for calls | Credentials of a LiveKit server (ours runs on Hetzner, not LiveKit Cloud: see docs/notes/call-server.md). Without them the app opens but calls cannot start. |
 | `FCM_SERVICE_ACCOUNT` | for Android app notifications | The Firebase service account JSON file, pasted whole or in base64 (see below). |

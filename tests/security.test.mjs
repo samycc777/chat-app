@@ -1251,6 +1251,30 @@ test('the health check asks the database, and a stopped server closes cleanly wi
   }
 });
 
+test('a moved site sends every address to the new one, invite key included, but still answers its health check', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hangout-moved-'));
+  const port = String(40000 + Math.floor(Math.random() * 20000));
+  const child = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
+    cwd: root, env: { ...process.env, NODE_ENV: 'test', DATA_DIR: dataDir, PORT: port, MOVED_TO: 'https://new.example/' }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { output += chunk; });
+  const exited = new Promise(resolve => child.on('exit', resolve));
+  try {
+    assert.ok(await eventually(() => output.includes('Server running'), 20_000), output);
+    const page = await fetch(`http://127.0.0.1:${port}/?invite=abc`, { redirect: 'manual' });
+    assert.equal(page.status, 308);
+    assert.equal(page.headers.get('location'), 'https://new.example/?invite=abc');
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/rooms`, { method: 'POST', redirect: 'manual' })).headers.get('location'), 'https://new.example/api/rooms');
+    assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}/api/health`)).json(), { ok: true });
+  } finally {
+    child.kill('SIGTERM');
+    await exited;
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 // Runs last because it deliberately locks this test client's address out of joining.
 test("wrong invite keys on the join screen's name or the home-screen manifest count with joining's, and lock the address out of all three", async () => {
   // Earlier tests already spent some of this minute's wrong attempts.

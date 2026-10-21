@@ -70,6 +70,14 @@ function contentSecurityPolicy(req: express.Request) {
 }
 
 app.set('trust proxy', production ? 1 : false);
+// When the site moves to another address, MOVED_TO sends every page and link there, path and invite
+// key included, so old invite links and older app versions still find it. The health check stays
+// here so the old host keeps the server running while it forwards.
+app.use((req, res, next) => {
+  const movedTo = (process.env.MOVED_TO || '').trim().replace(/\/+$/, '');
+  if (!movedTo || req.path === '/api/health') return next();
+  res.redirect(308, movedTo + req.originalUrl);
+});
 app.use(cors({ origin: (origin, callback) => {
   if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
   return callback(new Error('Origin not allowed'));
@@ -87,7 +95,7 @@ app.use((req, res, next) => {
 // Friends often join on mobile data; compressing the app's code and data cuts what they download.
 app.use(compression());
 app.use(express.json({ limit: '64kb' }));
-// Railway checks this before sending people to a new version; it is healthy only if the database answers.
+// Healthy only if the database answers.
 app.get('/api/health', (_req, res) => {
   try {
     db.prepare('SELECT 1').get();

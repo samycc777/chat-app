@@ -247,7 +247,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
   overflow: hidden;
   color: var(--call-text);
-  /* Only the still corner glow here, no grid, so nothing busy sits behind the videos. */
   background: var(--call-bg);
 }
 

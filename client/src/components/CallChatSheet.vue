@@ -92,7 +92,7 @@ watch(() => callChat.value.length, scrollChatToEnd);
 
 .call-chat-message.private {
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: var(--accent-soft);
 }
 
@@ -152,7 +152,7 @@ watch(() => callChat.value.length, scrollChatToEnd);
   height: 34px;
   padding: 0 8px;
   border: 1px solid var(--call-line-strong);
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: var(--call-text);
   background: var(--call-input);
   font-size: 14px;
@@ -173,7 +173,7 @@ watch(() => callChat.value.length, scrollChatToEnd);
   height: 44px;
   padding: 0 12px;
   border: 1px solid var(--call-line-strong);
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--call-text);
   background: var(--call-input);
   /* 16px keeps iPhones from zooming in on the box. */
@@ -186,7 +186,7 @@ watch(() => callChat.value.length, scrollChatToEnd);
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--text-on-accent);
   background: var(--text-accent);
 }

@@ -85,7 +85,7 @@ const { closeSheet } = call;
   gap: 12px;
   margin-top: 8px;
   padding: 0 8px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   font-size: 14px;
   font-weight: 600;
 }

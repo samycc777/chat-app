@@ -25,153 +25,117 @@
 }
 
 
-/* Latin letters use Chakra Petch, a squared, techy face that gives the app its cyberpunk feel
-   while staying easy to read. Like the Arabic font it is bundled, limited to Latin script. */
-@font-face {
-  font-family: 'Chakra Petch';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('@fontsource/chakra-petch/files/chakra-petch-latin-400-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'Chakra Petch';
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url('@fontsource/chakra-petch/files/chakra-petch-latin-600-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'Chakra Petch';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url('@fontsource/chakra-petch/files/chakra-petch-latin-700-normal.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
 :root,
 [data-theme='dark'] {
-  /* Cyberpunk night: near-black blue, neon cyan for what you can press, hot magenta and acid
-     yellow for light in the corners. The glows are still, never flickering. */
+  /* Lovelace, the look of the Fedora desktop this app is made on (from elenapan's "lovelace"
+     palette): a soft blue-black, purple for what you can press, and cyan, pink, orange and green
+     as small touches of meaning. Flat colours, no glows. */
   color-scheme: dark;
-  --app-bg: #07080f;
-  --bg-primary: #0e1020;
-  --bg-secondary: #0b0d19;
-  --bg-tertiary: #080a13;
-  --bg-chat: #0e1020;
-  --bg-hover: #151933;
-  --bg-active: #1c2244;
-  --bg-message-hover: #121530;
-  --text-primary: #e4f4ff;
-  --text-secondary: #8d9bc4;
-  --text-accent: #19e6ff;
-  --text-link: #ff5cc6;
-  --accent-strong: #7ef2ff;
-  --accent-soft: rgba(25, 230, 255, 0.13);
-  --text-on-accent: #031018;
+  --app-bg: #1d1f28;
+  --bg-primary: #282a36;
+  --bg-secondary: #232530;
+  --bg-tertiary: #1d1f28;
+  --bg-chat: #282a36;
+  --bg-hover: #343746;
+  --bg-active: #414458;
+  --bg-message-hover: #2e3040;
+  --text-primary: #fdfdfd;
+  --text-secondary: #9699af;
+  --text-accent: #c574dd;
+  --text-link: #79e6f3;
+  --accent-strong: #d69be8;
+  --accent-soft: rgba(197, 116, 221, 0.15);
+  --text-on-accent: #1d1f28;
   /* Boundaries of boxes and buttons must stand out from their background (at least 3:1). */
-  --border-color: #4d5fa8;
-  --danger: #ff3d6e;
-  /* Text on a red banner: dark, since white on this bright red is under 4:1. */
-  --on-danger: #1a0309;
-  --danger-soft: rgba(255, 61, 110, 0.14);
-  --warning-soft: rgba(245, 230, 40, 0.13);
-  --shadow-color: rgba(0, 0, 0, 0.6);
-  --message-meta: #8d9bc4;
+  --border-color: #717592;
+  --danger: #f37f97;
+  /* Text on a pink banner: dark, since white on this light pink is under 3:1. */
+  --on-danger: #1d1f28;
+  --danger-soft: rgba(243, 127, 151, 0.14);
+  --warning-soft: rgba(242, 162, 114, 0.15);
+  --shadow-color: rgba(0, 0, 0, 0.45);
+  --message-meta: #9699af;
   --reply-overlay: rgba(0, 0, 0, 0.2);
   /* The lobby and the call. */
-  --call-bg: #05060c;
-  --call-bar: #0a0c18;
-  --call-surface: #121632;
-  --call-surface-active: #1d2450;
-  --call-sheet: #0c0f20;
-  --call-input: #070913;
-  --call-text: #e8f6ff;
-  --call-text-soft: #cfe3f5;
-  --call-text-muted: #94a3cc;
-  --call-link: #ff6fcf;
-  --call-line: rgba(25, 230, 255, 0.12);
-  --call-line-strong: rgba(25, 230, 255, 0.22);
-  --call-outline: #5668b5;
-  --call-hover: rgba(25, 230, 255, 0.08);
-  --call-handle: rgba(25, 230, 255, 0.4);
-  --call-video-bg: #03040a;
+  --call-bg: #1d1f28;
+  --call-bar: #232530;
+  --call-surface: #282a36;
+  --call-surface-active: #343746;
+  --call-sheet: #232530;
+  --call-input: #1d1f28;
+  --call-text: #fdfdfd;
+  --call-text-soft: #e4e4ec;
+  --call-text-muted: #9699af;
+  --call-link: #79e6f3;
+  --call-line: rgba(253, 253, 253, 0.08);
+  --call-line-strong: rgba(253, 253, 253, 0.15);
+  --call-outline: #717592;
+  --call-hover: rgba(253, 253, 253, 0.06);
+  --call-handle: rgba(253, 253, 253, 0.3);
+  --call-video-bg: #16171f;
   /* Colours with a meaning: someone speaking, a switched-off microphone or camera, and leaving. */
-  --speaking: #3dff9a;
-  --leave: #ff3d6e;
-  --leave-strong: #d81f52;
+  --speaking: #5adecd;
+  --leave: #f37f97;
+  --leave-strong: #ff4971;
+  --on-leave: #1d1f28;
   /* Small signs on a tile's name label, which is dark over any video in both themes. */
-  --call-tile-muted: #f07a72;
-  --call-tile-weak: #f5c27a;
-  /* Neon light falling into the corners of the screen. */
-  --neon-glow: radial-gradient(110% 65% at 100% -10%, rgba(255, 46, 170, 0.22), transparent 60%),
-    radial-gradient(100% 60% at -10% 110%, rgba(25, 230, 255, 0.18), transparent 60%);
-  /* A faint city grid behind the screens before the call. */
-  --neon-grid-line: rgba(25, 230, 255, 0.07);
-  --neon-text: 0 0 12px rgba(25, 230, 255, 0.55), 0 0 2px rgba(25, 230, 255, 0.8);
-  --neon-edge: 0 0 0 1px rgba(25, 230, 255, 0.35), 0 0 22px rgba(25, 230, 255, 0.12);
+  --call-tile-muted: #f37f97;
+  --call-tile-weak: #f2a272;
+  /* Rounded corners, as on the desktop's sidebar and dock. */
+  --radius: 10px;
+  --radius-large: 14px;
 }
 
 [data-theme='light'] {
-  /* Cyberpunk by day: cool steel-white, ink-black text, deep magenta for what you can press and a
-     cyan haze. Darker accents than at night, so writing stays easy to read. */
+  /* Lovelace by day: the same family of colours on a pale grey-white, each made darker so writing
+     stays easy to read. */
   color-scheme: light;
-  --app-bg: #e7eaf2;
-  --bg-primary: #f6f7fb;
-  --bg-secondary: #eef0f6;
-  --bg-tertiary: #e1e5ef;
-  --bg-chat: #f6f7fb;
-  --bg-hover: #e4e7f1;
-  --bg-active: #d6dbea;
-  --bg-message-hover: #f0f2f8;
-  --text-primary: #10131f;
-  --text-secondary: #4f5873;
-  --text-accent: #c4007a;
-  --text-link: #006f8a;
-  --accent-strong: #99005f;
-  --accent-soft: rgba(196, 0, 122, 0.1);
+  --app-bg: #ecedf2;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f4f4f8;
+  --bg-tertiary: #e6e7ee;
+  --bg-chat: #ffffff;
+  --bg-hover: #ebecf2;
+  --bg-active: #dedfe8;
+  --bg-message-hover: #f6f6f9;
+  --text-primary: #1d1f28;
+  --text-secondary: #555869;
+  --text-accent: #8e3aab;
+  --text-link: #0b7480;
+  --accent-strong: #722b8a;
+  --accent-soft: rgba(142, 58, 171, 0.1);
   --text-on-accent: #ffffff;
-  --border-color: #6f7ba3;
-  --danger: #d0103f;
+  --border-color: #7e8199;
+  --danger: #c2365a;
   --on-danger: #ffffff;
-  --danger-soft: rgba(208, 16, 63, 0.1);
-  --warning-soft: #f4f0b8;
-  --shadow-color: rgba(16, 19, 40, 0.14);
-  --message-meta: #4f5873;
-  --reply-overlay: rgba(16, 19, 40, 0.05);
-  --call-bg: #eceff6;
-  --call-bar: #e2e6f0;
-  --call-surface: #d9deeb;
-  --call-surface-active: #c8cfe2;
-  --call-sheet: #f6f7fb;
-  --call-input: #e6e9f2;
-  --call-text: #10131f;
-  --call-text-soft: #10131f;
-  --call-text-muted: #4a536d;
-  --call-link: #99005f;
-  --call-line: rgba(16, 19, 40, 0.1);
-  --call-line-strong: rgba(16, 19, 40, 0.17);
-  --call-outline: #6b77a0;
-  --call-hover: rgba(196, 0, 122, 0.06);
-  --call-handle: rgba(16, 19, 40, 0.25);
+  --danger-soft: rgba(194, 54, 90, 0.1);
+  --warning-soft: #fbe6d8;
+  --shadow-color: rgba(29, 31, 40, 0.12);
+  --message-meta: #555869;
+  --reply-overlay: rgba(29, 31, 40, 0.05);
+  --call-bg: #ecedf2;
+  --call-bar: #e3e4ec;
+  --call-surface: #ffffff;
+  --call-surface-active: #e6e7ee;
+  --call-sheet: #f4f4f8;
+  --call-input: #ecedf2;
+  --call-text: #1d1f28;
+  --call-text-soft: #1d1f28;
+  --call-text-muted: #555869;
+  --call-link: #8e3aab;
+  --call-line: rgba(29, 31, 40, 0.1);
+  --call-line-strong: rgba(29, 31, 40, 0.17);
+  --call-outline: #7e8199;
+  --call-hover: rgba(142, 58, 171, 0.06);
+  --call-handle: rgba(29, 31, 40, 0.25);
   /* Around a shared screen that doesn't fill its tile, so it sits on the page instead of in a
      black frame. */
-  --call-video-bg: #d9deeb;
-  --speaking: #008a4e;
-  --leave: #d0103f;
-  --leave-strong: #a80a31;
-  --neon-glow: radial-gradient(110% 65% at 100% -10%, rgba(255, 46, 170, 0.16), transparent 60%),
-    radial-gradient(100% 60% at -10% 110%, rgba(0, 190, 230, 0.16), transparent 60%);
-  --neon-grid-line: rgba(16, 19, 40, 0.06);
-  --neon-text: none;
-  --neon-edge: 0 0 0 1px rgba(196, 0, 122, 0.25);
+  --call-video-bg: #e3e4ec;
+  --speaking: #0e7f6a;
+  --leave: #c2365a;
+  --leave-strong: #9e2646;
+  --on-leave: #ffffff;
 }
-
 * {
   box-sizing: border-box;
   margin: 0;
@@ -201,7 +165,7 @@ body {
   overflow: hidden;
   background: var(--app-bg);
   color: var(--text-primary);
-  font-family: 'Noto Naskh Arabic', 'Chakra Petch', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Noto Naskh Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   text-rendering: optimizeLegibility;
 }
 
@@ -254,7 +218,7 @@ summary:focus-visible,
 }
 
 ::-webkit-scrollbar-thumb {
-  border-radius: 0;
+  border-radius: 999px;
   background: color-mix(in srgb, var(--text-accent) 40%, transparent);
 }
 
@@ -263,14 +227,10 @@ summary:focus-visible,
   min-height: 50px;
   margin-top: 12px;
   padding: 10px 16px;
-  border-radius: 0;
+  border-radius: var(--radius);
   color: var(--text-on-accent);
   background: var(--text-accent);
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  /* Two cut corners, like a panel on a heads-up display. */
-  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
   /* Squashes when pressed and springs back when let go. */
   transition: transform 160ms ease, background 160ms ease, opacity 160ms ease, scale 380ms var(--spring);
 }
@@ -326,7 +286,7 @@ summary:focus-visible,
   z-index: 41;
   padding: 14px;
   border: 1px solid var(--border-color);
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: var(--text-primary);
   background: var(--bg-secondary);
   box-shadow: 0 16px 42px var(--shadow-color);
@@ -346,7 +306,7 @@ summary:focus-visible,
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 700;
@@ -364,7 +324,7 @@ summary:focus-visible,
   gap: 6px;
   margin-top: 5px;
   padding: 0 13px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--text-accent);
   background: var(--accent-soft);
   font-size: 12px;
@@ -458,7 +418,7 @@ summary:focus-visible,
   height: 30px;
   display: grid;
   place-items: center;
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: inherit;
 }
 
@@ -481,7 +441,7 @@ summary:focus-visible,
   align-items: center;
   gap: 10px;
   padding: 0 11px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: var(--text-primary);
   font-size: 13px;
   text-align: start;
@@ -503,33 +463,8 @@ html[dir='rtl'] body {
 @media (max-width: 768px) {
   .context-menu button {
     min-height: 48px;
-    border-radius: 4px;
+    border-radius: var(--radius);
   }
-}
-
-/* The still neon grid behind the screens before the call. The call itself keeps a plain
-   background, so nothing busy sits behind the videos. */
-.neon-backdrop {
-  position: relative;
-  isolation: isolate;
-}
-
-.neon-backdrop::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background-image: linear-gradient(var(--neon-grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--neon-grid-line) 1px, transparent 1px);
-  background-size: 44px 44px;
-  /* The grid fades out towards the middle, so it never sits behind the writing. */
-  mask-image: radial-gradient(ellipse at center, transparent 30%, #000 85%);
-  pointer-events: none;
-}
-
-h1 {
-  letter-spacing: 0.02em;
-  text-shadow: var(--neon-text);
 }
 
 /* The call screen's buttons, shared by its header, toolbar, full screen and panels. */
@@ -541,7 +476,7 @@ h1 {
   justify-content: center;
   gap: 4px;
   padding: 0 6px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: var(--call-text-muted);
 }
 
@@ -604,7 +539,7 @@ h1 {
 }
 
 .call-control.leave {
-  color: #ffffff;
+  color: var(--on-leave);
   background: var(--leave);
 }
 

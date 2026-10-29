@@ -248,7 +248,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   color: var(--call-text);
   /* Only the still corner glow here, no grid, so nothing busy sits behind the videos. */
-  background: var(--neon-glow), var(--call-bg);
+  background: var(--call-bg);
 }
 
 /* In the Android app's small window, the call covers the whole page, even when a text channel was open. */
@@ -342,7 +342,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 22px 24px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: var(--call-surface);
   text-align: center;
 }
@@ -369,7 +369,7 @@ onBeforeUnmount(() => {
   gap: 7px;
   margin-top: 6px;
   padding: 0 16px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--text-on-accent);
   background: var(--text-accent);
   font-size: 14px;
@@ -410,7 +410,7 @@ onBeforeUnmount(() => {
   animation: anime-pop 480ms ease-out;
   width: max-content;
   max-width: min(460px, calc(100% - 32px));
-  border-radius: 4px;
+  border-radius: var(--radius);
   white-space: normal;
   text-align: center;
 }

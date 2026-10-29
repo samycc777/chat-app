@@ -165,7 +165,7 @@ const fullDrawn = computed(() => { void boardVersion.value; return Boolean(fullT
   gap: 6px;
   overflow: hidden;
   padding: 6px 10px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: #ffffff;
   background: rgba(0, 0, 0, 0.6);
   font-size: 13px;

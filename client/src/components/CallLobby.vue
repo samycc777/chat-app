@@ -73,7 +73,7 @@ async function copyInvite() {
 </script>
 
 <template>
-  <section class="lobby neon-backdrop">
+  <section class="lobby">
     <div class="lobby-card">
       <div class="lobby-topline">
         <button class="lobby-theme" type="button" :title="theme === 'light' ? t('darkMode') : t('lightMode')" :aria-label="theme === 'light' ? t('darkMode') : t('lightMode')" @click="toggleTheme">
@@ -139,7 +139,7 @@ async function copyInvite() {
   overflow-y: auto;
   padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
   color: var(--call-text);
-  background: var(--neon-glow), var(--call-bg);
+  background: var(--call-bg);
 }
 
 .lobby-card {
@@ -163,7 +163,7 @@ async function copyInvite() {
   display: grid;
   place-items: center;
   border: 1px solid var(--call-outline);
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--call-text-muted);
 }
 
@@ -186,9 +186,8 @@ async function copyInvite() {
   display: grid;
   place-items: center;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: var(--radius-large);
   background: var(--call-surface);
-  box-shadow: var(--neon-edge);
 }
 
 .lobby-preview video {
@@ -247,7 +246,7 @@ async function copyInvite() {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-large);
   color: var(--call-text);
   background: var(--call-surface);
   font-size: 14px;
@@ -262,7 +261,7 @@ async function copyInvite() {
 }
 
 .lobby-toggle.off {
-  color: #ffffff;
+  color: var(--on-leave);
   background: var(--leave);
 }
 
@@ -310,7 +309,7 @@ async function copyInvite() {
 .lobby-invite {
   min-height: 48px;
   border: 1px solid var(--call-outline);
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--call-text);
   background: transparent;
   font-size: 15px;

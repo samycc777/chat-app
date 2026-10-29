@@ -102,7 +102,7 @@ onBeforeUnmount(() => clearInterval(clockTimer));
   place-items: center;
   padding: 0 5px;
   border-radius: 999px;
-  color: #ffffff;
+  color: var(--on-leave);
   background: var(--leave);
   font-size: 12px;
   font-weight: 800;

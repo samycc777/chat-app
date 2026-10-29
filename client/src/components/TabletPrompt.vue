@@ -30,7 +30,7 @@ const { answerTabletPrompt } = useCall().tablet;
   flex-direction: column;
   gap: 10px;
   padding: 20px;
-  border-radius: 6px;
+  border-radius: var(--radius-large);
   color: var(--call-text);
   background: var(--call-sheet);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
@@ -58,7 +58,7 @@ const { answerTabletPrompt } = useCall().tablet;
 .call-board-prompt-actions button {
   min-height: 46px;
   padding: 0 18px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   font-size: 15px;
   font-weight: 700;
 }

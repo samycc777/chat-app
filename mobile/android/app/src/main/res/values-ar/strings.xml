@@ -1,5 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
+    <string name="app_name">مجلس</string>
+    <string name="title_activity_main">مجلس</string>
     <string name="screen_share_channel">مشاركة الشاشة</string>
     <string name="screen_share_title">أنت تشارك شاشتك</string>
     <string name="screen_share_text">يرى كل من في المكالمة شاشتك.</string>

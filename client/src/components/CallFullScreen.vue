@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Download, Eraser, Mic, MicOff, Minimize, Moon, Pencil, ScreenShare, Sun, ZoomOut } from 'lucide-vue-next';
+import { Download, Eraser, Hand, Mic, MicOff, Minimize, Moon, Pencil, ScreenShare, Sun, ZoomOut } from 'lucide-vue-next';
 import { useI18n } from '../i18n';
 import { boardVersion, erase, hasDrawings, penOn } from '../board';
 import { useCall } from '../call/context';
@@ -13,6 +13,8 @@ const call = useCall();
 const { micOn } = call.state;
 const { setMicrophone } = call.microphone;
 const { savePicture } = call.layout;
+const { myHandRaised } = call.tiles;
+const { toggleHand } = call;
 const { fullTile, fullTileView, fullZoomed, fullSpeaker, darkScreen, toggleDarkScreen, exitFullScreen } = call.fullScreen;
 // Whether anything is drawn on the screen shown full screen, so the eraser has something to erase.
 const fullDrawn = computed(() => { void boardVersion.value; return Boolean(fullTile.value && hasDrawings(fullTile.value.key)); });
@@ -40,6 +42,10 @@ const fullDrawn = computed(() => { void boardVersion.value; return Boolean(fullT
       <!-- A student can answer the teacher without leaving full screen. -->
       <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="micOn ? t('mute') : t('unmute')" :aria-label="micOn ? t('mute') : t('unmute')" @click="setMicrophone(!micOn)">
         <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
+      </button>
+      <!-- And raise a hand without leaving it either. -->
+      <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="myHandRaised ? t('lowerHand') : t('raiseHand')" :aria-label="myHandRaised ? t('lowerHand') : t('raiseHand')" @click="toggleHand">
+        <Hand :size="22" />
       </button>
       <button v-if="fullZoomed" class="call-full-btn" type="button" @click="fullTileView?.resetZoom()"><ZoomOut :size="18" />{{ t('zoomOut') }}</button>
       <!-- The blackboard's pen, eraser and save, beside the microphone (see board.ts). -->

@@ -13,7 +13,8 @@ import type { CallProps, CallSession, CallState } from './context';
 const TABLET_DECLINED_KEY = 'tabletBoardDeclined';
 
 // While the teacher shares his screen he is in his book, not in the call, so the same window shows
-// him, small at the top, who is talking and who comes and goes.
+// him, small at the top, who is talking, whose hand is raised (for as long as it stays up) and who
+// comes and goes.
 //
 // Only clear speech counts as talking there: LiveKit already ignores the quietest sounds, and a
 // voice must also be loud enough and go on for most of a second. Noise from someone's house, such
@@ -25,6 +26,7 @@ const TALKING_LEVEL = 0.2;
 const TALKING_FOR_MS = 800;
 const STILL_TALKING_MS = 1200;
 const NOTICE_MS = 5000;
+const MAX_HANDS = 4;
 // Someone whose connection drops for a moment comes back within seconds; they did not leave.
 const LEFT_AFTER_MS = 10_000;
 
@@ -42,13 +44,19 @@ export function useTabletBoard(session: CallSession, state: CallState, props: Ca
     tabletTimer = setTimeout(() => {
       tabletTimer = undefined;
       if (!sharingScreen.value || !tabletAllowed.value) return;
-      const board = { ...boardForTablet(myBoardKey()), speakers: tabletSpeakers.value, notices: tabletNotices.value.map(notice => notice.text) };
+      const board = { ...boardForTablet(myBoardKey()), speakers: tabletSpeakers.value, notices: [...tabletHands.value, ...tabletNotices.value.map(notice => notice.text)] };
       showOnTablet(board).catch(() => { tabletAllowed.value = false; });
     }, 50);
   }
   watch(boardVersion, () => { if (tabletBoardAvailable && sharingScreen.value && tabletAllowed.value) drawOnTablet(); });
 
   const tabletSpeakers = ref<string[]>([]);
+  // Sent among the notices, which the app already shows, so it needs no app update. A few names at
+  // most, so a whole class with raised hands does not cover the top of his book.
+  const tabletHands = computed(() => {
+    const names = props.hands.filter(hand => hand.userId !== props.userId).map(hand => `✋ ${hand.displayName}`);
+    return names.length > MAX_HANDS ? [...names.slice(0, MAX_HANDS - 1), `✋ +${names.length - MAX_HANDS + 1}`] : names;
+  });
   const tabletNotices = ref<{ id: number; text: string }[]>([]);
   const talkingSince = new Map<string, number>();
   const talkingUntil = new Map<string, number>();
@@ -108,7 +116,7 @@ export function useTabletBoard(session: CallSession, state: CallState, props: Ca
     }, LEFT_AFTER_MS));
     noteTalking();
   }
-  watch([tabletSpeakers, tabletNotices], () => { if (showingTeacherSigns()) drawOnTablet(); });
+  watch([tabletSpeakers, tabletHands, tabletNotices], () => { if (showingTeacherSigns()) drawOnTablet(); });
   watch(sharingScreen, async sharing => {
     if (!tabletBoardAvailable) return;
     if (!sharing) { tabletPrompt.value = false; void hideOnTablet(); return; }

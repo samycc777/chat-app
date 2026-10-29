@@ -104,7 +104,8 @@ export function useCallTiles(session: CallSession, state: CallState, options: {
     // A screen that stops being shared, or a camera turned off, leaves full screen.
     if (fullScreen.fullKey.value && !next.some(tile => tile.key === fullScreen.fullKey.value && watchable(tile))) fullScreen.exitFullScreen();
     tiles.value = next;
-    noteMySpeech(isSpeaking(room.localParticipant));
+    // The server must hear it too, so room noise picked up by the microphone doesn't lower a hand.
+    noteMySpeech(isSpeaking(room.localParticipant) && room.localParticipant.isSpeaking);
     micOn.value = room.localParticipant.isMicrophoneEnabled;
     cameraOn.value = room.localParticipant.isCameraEnabled;
     sharingScreen.value = room.localParticipant.isScreenShareEnabled || room.remoteParticipants.has(phoneScreenOf(props.userId));

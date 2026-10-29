@@ -1,0 +1,49 @@
+# Builds the Android app and sends it to Google Play's internal testing, on GitHub's
+# computers: Google's Android build tools only run on Intel/AMD Linux, not on the ARM laptop.
+# Start it with:
+#   gh workflow run android-release.yml -f notes="What changed" -f notes_ar="ما الذي تغيّر"
+# The keys live in the repository's Actions secrets (see "Releasing automatically" in mobile/README.md).
+name: Android release
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: What changed, in English
+        required: false
+      notes_ar:
+        description: What changed, in Arabic
+        required: false
+concurrency: android-release
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - name: Put the signing and Google Play keys in place
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PROPERTIES: ${{ secrets.ANDROID_KEYSTORE_PROPERTIES }}
+          PLAY_KEY: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+        run: |
+          echo "$KEYSTORE" | base64 -d > android/hangout-release.jks
+          printf '%s\n' "$KEYSTORE_PROPERTIES" > android/keystore.properties
+          printf '%s' "$PLAY_KEY" > "$RUNNER_TEMP/play.json"
+      - run: npm run release:android -- "$NOTES" --ar "$NOTES_AR"
+        env:
+          GOOGLE_PLAY_KEY: ${{ runner.temp }}/play.json
+          HANGOUT_URL: ${{ secrets.HANGOUT_URL }}
+          NOTES: ${{ inputs.notes }}
+          NOTES_AR: ${{ inputs.notes_ar }}

@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
-const BACKGROUND = '#313338';
+const BACKGROUND = '#1d1f28';
 const mobileDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 const publicDir = join(mobileDir, '..', 'client', 'public');
 const assetsDir = join(mobileDir, 'assets');

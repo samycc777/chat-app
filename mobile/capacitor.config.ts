@@ -43,7 +43,7 @@ const config: CapacitorConfig = {
   appName: 'Majlis',
   // Only shown when the server can't be reached (see www/index.html).
   webDir: 'www',
-  backgroundColor: '#313338',
+  backgroundColor: '#1d1f28',
   server: {
     url: startUrl,
     // Only the Hangout server opens inside the app; any other link opens in
@@ -56,10 +56,10 @@ const config: CapacitorConfig = {
   },
   ios: {
     contentInset: 'never',
-    backgroundColor: '#313338',
+    backgroundColor: '#1d1f28',
   },
   android: {
-    backgroundColor: '#313338',
+    backgroundColor: '#1d1f28',
   },
 };
 

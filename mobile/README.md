@@ -156,7 +156,17 @@ Only changes in this `mobile/` folder need a new version; website changes reach 
 
 ### Releasing automatically
 
-After the first release, new versions go out with one command, without opening Play Console:
+After the first release, new versions go out with one command, without opening Play Console. On the ARM
+Linux laptop, Google's build tools don't run, so the release is built on GitHub's computers instead:
+
+```sh
+gh workflow run android-release.yml -f notes="What changed" -f notes_ar="ما الذي تغيّر"
+```
+
+That runs `.github/workflows/android-release.yml`, which does the same as the command below with the keys
+kept in the repository's Actions secrets: `ANDROID_KEYSTORE_BASE64` (the `.jks` file, base64),
+`ANDROID_KEYSTORE_PROPERTIES` (the text of `android/keystore.properties`), `GOOGLE_PLAY_SERVICE_ACCOUNT`
+(the JSON key below) and `HANGOUT_URL`. On a computer with Android Studio it can also run directly:
 
 ```sh
 cd mobile

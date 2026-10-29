@@ -347,7 +347,7 @@ class BoardPlugin : Plugin() {
     // The same soft green as the glow around someone talking in the call.
     private val talkingDot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
       style = Paint.Style.FILL
-      color = "#7cc79a".toColorInt()
+      color = "#5adecd".toColorInt()
     }
     private val density = context.resources.displayMetrics.density
     private val statusBarHeight = context.resources.getIdentifier("status_bar_height", "dimen", "android")

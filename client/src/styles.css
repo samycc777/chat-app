@@ -496,6 +496,7 @@ html[dir='rtl'] body {
 .call-control {
   width: 52px;
   height: 52px;
+  position: relative;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -503,6 +504,23 @@ html[dir='rtl'] body {
   background: var(--call-surface);
   /* Squashes when pressed and springs back when let go. */
   transition: background 160ms ease, scale 380ms var(--spring);
+}
+
+/* Your place among the raised hands, on the hand button. */
+.call-hand-turn {
+  min-width: 20px;
+  height: 20px;
+  position: absolute;
+  top: -2px;
+  inset-inline-end: -2px;
+  display: grid;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: var(--text-on-accent);
+  background: var(--text-accent);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .call-control:active:not(:disabled) {

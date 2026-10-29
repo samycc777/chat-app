@@ -53,6 +53,7 @@ const fullScreen = useFullScreen(state, { root, visible: () => props.visible, sh
 const layout = useTileLayout(state, fullScreen, showToast);
 const tiles = useCallTiles(session, state, {
   props, fullScreen, lastSpeakerKey: layout.lastSpeakerKey, showToast, update: update => emit('state', update),
+  lowerMyHand: () => getSocket()?.emit('raise_hand', { channelId: props.channelId, raised: false }),
 });
 const { refresh, colorOf, pictureOf } = tiles;
 const microphone = useMicrophone(session, {

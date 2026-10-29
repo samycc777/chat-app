@@ -10,7 +10,7 @@ const call = useCall();
 const { status, micOn, cameraOn, sharingScreen, sheet } = call.state;
 const { micBlocked, setMicrophone } = call.microphone;
 const { toggleScreenShare } = call.screenShare;
-const { myHandRaised } = call.tiles;
+const { myHandRaised, myHandTurn, handButtonLabel } = call.tiles;
 const { toggleCamera, toggleHand, openSheet, leave } = call;
 
 // A disabled button gives no hint why, so while the call is still connecting its name says so.
@@ -28,8 +28,8 @@ function whileConnecting(label: string) { return status.value === 'connected' ? 
     <button v-if="canShareScreen" class="call-control" :class="{ on: sharingScreen }" type="button" :aria-pressed="sharingScreen" :title="whileConnecting(sharingScreen ? t('stopSharing') : t('shareScreen'))" :aria-label="whileConnecting(sharingScreen ? t('stopSharing') : t('shareScreen'))" :disabled="status !== 'connected'" @click="toggleScreenShare">
       <ScreenShareOff v-if="sharingScreen" :size="22" /><ScreenShare v-else :size="22" />
     </button>
-    <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="myHandRaised ? t('lowerHand') : t('raiseHand')" :aria-label="myHandRaised ? t('lowerHand') : t('raiseHand')" @click="toggleHand">
-      <Hand :size="22" />
+    <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="handButtonLabel" :aria-label="handButtonLabel" @click="toggleHand">
+      <Hand :size="22" /><span v-if="myHandTurn" class="call-hand-turn">{{ myHandTurn }}</span>
     </button>
     <button class="call-control" type="button" :aria-pressed="sheet === 'more'" :title="t('more')" :aria-label="t('more')" @click="openSheet('more')">
       <Ellipsis :size="22" />

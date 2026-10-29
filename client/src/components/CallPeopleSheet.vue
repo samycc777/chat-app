@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { MessageSquare, Mic, MicOff, Volume1 } from 'lucide-vue-next';
 import { useI18n } from '../i18n';
 import { useCall } from '../call/context';
@@ -12,7 +13,10 @@ const { t } = useI18n();
 const call = useCall();
 const { participants, sheet } = call.state;
 const { levelOf, setPersonVolume } = call.sound;
-const { raisedHands, colorOf, pictureOf } = call.tiles;
+const { raisedHands, handPlaces, handTurnOf, colorOf, pictureOf } = call.tiles;
+// Raised hands come first, in the order they went up, so the next one to answer is at the top.
+const people = computed(() => [...participants.value]
+  .sort((a, b) => (handPlaces.value.get(a.identity) ?? Infinity) - (handPlaces.value.get(b.identity) ?? Infinity)));
 const { chatTo } = call.chat;
 function messagePrivately(identity: string) {
   chatTo.value = identity;
@@ -23,7 +27,7 @@ function messagePrivately(identity: string) {
 <template>
   <CallSheet side :label="t('participants')" :title="t('participantsCount', { count: participants.length })">
     <ul class="call-people">
-      <li v-for="person in participants" :key="person.identity">
+      <li v-for="person in people" :key="person.identity">
         <Avatar :name="person.name" :color="colorOf(person.identity)" :picture="pictureOf(person.identity)" size="small" />
         <div class="call-person-main">
           <span class="call-person-name">
@@ -44,7 +48,7 @@ function messagePrivately(identity: string) {
             >
           </label>
         </div>
-        <span v-if="raisedHands.has(person.identity)" class="call-person-hand anime-wave">✋</span>
+        <span v-if="raisedHands.has(person.identity)" class="call-person-hand"><span class="anime-wave">✋</span>{{ handTurnOf(person.identity) ?? '' }}</span>
         <button v-if="!person.local" class="call-icon-btn" type="button" :title="t('messagePrivately', { name: person.name })" :aria-label="t('messagePrivately', { name: person.name })" @click="messagePrivately(person.identity)">
           <MessageSquare :size="18" />
         </button>
@@ -112,7 +116,10 @@ function messagePrivately(identity: string) {
 }
 
 .call-person-hand {
+  flex: none;
+  color: var(--text-accent);
   font-size: 18px;
+  font-weight: 700;
 }
 
 .call-person-mic {

@@ -31,6 +31,8 @@ export interface Tile {
   micOn: boolean;
   speaking: boolean;
   hand: boolean;
+  /** Their place among the raised hands, when two or more are up. */
+  handTurn?: number | null;
   /** Their internet has been weak for a few seconds. */
   weak?: boolean;
 }
@@ -179,6 +181,7 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="!full" class="call-tile-label">
       <span v-if="tile.hand" class="anime-wave" aria-hidden="true">✋</span>
+      <span v-if="tile.handTurn" class="call-tile-hand-turn">{{ tile.handTurn }}</span>
       <MicOff v-if="tile.kind === 'camera' && !tile.micOn" :size="14" class="call-tile-muted" />
       <WifiOff v-if="tile.weak" :size="12" class="call-tile-weak" role="img" :aria-label="t('weakInternetOf', { name: tile.name })" />
       <ScreenShare v-if="tile.kind === 'screen'" :size="14" />
@@ -348,6 +351,16 @@ onBeforeUnmount(() => {
 
 .call-tile-muted {
   color: var(--call-tile-muted);
+}
+
+/* The label is dark over any video in both themes, so the number is always light. */
+.call-tile-hand-turn {
+  min-width: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  font-weight: 700;
+  text-align: center;
 }
 
 /* Small and faint on purpose: it explains a voice that cuts out without drawing attention. */

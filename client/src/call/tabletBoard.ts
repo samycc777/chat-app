@@ -54,7 +54,9 @@ export function useTabletBoard(session: CallSession, state: CallState, props: Ca
   // Sent among the notices, which the app already shows, so it needs no app update. A few names at
   // most, so a whole class with raised hands does not cover the top of his book.
   const tabletHands = computed(() => {
-    const names = props.hands.filter(hand => hand.userId !== props.userId).map(hand => `✋ ${hand.displayName}`);
+    const numbered = props.hands.length > 1;
+    const names = props.hands.map((hand, index) => ({ ...hand, turn: index + 1 })).filter(hand => hand.userId !== props.userId)
+      .map(hand => (numbered ? `✋ ${hand.turn} ${hand.displayName}` : `✋ ${hand.displayName}`));
     return names.length > MAX_HANDS ? [...names.slice(0, MAX_HANDS - 1), `✋ +${names.length - MAX_HANDS + 1}`] : names;
   });
   const tabletNotices = ref<{ id: number; text: string }[]>([]);

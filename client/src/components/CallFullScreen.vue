@@ -13,7 +13,7 @@ const call = useCall();
 const { micOn } = call.state;
 const { setMicrophone } = call.microphone;
 const { savePicture } = call.layout;
-const { myHandRaised } = call.tiles;
+const { myHandRaised, myHandTurn, handButtonLabel } = call.tiles;
 const { toggleHand } = call;
 const { fullTile, fullTileView, fullZoomed, fullSpeaker, darkScreen, toggleDarkScreen, exitFullScreen } = call.fullScreen;
 // Whether anything is drawn on the screen shown full screen, so the eraser has something to erase.
@@ -44,8 +44,8 @@ const fullDrawn = computed(() => { void boardVersion.value; return Boolean(fullT
         <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
       </button>
       <!-- And raise a hand without leaving it either. -->
-      <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="myHandRaised ? t('lowerHand') : t('raiseHand')" :aria-label="myHandRaised ? t('lowerHand') : t('raiseHand')" @click="toggleHand">
-        <Hand :size="22" />
+      <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="handButtonLabel" :aria-label="handButtonLabel" @click="toggleHand">
+        <Hand :size="22" /><span v-if="myHandTurn" class="call-hand-turn">{{ myHandTurn }}</span>
       </button>
       <button v-if="fullZoomed" class="call-full-btn" type="button" @click="fullTileView?.resetZoom()"><ZoomOut :size="18" />{{ t('zoomOut') }}</button>
       <!-- The blackboard's pen, eraser and save, beside the microphone (see board.ts). -->

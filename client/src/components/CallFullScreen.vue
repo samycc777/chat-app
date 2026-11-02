@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Download, Eraser, Hand, Mic, MicOff, Minimize, Moon, Pencil, ScreenShare, Sun, ZoomOut } from 'lucide-vue-next';
+import { Check, Download, Eraser, Hand, Mic, MicOff, Minimize, Moon, Pencil, ScreenShare, Sun, ZoomOut } from 'lucide-vue-next';
 import { useI18n } from '../i18n';
 import { boardVersion, erase, hasDrawings, penOn } from '../board';
 import { useCall } from '../call/context';
@@ -15,6 +15,7 @@ const { setMicrophone } = call.microphone;
 const { savePicture } = call.layout;
 const { myHandRaised, myHandTurn, handButtonLabel } = call.tiles;
 const { toggleHand } = call;
+const { shown: showYes, saying, done, sayYes } = call.yes;
 const { fullTile, fullTileView, fullZoomed, fullSpeaker, darkScreen, toggleDarkScreen, exitFullScreen } = call.fullScreen;
 // Whether anything is drawn on the screen shown full screen, so the eraser has something to erase.
 const fullDrawn = computed(() => { void boardVersion.value; return Boolean(fullTile.value && hasDrawings(fullTile.value.key)); });
@@ -46,6 +47,10 @@ const fullDrawn = computed(() => { void boardVersion.value; return Boolean(fullT
       <!-- And raise a hand without leaving it either. -->
       <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="handButtonLabel" :aria-label="handButtonLabel" @click="toggleHand">
         <Hand :size="22" /><span v-if="myHandTurn" class="call-hand-turn">{{ myHandTurn }}</span>
+      </button>
+      <!-- And Bilal can say «نعم» (see call/yes.ts). -->
+      <button v-if="showYes" class="call-control call-yes" :class="{ sending: saying, done }" type="button" lang="ar" :title="t('sayYes')" :aria-label="t('sayYes')" @click="sayYes">
+        <Check v-if="done" :size="24" /><template v-else>نعم</template>
       </button>
       <button v-if="fullZoomed" class="call-full-btn" type="button" @click="fullTileView?.resetZoom()"><ZoomOut :size="18" />{{ t('zoomOut') }}</button>
       <!-- The blackboard's pen, eraser and save, beside the microphone (see board.ts). -->

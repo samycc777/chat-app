@@ -66,7 +66,7 @@ const chat = useCallChat(state, props, showToast);
 const room = useLiveKitRoom(session, state, {
   props, sound, microphone, tiles, tablet, tellMiniShape: layout.tellMiniShape, toggleCamera, showToast,
 });
-const yes = useYes(session, state);
+const yes = useYes(session, state, showToast);
 const phoneLeaveListener = onPhoneCallLeave(() => leave());
 
 // Your photo can be changed in the call too; your tile changes once the server tells everyone.

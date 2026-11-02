@@ -506,6 +506,12 @@ html[dir='rtl'] body {
   transition: background 160ms ease, scale 380ms var(--spring);
 }
 
+/* Bilal's «نعم» button (see call/yes.ts), in the toolbar and in full screen. */
+.call-yes {
+  font-size: 15px;
+  font-weight: 700;
+}
+
 /* Your place among the raised hands, on the hand button. */
 .call-hand-turn {
   min-width: 20px;
@@ -554,6 +560,15 @@ html[dir='rtl'] body {
 .call-control.on {
   color: var(--call-bg);
   background: var(--call-text);
+}
+
+/* Bilal does not hear his own word, so the button shows in the speaking colour while it goes out
+   and with a tick once it has gone out. After the tap the
+   button keeps its hover look, so this comes after that rule. */
+.call-control.call-yes.sending,
+.call-control.call-yes.done {
+  color: var(--call-bg);
+  background: var(--speaking);
 }
 
 .call-control.leave {

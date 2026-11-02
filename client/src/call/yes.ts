@@ -6,6 +6,9 @@ import type { CallSession, CallState } from './context';
 
 // Bilal's own button: one tap sends his recorded «نعم» to everyone in the call, so he can answer
 // without unmuting. Only someone with his name sees it; it gives no power over anyone.
+// The recording was run once, ahead of time, through the same cleaning as every live voice
+// (cleanVoice.ts, with its leveling settled), so it has the noise filter, warmth and level his own
+// voice has in a call and sounds like him speaking, not like a recording.
 export const YES_BUTTON_NAME = 'بلال';
 // The others' phones need a moment to start playing a sound that has only just appeared, or they
 // would miss the start of the word. Later taps play at once, because the sound stays connected.

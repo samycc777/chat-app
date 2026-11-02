@@ -13,6 +13,7 @@ import type { TileLayout } from './layout';
 import type { CallTiles } from './tiles';
 import type { CallChat } from './chat';
 import type { LiveKitRoom } from './room';
+import type { Yes } from './yes';
 
 // The call screen is CallView.vue with its parts in this folder: each composable here does one job,
 // and the components beside CallView.vue reach them through the call context below.
@@ -76,6 +77,7 @@ export interface CallContext {
   chat: CallChat;
   room: LiveKitRoom;
   photo: ReturnType<typeof usePhoto>;
+  yes: Yes;
   openSheet: (sheet: Sheet) => void;
   closeSheet: () => void;
   toggleCamera: () => Promise<void>;

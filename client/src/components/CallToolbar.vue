@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { Ellipsis, Hand, Mic, MicOff, PhoneOff, ScreenShare, ScreenShareOff, Video, VideoOff } from 'lucide-vue-next';
 import { useI18n } from '../i18n';
 import { useCall } from '../call/context';
 import { canShareScreen } from '../call/screenShare';
+import { YES_BUTTON_NAME } from '../call/yes';
 
 // The row of round buttons along the bottom of the call.
 const { t } = useI18n();
@@ -12,13 +14,16 @@ const { micBlocked, setMicrophone } = call.microphone;
 const { toggleScreenShare } = call.screenShare;
 const { myHandRaised, myHandTurn, handButtonLabel } = call.tiles;
 const { toggleCamera, toggleHand, openSheet, leave } = call;
+const { saying, sayYes } = call.yes;
+const participants = call.state.participants;
+const showYes = computed(() => participants.value.find(person => person.local)?.name.trim() === YES_BUTTON_NAME);
 
 // A disabled button gives no hint why, so while the call is still connecting its name says so.
 function whileConnecting(label: string) { return status.value === 'connected' ? label : `${label} (${t('connecting')})`; }
 </script>
 
 <template>
-  <footer class="call-controls">
+  <footer class="call-controls" :class="{ crowded: showYes }">
     <button class="call-control" :class="{ off: !micOn }" type="button" :aria-pressed="micOn" :title="whileConnecting(micOn ? t('mute') : t('unmute'))" :aria-label="whileConnecting(micOn ? t('mute') : t('unmute'))" :aria-describedby="micBlocked ? 'call-mic-hint' : undefined" :disabled="status !== 'connected'" @click="setMicrophone(!micOn)">
       <Mic v-if="micOn" :size="22" /><MicOff v-else :size="22" />
     </button>
@@ -30,6 +35,9 @@ function whileConnecting(label: string) { return status.value === 'connected' ? 
     </button>
     <button class="call-control" :class="{ on: myHandRaised }" type="button" :aria-pressed="myHandRaised" :title="handButtonLabel" :aria-label="handButtonLabel" @click="toggleHand">
       <Hand :size="22" /><span v-if="myHandTurn" class="call-hand-turn">{{ myHandTurn }}</span>
+    </button>
+    <button v-if="showYes" class="call-control call-yes" :class="{ on: saying }" type="button" lang="ar" :title="whileConnecting(t('sayYes'))" :aria-label="whileConnecting(t('sayYes'))" :disabled="status !== 'connected'" @click="sayYes">
+      نعم
     </button>
     <button class="call-control" type="button" :aria-pressed="sheet === 'more'" :title="t('more')" :aria-label="t('more')" @click="openSheet('more')">
       <Ellipsis :size="22" />
@@ -61,10 +69,26 @@ function whileConnecting(label: string) { return status.value === 'connected' ? 
 .call-controls > :nth-child(4) { animation-delay: 370ms; }
 .call-controls > :nth-child(5) { animation-delay: 410ms; }
 .call-controls > :nth-child(6) { animation-delay: 450ms; }
+.call-controls > :nth-child(7) { animation-delay: 490ms; }
+
+.call-yes {
+  font-size: 15px;
+  font-weight: 700;
+}
 
 @media (max-width: 768px) {
   .call-controls {
     gap: 8px;
+  }
+
+  /* Seven buttons only fit across a small phone (360 points) a little smaller and closer. */
+  .call-controls.crowded {
+    gap: 6px;
+  }
+
+  .call-controls.crowded > .call-control {
+    width: 42px;
+    height: 42px;
   }
 }
 </style>

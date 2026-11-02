@@ -19,6 +19,7 @@ import { canSavePicture, useTileLayout } from '../call/layout';
 import { useCallTiles } from '../call/tiles';
 import { useCallChat } from '../call/chat';
 import { useLiveKitRoom } from '../call/room';
+import { useYes } from '../call/yes';
 import Avatar from './Avatar.vue';
 import CallTile from './CallTile.vue';
 import CallHeader from './CallHeader.vue';
@@ -65,6 +66,7 @@ const chat = useCallChat(state, props, showToast);
 const room = useLiveKitRoom(session, state, {
   props, sound, microphone, tiles, tablet, tellMiniShape: layout.tellMiniShape, toggleCamera, showToast,
 });
+const yes = useYes(session, state);
 const phoneLeaveListener = onPhoneCallLeave(() => leave());
 
 // Your photo can be changed in the call too; your tile changes once the server tells everyone.
@@ -96,7 +98,7 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 provide(callKey, {
-  props, state, toasts, sound, microphone, screenShare, tablet, fullScreen, layout, tiles, chat, room, photo,
+  props, state, toasts, sound, microphone, screenShare, tablet, fullScreen, layout, tiles, chat, room, photo, yes,
   openSheet, closeSheet, toggleCamera, toggleHand, leave,
 });
 
@@ -122,6 +124,7 @@ function cleanup() {
   layout.dispose();
   screenShare.stopPhoneShare();
   chat.dispose();
+  yes.dispose();
   clearBoards();
   tablet.dispose();
   screenShare.dispose();

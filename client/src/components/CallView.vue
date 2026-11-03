@@ -79,7 +79,7 @@ const me = computed(() => ({ color: colorOf(props.userId), name: state.participa
 async function toggleCamera() {
   if (!session.room) return;
   try {
-    await session.room.localParticipant.setCameraEnabled(!cameraOn.value, { resolution: VideoPresets.h360.resolution, facingMode: 'user' });
+    await session.room.localParticipant.setCameraEnabled(!cameraOn.value, { resolution: { ...VideoPresets.h360.resolution, frameRate: 15 }, facingMode: 'user' });
   } catch {
     showToast(t('cameraBlocked'));
   }

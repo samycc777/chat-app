@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 import {
-  AudioPresets, ConnectionQuality, DisconnectReason, Room, RoomEvent, Track, VideoPreset, VideoPresets, type RemoteParticipant, type RemoteTrackPublication,
+  AudioPresets, ConnectionQuality, DisconnectReason, Room, RoomEvent, Track, VideoPreset, type RemoteParticipant, type RemoteTrackPublication,
 } from 'livekit-client';
 import { api, ApiError } from '../api';
 import { getSocket } from '../socket';
@@ -124,12 +124,18 @@ export function useLiveKitRoom(session: CallSession, state: CallState, parts: {
         // person the largest copy their internet can take, so one slow connection slows nobody else.
         // A voice needs far less than music; a shared browser tab's sound keeps music quality (see
         // toggleScreenShare in screenShare.ts).
+        // Many in the class pay for every megabyte, so a camera is sent at fifteen frames a second,
+        // which still looks like a moving face, at about two thirds of LiveKit's usual data.
         publishDefaults: {
           audioPreset: AudioPresets.speech,
-          videoSimulcastLayers: [VideoPresets.h90, VideoPresets.h180],
-          // A screen is mostly still text, so a few frames a second keep it readable at a fraction of the data.
-          screenShareEncoding: { maxBitrate: 1_200_000, maxFramerate: 15 },
-          screenShareSimulcastLayers: [new VideoPreset(640, 360, 120_000, 3), new VideoPreset(1280, 720, 400_000, 5)],
+          videoEncoding: { maxBitrate: 300_000, maxFramerate: 15 },
+          videoSimulcastLayers: [new VideoPreset(160, 90, 60_000, 15), new VideoPreset(320, 180, 120_000, 15)],
+          // Everyone gets the middle copy unless they zoom in (see sendScreensSharpOnlyWhenZoomed in
+          // tiles.ts), so it keeps fifteen frames a second for a video watched together from a
+          // computer. A still page of writing costs almost nothing at any frame rate; the teacher's
+          // tablet, where most lessons are shared from, sends fewer (ScreenSharePlugin.kt).
+          screenShareEncoding: { maxBitrate: 800_000, maxFramerate: 15 },
+          screenShareSimulcastLayers: [new VideoPreset(640, 360, 80_000, 3), new VideoPreset(1280, 720, 350_000, 15)],
         },
       });
       session.room = attempt = connectingRoom;

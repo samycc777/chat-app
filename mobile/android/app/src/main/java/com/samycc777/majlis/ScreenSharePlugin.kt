@@ -94,21 +94,22 @@ class ScreenSharePlugin : Plugin() {
   }
 
   // Left alone, LiveKit sends the whole screen thirty times a second at up to 7 Mbps, far more than
-  // some of the class's internet can take. A lesson's screen is mostly still writing, so ten frames
-  // a second at full sharpness is plenty, and when the internet is short the frames get fewer rather
-  // than the writing blurrier. Two smaller copies go out too, and the server gives each person the
+  // some of the class's internet can take, and many pay for every megabyte. A lesson's screen is
+  // mostly still writing, so five frames a second at full sharpness is plenty, and when the internet
+  // is short the frames get fewer rather than the writing blurrier. A still screen costs almost
+  // nothing; what the limits cap is each change of page, which takes a moment longer to sharpen. Two smaller copies go out too, and the server gives each person the
   // largest one their internet can carry, so a slow connection still sees the lesson.
   private fun lighten(sharing: Room) {
     val participant = sharing.localParticipant
     participant.screenShareTrackCaptureDefaults = participant.screenShareTrackCaptureDefaults.copy(
-      captureParams = VideoCaptureParameter(0, 0, 10),
+      captureParams = VideoCaptureParameter(0, 0, 5),
     )
     participant.screenShareTrackPublishDefaults = participant.screenShareTrackPublishDefaults.copy(
-      videoEncoding = VideoEncoding(1_200_000, 10),
+      videoEncoding = VideoEncoding(800_000, 5),
       degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION,
       simulcastLayers = listOf(
-        CustomVideoPreset(VideoCaptureParameter(640, 360, 3), VideoEncoding(120_000, 3)),
-        CustomVideoPreset(VideoCaptureParameter(1280, 720, 5), VideoEncoding(400_000, 5)),
+        CustomVideoPreset(VideoCaptureParameter(640, 360, 3), VideoEncoding(80_000, 3)),
+        CustomVideoPreset(VideoCaptureParameter(1280, 720, 5), VideoEncoding(250_000, 5)),
       ),
     )
   }

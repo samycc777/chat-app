@@ -1,5 +1,5 @@
 import { computed, markRaw, ref, watch, type Ref } from 'vue';
-import { Track, type Participant, type VideoTrack } from 'livekit-client';
+import { Track, VideoQuality, type Participant, type VideoTrack } from 'livekit-client';
 import { useI18n } from '../i18n';
 import { SCREEN_SUFFIX } from '../nativeScreenShare';
 import { createSpeakingDetector } from '../speaking';
@@ -104,6 +104,7 @@ export function useCallTiles(session: CallSession, state: CallState, options: {
     // A screen that stops being shared, or a camera turned off, leaves full screen.
     if (fullScreen.fullKey.value && !next.some(tile => tile.key === fullScreen.fullKey.value && watchable(tile))) fullScreen.exitFullScreen();
     tiles.value = next;
+    sendScreensSharpOnlyWhenZoomed();
     // The server must hear it too, so room noise picked up by the microphone doesn't lower a hand.
     noteMySpeech(isSpeaking(room.localParticipant) && room.localParticipant.isSpeaking);
     micOn.value = room.localParticipant.isMicrophoneEnabled;
@@ -114,6 +115,20 @@ export function useCallTiles(session: CallSession, state: CallState, options: {
       speaking: participants.value.filter(person => person.speaking).map(person => person.identity),
     });
   }
+
+  // A shared screen was the heaviest part of a lesson: phones were sent its sharpest copy, the
+  // teacher's whole tablet screen, around 120 MB an hour, though a phone not zoomed in shows no more
+  // than the middle copy. The sharpest copy now comes only while someone zooms in to read small
+  // writing, and the middle one the rest of the time.
+  function sendScreensSharpOnlyWhenZoomed() {
+    for (const participant of session.room?.remoteParticipants.values() ?? []) {
+      const screen = participant.getTrackPublication(Track.Source.ScreenShare);
+      if (!screen?.isSubscribed) continue;
+      const reading = fullScreen.fullKey.value === `${participant.identity}:screen` && fullScreen.fullZoomed.value;
+      screen.setVideoQuality(reading ? VideoQuality.HIGH : VideoQuality.MEDIUM);
+    }
+  }
+  watch([fullScreen.fullKey, fullScreen.fullZoomed], sendScreensSharpOnlyWhenZoomed);
 
   function noteWeak(identity: string, weak: boolean) {
     clearTimeout(weakTimers.get(identity));

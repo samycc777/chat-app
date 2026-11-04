@@ -22,7 +22,7 @@ A Zoom-like call app with many rooms, one per customer; the first step to sellin
 - `mobile/` — Capacitor wrapper loading the live site (web changes reach the apps without a rebuild; native changes need a new app version). Release Android: `gh workflow run android-release.yml -f notes="…" -f notes_ar="…"` (builds on GitHub and sends to Google Play internal testing; the ARM laptop can't run Google's build tools; see mobile/README.md). Test APK: `HANGOUT_URL=... npm run build:android` (Gradle 9.3, Android Studio's Java).
 - The app never animates (one global rule at the end of `styles.css`); don't add animations or transitions.
 - `tests/security.test.mjs` — end-to-end server tests (real server, temporary database, fake LiveKit and push services).
-- For the detailed file-by-file layout, read docs/notes/layout.md.
+- For the detailed file-by-file layout, read docs/notes/layout.md. What Discord's calls do and the plan for ours: docs/notes/discord-calls.md.
 - Calls run on our own LiveKit server on Hetzner, not LiveKit Cloud: docs/notes/call-server.md.
 
 ## Commands
